@@ -38,7 +38,7 @@ async function inspect(h) {
     stale: (h.last_reviewed ?? "") !== latest,
     archived: repo.archived,
     stars: repo.stargazers_count,
-    license_changed: h.policy !== "reference" && license !== h.license ? `${h.license} → ${license}` : null,
+    license_changed: h.policy !== "reference" && license !== (h.spdx ?? h.license) ? `${h.spdx ?? h.license} → ${license}` : null,
     moved: repo.full_name.toLowerCase() !== h.repo.toLowerCase() ? repo.full_name : null,
   };
 }

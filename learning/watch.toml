@@ -80,7 +80,7 @@ repo = "deepseek-ai/deepseek-harness"
 license = "MIT"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "dsh-v0.2.3-alpha.2"
 focus = ["plugins", "event_log", "profiles"]
 
 [[harness]]
@@ -110,7 +110,7 @@ repo = "Kilo-Org/kilocode"
 license = "MIT"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v7.8.32"
 focus = ["modes", "orchestration"]
 
 [[harness]]
@@ -128,11 +128,12 @@ notes = "Archived upstream (checked 2026-11-24). Keep for history; do not expect
 [[harness]]
 id = "continue"
 name = "Continue"
+status = "archived"
 repo = "continuedev/continue"
 license = "Apache-2.0"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v2.0.0-vscode"
 focus = ["ide", "checks"]
 
 [[harness]]
@@ -142,7 +143,7 @@ repo = "QwenLM/qwen-code"
 license = "Apache-2.0"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v0.28.4"
 focus = ["context", "tools"]
 
 [[harness]]
@@ -152,7 +153,7 @@ repo = "OpenHands/OpenHands"
 license = "MIT"
 language = "Python"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v1.45.0"
 focus = ["sandbox", "remote_workspace", "events"]
 notes = "Agent core lives in OpenHands/software-agent-sdk (MIT, Python)."
 
@@ -163,7 +164,7 @@ repo = "SWE-agent/SWE-agent"
 license = "MIT"
 language = "Python"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v1.1.0"
 focus = ["trajectories", "tool_design", "evaluation"]
 
 [[harness]]
@@ -173,16 +174,17 @@ repo = "SWE-agent/mini-swe-agent"
 license = "MIT"
 language = "Python"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v2.4.6"
 focus = ["minimal_loop", "evaluation"]
 
 [[harness]]
 id = "crush"
 name = "Crush"
 repo = "charmbracelet/crush"
-license = "NOASSERTION"
+license = "FSL-1.1-MIT"
+spdx = "NOASSERTION"   # what the GitHub API reports for this license
 language = "Go"
 policy = "clean-room"
-last_reviewed = ""
+last_reviewed = "v0.102.0"
 focus = ["tui", "lsp"]
-notes = "GitHub reports no standard SPDX license; treat as source-available until checked."
+notes = "FSL-1.1-MIT: source-available; Competing Use excluded, so clean-room only. Each version becomes MIT two years after release."
