@@ -70,7 +70,7 @@ repo = "earendil-works/pi"
 license = "MIT"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v1.6.0"
 focus = ["minimal_tools", "sessions", "compaction"]
 
 [[harness]]
@@ -100,7 +100,7 @@ repo = "cline/cline"
 license = "Apache-2.0"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v4.1.27"
 focus = ["checkpoints", "approval", "headless"]
 
 [[harness]]
