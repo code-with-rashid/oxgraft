@@ -375,3 +375,47 @@ fn subagent_sessions_are_not_listed() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, session.id);
 }
+
+#[test]
+fn edits_require_a_fresh_read() {
+    let ws = Ws::new("readfirst");
+    std::fs::write(ws.0.join("a.txt"), "one\n").unwrap();
+    let edit = "<<<<<<< SEARCH\none\n=======\ntwo\n>>>>>>> REPLACE";
+    let edit2 = "<<<<<<< SEARCH\ntwo\n=======\nthree\n>>>>>>> REPLACE";
+    let (_, events, _) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "edit", "input": {"path": "a.txt", "edit": edit}}]},
+            {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+            {"tool_calls": [{"name": "edit", "input": {"path": "a.txt", "edit": edit}}]},
+            {"tool_calls": [{"name": "edit", "input": {"path": "a.txt", "edit": edit2}}]},
+            {"text": "done"}
+        ]}),
+        |_| {},
+        None,
+    );
+    let r = tool_results(&events);
+    assert!(!r[0].0 && r[0].1.contains("Read `a.txt` before"), "{:?}", r[0]);
+    assert!(r[2].0, "edit after read works: {:?}", r[2]);
+    assert!(r[3].0, "consecutive edits after our own write work: {:?}", r[3]);
+    assert_eq!(std::fs::read_to_string(ws.0.join("a.txt")).unwrap(), "three\n");
+}
+
+#[test]
+fn created_files_can_be_edited_and_paths_normalise() {
+    let ws = Ws::new("normalise");
+    let edit = "<<<<<<< SEARCH\nnew\n=======\nnewer\n>>>>>>> REPLACE";
+    let (_, events, _) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "write", "input": {"path": "./made.txt", "content": "new\n"}}]},
+            {"tool_calls": [{"name": "edit", "input": {"path": "made.txt", "edit": edit}}]},
+            {"text": "done"}
+        ]}),
+        |_| {},
+        None,
+    );
+    let r = tool_results(&events);
+    assert!(r[1].0, "{:?}", r[1]);
+    assert_eq!(std::fs::read_to_string(ws.0.join("made.txt")).unwrap(), "newer\n");
+}

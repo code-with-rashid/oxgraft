@@ -372,6 +372,21 @@ impl Approver for TerminalApprover {
             "write" => format!("{} ({} bytes)", action.resource, input["content"].as_str().map_or(0, str::len)),
             _ => action.resource.clone(),
         };
+        // Show what will change before asking (GRAFT-0029, as Cline and Claude Code do).
+        let preview = match tool {
+            "edit" => input["edit"].as_str().or(input["new_string"].as_str()),
+            "write" => input["content"].as_str(),
+            _ => None,
+        };
+        if let Some(text) = preview {
+            let lines: Vec<&str> = text.lines().collect();
+            for line in lines.iter().take(40) {
+                eprintln!("    │ {line}");
+            }
+            if lines.len() > 40 {
+                eprintln!("    │ … {} more lines", lines.len() - 40);
+            }
+        }
         loop {
             eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {tool}: ");
             let _ = std::io::stderr().flush();

@@ -1,6 +1,6 @@
 //! The agent loop (SPEC-0003).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -132,6 +132,8 @@ struct RunState {
     always: HashSet<String>,
     recent: Vec<(String, Value)>,
     depth: u32,
+    /// Files the model has read (or written) this run, with the mtime it saw.
+    seen: HashMap<PathBuf, Option<std::time::SystemTime>>,
 }
 
 /// Tools a subagent may use: read-only, so its work never needs undo.
@@ -239,7 +241,7 @@ impl<'a> Agent<'a> {
 
         let system = self.system_prompt();
         let specs = self.specs(depth);
-        let mut state = RunState { always: HashSet::new(), recent: Vec::new(), depth };
+        let mut state = RunState { always: HashSet::new(), recent: Vec::new(), depth, seen: HashMap::new() };
         let mut usage = Usage::default();
         let mut continuations = 0;
         let mut final_text = String::new();
@@ -444,6 +446,36 @@ impl<'a> Agent<'a> {
             }
         }
 
+        // Read-before-edit and stale-file guards (GRAFT-0028).
+        let file = matches!(name, "read" | "edit" | "write")
+            .then(|| input.get("path").and_then(Value::as_str))
+            .flatten()
+            .map(|p| {
+                let joined = self.config.workspace.join(p);
+                joined.canonicalize().unwrap_or(joined)
+            });
+        if let Some(path) = &file
+            && matches!(name, "edit" | "write")
+            && path.is_file()
+        {
+            let current = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+            match state.seen.get(path) {
+                None => {
+                    return ToolOutput::error(format!(
+                        "Read `{}` before changing it, so your change is based on its current content.",
+                        input["path"].as_str().unwrap_or("")
+                    ));
+                }
+                Some(seen) if *seen != current => {
+                    return ToolOutput::error(format!(
+                        "`{}` changed on disk since you last read it. Read it again before changing it.",
+                        input["path"].as_str().unwrap_or("")
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+
         let action = tool.action(input);
         let decision = match self.toolkit.approval.decide(&action) {
             Decision::Ask if state.always.contains(name) => Decision::Allow,
@@ -496,6 +528,14 @@ impl<'a> Agent<'a> {
                 }
                 HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
             }
+        }
+        if let Some(path) = file
+            && !output.is_error
+        {
+            // After a read, or after our own write, the model's view matches the disk.
+            let path = path.canonicalize().unwrap_or(path);
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            state.seen.insert(path, mtime);
         }
         for snap in snapshots.into_inner().unwrap_or_else(|e| e.into_inner()) {
             if let Err(e) = session.record_original(&snap.path, snap.original.as_deref()) {
