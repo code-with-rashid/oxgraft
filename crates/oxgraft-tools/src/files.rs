@@ -5,6 +5,20 @@ use crate::util::{display, looks_binary, opt_str, opt_u64, resolve, str_field, t
 
 const MAX_LINE_CHARS: usize = 2_000;
 const DEFAULT_READ_LINES: u64 = 2_000;
+/// Files above these sizes are refused instead of loaded into memory (stability).
+const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
+
+fn too_large(path: &std::path::Path, limit: u64, shown: &str) -> Option<String> {
+    let len = std::fs::metadata(path).ok()?.len();
+    (len > limit).then(|| {
+        format!(
+            "`{shown}` is {:.1} MB, over the {} MB limit for this tool; use grep or bash (head, tail, sed -n) to inspect parts of it",
+            len as f64 / 1_048_576.0,
+            limit / 1_048_576
+        )
+    })
+}
 
 fn action(tool: &str, input: &Value, field: &str) -> Action {
     Action { tool: tool.into(), resource: input.get(field).and_then(Value::as_str).unwrap_or("").into() }
@@ -54,6 +68,9 @@ impl Tool for Read {
         let full = try_tool!(resolve(ctx.workspace, path));
         if full.is_dir() {
             return ToolOutput::error(format!("`{path}` is a directory; use `ls` to list it"));
+        }
+        if let Some(msg) = too_large(&full, MAX_READ_BYTES, path) {
+            return ToolOutput::error(msg);
         }
         let bytes = match std::fs::read(&full) {
             Ok(b) => b,
@@ -178,6 +195,9 @@ impl Tool for Edit {
         let legacy = input.get("edit").is_none() && input.get("old_string").is_some();
         let edit = if legacy { "" } else { try_tool!(str_field(input, "edit")) };
         let full = try_tool!(resolve(ctx.workspace, path));
+        if let Some(msg) = too_large(&full, MAX_EDIT_BYTES, path) {
+            return ToolOutput::error(msg);
+        }
         let original = match std::fs::read(&full) {
             Ok(b) if looks_binary(&b) => return ToolOutput::error(format!("`{path}` is binary; cannot edit")),
             Ok(b) => String::from_utf8_lossy(&b).into_owned(),
@@ -353,5 +373,20 @@ mod tests {
         assert_eq!(f.snapshots.lock().unwrap()[0].original, None);
         let out = f.run(&Ls, json!({"path": "x"}));
         assert_eq!(out.content, "y/");
+    }
+}
+
+#[cfg(test)]
+mod limits {
+    use super::*;
+    use crate::testing::Fixture;
+
+    #[test]
+    fn huge_files_are_refused_not_loaded() {
+        let f = Fixture::new("huge");
+        let file = std::fs::File::create(f.dir.join("big.log")).unwrap();
+        file.set_len(MAX_EDIT_BYTES + 1).unwrap(); // sparse: no real disk use
+        let out = f.run(&Edit, json!({"path": "big.log", "edit": "x"}));
+        assert!(out.is_error && out.content.contains("MB limit"), "{}", out.content);
     }
 }

@@ -137,6 +137,10 @@ impl Tool for Grep {
                     continue;
                 }
             }
+            // Skip huge files (logs, data dumps) rather than loading them (stability).
+            if entry.metadata().map(|m| m.len() > 5 * 1024 * 1024).unwrap_or(false) {
+                continue;
+            }
             let Ok(bytes) = std::fs::read(entry.path()) else { continue };
             if looks_binary(&bytes) {
                 continue;

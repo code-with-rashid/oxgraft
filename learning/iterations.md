@@ -41,3 +41,5 @@ honestly: an iteration is only logged when its tests pass.
 | 33 | 2026-11-25 | cline, claude-code | Approval prompt previews edits and writes | adopt | GRAFT-0029 | SPEC-0004 | approval tests (manual preview) |
 | 34 | 2026-11-25 | claude-code, codex | Windows: Git Bash `sh` first, PowerShell fallback, never cmd.exe | avoid | GRAFT-0030 | SPEC-0002 | bash tests on Windows CI |
 | 35 | 2026-11-25 | claude-code, codex | Chat slash commands: /help, /cost, /clear, unknown-command hints | adopt | — | SPEC-0004 | manual smoke test |
+| 36 | 2026-11-25 | (stability) | Size caps: read 50 MB, edit 10 MB, grep skips files over 5 MB (no OOM on logs/dumps) | avoid | — | SPEC-0002 | `huge_files_are_refused_not_loaded` |
+| 37 | 2026-11-25 | (stability) | Fuzz test: 12 000 malformed edits across all edit formats, plus approval/context/sandbox seams, never panic | — | — | SPEC-0002 | `edit_formats_never_panic` |
