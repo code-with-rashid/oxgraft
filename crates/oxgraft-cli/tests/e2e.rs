@@ -54,7 +54,8 @@ fn events(out: &Output) -> Vec<Event> {
 }
 
 fn list_cmd() -> &'static str {
-    if cfg!(windows) { "dir /b" } else { "ls" }
+    // `ls` works in POSIX sh (Git Bash on Windows) and as a PowerShell alias.
+    "ls"
 }
 
 // SPEC-0004 AC1, AC2, AC6
