@@ -116,6 +116,50 @@ impl Hook {
     }
 }
 
+/// Run a verification command (build, lint, tests) in the workspace. Returns whether it
+/// passed and its combined output (tail-truncated), with a timeout.
+pub fn run_check(command: &str, workspace: &Path, timeout_secs: u64) -> (bool, String) {
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(command);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(command);
+        c
+    };
+    cmd.current_dir(workspace).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (false, format!("could not start `{command}`: {e}")),
+    };
+    let mut out = child.stdout.take();
+    let mut err = child.stderr.take();
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        if let Some(o) = out.as_mut() {
+            let _ = o.read_to_string(&mut s);
+        }
+        if let Some(e) = err.as_mut() {
+            let _ = e.read_to_string(&mut s);
+        }
+        s
+    });
+    let ok = match child.wait_timeout(Duration::from_secs(timeout_secs.max(1))) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return (false, format!("`{command}` timed out after {timeout_secs}s"));
+        }
+        Err(e) => return (false, e.to_string()),
+    };
+    let text = reader.join().unwrap_or_default();
+    let chars: Vec<char> = text.trim_end().chars().collect();
+    let tail: String = chars[chars.len().saturating_sub(8_000)..].iter().collect();
+    (ok, tail)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

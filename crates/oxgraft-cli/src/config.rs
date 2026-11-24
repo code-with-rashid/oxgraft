@@ -18,6 +18,8 @@ pub struct FileConfig {
     pub max_tokens: Option<u32>,
     /// Stop a run when input + output tokens exceed this.
     pub max_session_tokens: Option<u64>,
+    /// Run after any turn that changed files (e.g. "cargo check"); failures go back to the model.
+    pub verify_command: Option<String>,
     /// Model context window in tokens (compaction at 80%); 0 disables compaction.
     pub context_window: Option<u64>,
     #[serde(default)]
@@ -41,6 +43,7 @@ pub struct Config {
     pub max_turns: u32,
     pub max_tokens: u32,
     pub max_session_tokens: Option<u64>,
+    pub verify_command: Option<String>,
     pub context_window: Option<u64>,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
@@ -92,6 +95,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_turns: 50,
         max_tokens: 16_000,
         max_session_tokens: None,
+        verify_command: None,
         context_window: Some(200_000),
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
@@ -173,6 +177,12 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         // GRAFT-0034 (Codex): a cloned repo must not redirect prompts and keys to a
         // provider of its choosing. Untrusted workspaces may not set the model.
         let mut c = c;
+        if !is_trusted && let Some(command) = c.verify_command.take() {
+            cfg.warnings.push(format!(
+                "ignoring `verify_command = \"{command}\"` in {}: workspace not trusted",
+                ws_path.display()
+            ));
+        }
         if !is_trusted && let Some(model) = c.model.take() {
             cfg.warnings.push(format!(
                 "ignoring `model = \"{model}\"` in {}: workspace not trusted (add it to `trusted_workspaces`, or pass --model)",
@@ -225,6 +235,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.max_tokens {
             cfg.max_tokens = v.max(256);
+            used = true;
+        }
+        if let Some(v) = layer.verify_command {
+            cfg.verify_command = if v.trim().is_empty() { None } else { Some(v) };
             used = true;
         }
         if let Some(v) = layer.context_window {

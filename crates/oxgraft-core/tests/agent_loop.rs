@@ -475,3 +475,26 @@ fn nested_instructions_are_shown_once_when_touched() {
     assert!(r[0].1.contains("[Instructions from web/AGENTS.md") && r[0].1.contains("Use pnpm in web/."), "{}", r[0].1);
     assert!(!r[1].1.contains("Instructions from"), "shown only once");
 }
+
+#[cfg(unix)]
+#[test]
+fn verify_command_feeds_failures_back_after_edits() {
+    let ws = Ws::new("verify");
+    let check = "grep -q good status.txt || (echo status is not good; exit 1)";
+    let (status, _, session) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "write", "input": {"path": "status.txt", "content": "bad\n"}}]},
+            {"tool_calls": [{"name": "read", "input": {"path": "status.txt"}}]},
+            {"tool_calls": [{"name": "write", "input": {"path": "status.txt", "content": "good\n"}}]},
+            {"text": "fixed"}
+        ]}),
+        |c| c.verify_command = Some(check.into()),
+        None,
+    );
+    assert_eq!(status, Status::Done);
+    let texts: Vec<String> = session.messages.iter().map(|m| m.text()).collect();
+    assert!(texts[2].contains("Automatic check") && texts[2].contains("status is not good"), "{texts:?}");
+    assert!(!texts[4].contains("Automatic check"), "read-only turns are not checked");
+    assert!(!texts[6].contains("Automatic check"), "passing check adds nothing");
+}

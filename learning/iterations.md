@@ -54,3 +54,4 @@ honestly: an iteration is only logged when its tests pass.
 | 46 | 2026-11-25 | codex | Configurable `[[rules]]` with justifications shown to the model | adopt | GRAFT-0036 | SPEC-0004 | `configured_rules_apply_with_reasons` |
 | 47 | 2026-11-25 | gemini-cli | Just-in-time subdirectory AGENTS.md/CLAUDE.md/GEMINI.md, once per run, in the tool result | adopt | GRAFT-0037 | SPEC-0003 | `nested_instructions_are_shown_once_when_touched` |
 | 48 | 2026-11-25 | opencode | `auto` profile: edit format chosen by model-family table (trial default) | adopt | GRAFT-0038 | SPEC-0004 | `auto_picks_profile_by_model_family` |
+| 49 | 2026-11-25 | aider | `verify_command` after editing turns; failures fed back, capped at 3 rounds; trusted-only in workspaces | adopt | GRAFT-0039 | SPEC-0005 | `verify_command_feeds_failures_back_after_edits` |

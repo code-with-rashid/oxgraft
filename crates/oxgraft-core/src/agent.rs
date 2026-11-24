@@ -63,6 +63,8 @@ pub struct AgentConfig {
     pub context_window: Option<u64>,
     /// Offer the read-only `task` subagent tool.
     pub subagents: bool,
+    /// Command run after any turn that changed files; failures go back to the model.
+    pub verify_command: Option<String>,
 }
 
 impl AgentConfig {
@@ -80,6 +82,7 @@ impl AgentConfig {
             hooks: Vec::new(),
             context_window: Some(200_000),
             subagents: true,
+            verify_command: None,
         }
     }
 
@@ -113,6 +116,8 @@ const MAX_CONTINUATIONS: u32 = 3;
 const LOOP_LIMIT: usize = 3;
 /// Tool calls executed per model turn; extra calls get an error result (stability).
 const MAX_CALLS_PER_TURN: usize = 32;
+/// Consecutive failing verify rounds before automatic checks pause (Aider uses 3).
+const MAX_VERIFY_ROUNDS: u32 = 3;
 
 pub struct Agent<'a> {
     pub toolkit: &'a Toolkit,
@@ -254,6 +259,8 @@ impl<'a> Agent<'a> {
         };
         let mut usage = Usage::default();
         let mut continuations = 0;
+        let mut changed_files = false;
+        let mut verify_failures = 0;
         let mut final_text = String::new();
 
         for turn in 1..=self.config.max_turns {
@@ -349,8 +356,28 @@ impl<'a> Agent<'a> {
                     self.execute(session, &mut state, &id, &name, &input, emit)
                 };
                 emit(&Event::ToolResult { id: id.clone(), ok: !output.is_error, output: output.content.clone() });
+                if matches!(name.as_str(), "edit" | "write") && !output.is_error {
+                    changed_files = true;
+                }
                 results.push(Block::ToolResult { tool_use_id: id, content: output.content, is_error: output.is_error });
             }
+            // Automatic verification after edits (GRAFT-0039, Aider's lint/test-and-fix loop).
+            if changed_files
+                && let Some(command) = &self.config.verify_command
+                && verify_failures < MAX_VERIFY_ROUNDS
+            {
+                let (ok, out) = crate::hooks::run_check(command, &self.config.workspace, 300);
+                if ok {
+                    verify_failures = 0;
+                } else {
+                    verify_failures += 1;
+                    emit(&Event::Warning { message: format!("verify command `{command}` failed") });
+                    results.push(Block::text(format!(
+                        "[Automatic check `{command}` failed after your changes. Fix the problems below.]\n{out}"
+                    )));
+                }
+            }
+            changed_files = false;
             session.messages.push(Message { role: Role::User, content: results });
             self.save(session, emit);
 
