@@ -2,15 +2,40 @@
 
 **The best of every coding agent, grafted into one.**
 
-Oxgraft is an open source coding-agent harness written in Rust. Its core idea:
-keep studying every major open source harness (Codex, OpenCode, Claude Code's
-public behaviour, Gemini CLI, goose, Aider, Cline, Pi, OpenHands, SWE-agent
-and more), **graft in their best ideas, avoid their limitations, and prove
-each change with evidence.**
+Oxgraft is an open source coding-agent harness written in Rust. It keeps
+studying every major open source harness (Codex, OpenCode, Claude Code's public
+behaviour, Gemini CLI, goose, Aider, Cline, Pi, OpenHands, SWE-agent and more),
+**grafts in their best ideas, avoids their limitations, and records the
+evidence for each change.**
 
-> Status: early scaffold (M1). Not usable as an agent yet. See [STATUS.md](STATUS.md) and [ROADMAP.md](ROADMAP.md).
+- **Any model.** Anthropic (native API, prompt caching, refusal fallbacks), OpenAI,
+  OpenRouter, DeepSeek, Groq, Gemini, xAI, Mistral, Ollama, LM Studio, or any
+  OpenAI-compatible server.
+- **Small, sharp tools.** read, write, edit, ls, glob, grep, bash, todo, plus
+  Agent Skills and MCP servers.
+- **Safe by default.** File tools stay inside the workspace; edits and commands
+  ask first; optional OS sandbox (bubblewrap / Seatbelt) that fails closed;
+  repository hooks and MCP servers need your trust; `oxgraft undo` restores every
+  file a session changed.
+- **Stable in long runs.** Retries with backoff, loop guard, max-turn and token
+  budgets, context compaction, Ctrl-C interrupts, crash-safe resumable sessions.
+- **Scriptable.** `oxgraft run --json` streams a versioned JSONL event protocol
+  with meaningful exit codes.
 
-## How it works
+> Status: early but working. See [STATUS.md](STATUS.md) and [ROADMAP.md](ROADMAP.md).
+
+## Quick start
+
+```sh
+cargo install --git https://github.com/code-with-rashid/oxgraft oxgraft
+export ANTHROPIC_API_KEY=...            # or: --model ollama/qwen3, openai/<model>, ...
+oxgraft                                 # interactive
+oxgraft run "add a --verbose flag and test it"
+```
+
+Full guide: [docs/usage.md](docs/usage.md).
+
+## How it learns
 
 ```
              ┌──────────── learning/ ────────────┐
@@ -24,19 +49,13 @@ each change with evidence.**
                evaluate vs default and baseline ──▶ promote, keep, or reject
 ```
 
-- **Seams** are capability traits: edit format, context, approval, sandbox
-  (more to come: provider, tools, sessions, extensions, delegation).
-- **Strategies** are interchangeable answers to a seam. `oxgraft strategies`
-  shows each one and the harness it was learned from.
-- **Grafts** are records in `learning/grafts/` of every idea adopted, trialled
-  or rejected, with its evidence.
-
-## Try it
-
-```sh
-cargo run -p oxgraft -- strategies
-cargo run -p oxgraft -- profile profiles/default.toml --json
-```
+- **Seams** are capability traits (edit format, context, approval, sandbox).
+  **Strategies** are interchangeable answers to a seam; `oxgraft strategies`
+  shows each one and the harness it came from.
+- **Grafts** (`learning/grafts/`) record every idea adopted or avoided, with
+  provenance and tests. [learning/iterations.md](learning/iterations.md) logs each
+  learning iteration.
+- **Specs** (`specs/`) define behaviour first; tests reference their acceptance criteria.
 
 ## Contributing
 
@@ -45,5 +64,4 @@ Humans and AI agents are both welcome. Start with [AGENTS.md](AGENTS.md) and
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for attributions to
-the harnesses whose code we adapt.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

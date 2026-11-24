@@ -16,3 +16,5 @@ written from its acceptance criteria; code is written to pass them.
 | [SPEC-0002](SPEC-0002-tools.md) | Built-in tools | implemented |
 | [SPEC-0003](SPEC-0003-agent-loop.md) | Agent loop, approvals, stability guards | implemented |
 | [SPEC-0004](SPEC-0004-cli-and-sessions.md) | CLI, headless mode, config, sessions | implemented |
+| [SPEC-0005](SPEC-0005-extensions.md) | Extensions: skills, hooks, MCP | implemented |
+| [SPEC-0006](SPEC-0006-safety-and-long-sessions.md) | Sandbox, interrupts, budgets, compaction | implemented |

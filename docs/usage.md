@@ -1,0 +1,96 @@
+# Using Oxgraft
+
+## Install
+
+From source (Rust 1.88+):
+
+```sh
+cargo install --git https://github.com/code-with-rashid/oxgraft oxgraft
+```
+
+Prebuilt binaries are attached to GitHub releases once a `v*` tag is pushed
+(see `.github/workflows/release.yml`).
+
+## Pick a model
+
+Model strings are `provider/model`. Credentials come from environment variables.
+
+| Provider | Example | Key |
+|---|---|---|
+| Anthropic | `anthropic/claude-opus-5-5` (default when the key is set) | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai/<model>` | `OPENAI_API_KEY` |
+| OpenRouter | `openrouter/<vendor>/<model>` | `OPENROUTER_API_KEY` |
+| DeepSeek, Groq, Gemini, xAI, Mistral | `deepseek/<model>`, `groq/<model>`, … | `<PROVIDER>_API_KEY` |
+| Ollama / LM Studio (local) | `ollama/<model>`, `lmstudio/<model>` | none |
+| Any OpenAI-compatible server | `compatible/<model>` + `OXGRAFT_COMPATIBLE_BASE_URL` | `OXGRAFT_COMPATIBLE_API_KEY` (optional) |
+
+`oxgraft models` prints the full table, including base-URL override variables.
+
+## Run
+
+```sh
+oxgraft                                   # interactive chat (prompts before edits and commands)
+oxgraft run "fix the failing test"        # one task, then exit
+oxgraft run --json --yes "…"              # headless: JSONL events on stdout, approve `ask` actions
+oxgraft run --resume last "now add docs"  # continue the latest session
+oxgraft sessions                          # list saved sessions
+oxgraft undo                              # restore files changed by the latest session
+oxgraft --profile sandboxed run "…"       # shell commands confined to the workspace, offline
+```
+
+Ctrl-C interrupts the current run (and any running command); press it again to quit.
+
+Exit codes: `0` done, `1` provider or internal failure, `2` usage/config error,
+`3` stopped by a guard (max turns, token budget, refusal, interrupt).
+
+## Configure
+
+`~/.config/oxgraft/config.toml` (Windows: `%APPDATA%\oxgraft\config.toml`), or
+`.oxgraft/config.toml` in a workspace. Flags and `OXGRAFT_*` env vars override files.
+
+```toml
+model = "anthropic/claude-opus-5-5"
+profile = "default"            # default, baseline, ci, tolerant, codex-like, sandboxed, or a path
+effort = "high"                # Anthropic effort: low, medium, high, xhigh, max, none
+max_turns = 50
+max_tokens = 16000             # per response
+max_session_tokens = 2000000   # stop a run above this many tokens
+context_window = 200000        # compaction at 80%; 0 disables
+
+# User config only: workspaces whose own hooks and MCP servers may run.
+trusted_workspaces = ["/home/me/code/my-repo"]
+
+[[hooks]]
+event = "post_tool"            # pre_tool | post_tool | session_end
+tools = ["edit", "write"]      # empty = all tools
+command = "cargo fmt --all"    # exit 2 = feedback to the model (post) or block (pre)
+
+[mcp_servers.github]
+command = "github-mcp-server"
+args = ["stdio"]
+env = { GITHUB_TOKEN = "…" }
+```
+
+A project `.mcp.json` (`{"mcpServers": {...}}`, the Claude Code format) is read
+only for trusted workspaces.
+
+## Project instructions and skills
+
+Oxgraft reads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and
+`.github/copilot-instructions.md` (with `@file` imports), and Agent Skills from
+`.agents/skills/`, `.claude/skills/` and the same folders in your home
+directory. Existing setups for other harnesses work unchanged.
+
+## Profiles
+
+A profile picks one strategy per seam. `oxgraft strategies` lists every
+strategy and the harness it was learned from.
+
+| Profile | Edit format | Sandbox | Use |
+|---|---|---|---|
+| `default` | search_replace | none | everyday use |
+| `tolerant` | search_replace_tolerant | none | models that mangle whitespace |
+| `codex-like` | apply_patch | none | Codex-family models |
+| `sandboxed` | search_replace | workspace_write | unattended runs on Linux/macOS |
+| `ci` | search_replace | none (approve all) | inside an outer container |
+| `baseline` | whole_file | none | the floor every graft is measured against |
