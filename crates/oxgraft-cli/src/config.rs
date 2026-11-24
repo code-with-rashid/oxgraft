@@ -152,6 +152,15 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         if !c.trusted_workspaces.is_empty() {
             cfg.warnings.push("`trusted_workspaces` is only read from the user config".into());
         }
+        // GRAFT-0034 (Codex): a cloned repo must not redirect prompts and keys to a
+        // provider of its choosing. Untrusted workspaces may not set the model.
+        let mut c = c;
+        if !is_trusted && let Some(model) = c.model.take() {
+            cfg.warnings.push(format!(
+                "ignoring `model = \"{model}\"` in {}: workspace not trusted (add it to `trusted_workspaces`, or pass --model)",
+                ws_path.display()
+            ));
+        }
         layers.push((ws_path.display().to_string(), c));
     }
     layers.push((
@@ -233,9 +242,8 @@ mod tests {
         .unwrap();
         let flags = Flags { model: None, profile: Some("baseline"), effort: None, max_turns: None };
         let cfg = resolve(&ws, &flags).unwrap();
-        if std::env::var("OXGRAFT_MODEL").is_err() {
-            assert_eq!(cfg.model.as_deref(), Some("ollama/qwen3"));
-        }
+        assert_ne!(cfg.model.as_deref(), Some("ollama/qwen3"), "untrusted workspace must not pick the model");
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `model")));
         assert_eq!(cfg.profile, "baseline");
         assert!(cfg.hooks.iter().all(|h| h.command != "evil"), "untrusted workspace hooks must not load");
         assert!(cfg.warnings.iter().any(|w| w.contains("ignoring 1 hook")));

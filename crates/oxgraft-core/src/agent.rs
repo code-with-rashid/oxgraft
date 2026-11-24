@@ -448,7 +448,14 @@ impl<'a> Agent<'a> {
                     emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
                     return ToolOutput::error(format!("Blocked by a pre_tool hook: {reason}"));
                 }
-                HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+                // Fail closed (GRAFT-0033): a guard that cannot run must not wave the call through.
+                HookResult::Failed(msg) => {
+                    emit(&Event::Warning { message: msg.clone() });
+                    emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
+                    return ToolOutput::error(format!(
+                        "Blocked: a pre_tool hook failed ({msg}), so the call was not run."
+                    ));
+                }
             }
         }
 

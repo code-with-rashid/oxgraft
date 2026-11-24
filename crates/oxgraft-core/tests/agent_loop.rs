@@ -433,3 +433,23 @@ fn caps_tool_calls_per_turn() {
     assert!(r[32..].iter().all(|(ok, out)| !ok && out.contains("at most 32")));
     assert_eq!(session.messages[2].content.len(), 40);
 }
+
+#[test]
+fn failing_pre_tool_hooks_fail_closed() {
+    let ws = Ws::new("hookfail");
+    let hooks = vec![oxgraft_core::hooks::Hook {
+        event: oxgraft_core::hooks::HookEvent::PreTool,
+        tools: vec!["write".into()],
+        command: "exit 1".into(),
+        timeout_secs: 5,
+    }];
+    let (_, events, _) = run_with(
+        &ws,
+        json!({"turns": [{"tool_calls": [{"name": "write", "input": {"path": "w.txt", "content": "x"}}]}, {"text": "ok"}]}),
+        |c| c.hooks = hooks,
+        None,
+    );
+    let r = tool_results(&events);
+    assert!(!r[0].0 && r[0].1.contains("pre_tool hook failed"), "{:?}", r[0]);
+    assert!(!ws.0.join("w.txt").exists());
+}

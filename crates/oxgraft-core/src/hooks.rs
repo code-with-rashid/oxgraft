@@ -11,7 +11,8 @@
 //! `OXGRAFT_TOOL_INPUT` (JSON) and, for post_tool, `OXGRAFT_TOOL_OUTPUT`.
 //! Exit code 2 is feedback for the model: a pre_tool hook blocks the call with its
 //! stderr as the reason; a post_tool hook's stderr is appended to the tool result.
-//! Other non-zero exits are reported as warnings and otherwise ignored.
+//! Other failures (non-zero exit, timeout, cannot start) of a pre_tool hook block the
+//! call (fail closed, GRAFT-0033); for post_tool and session_end they are warnings.
 
 use std::io::Read as _;
 use std::path::Path;

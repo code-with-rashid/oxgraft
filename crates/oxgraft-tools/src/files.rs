@@ -222,7 +222,18 @@ impl Tool for Edit {
         };
         let updated = match result {
             Ok(text) => text,
-            Err(e) => return ToolOutput::error(format!("edit failed, `{path}` unchanged: {e}")),
+            Err(e) => {
+                let probe = if legacy { input["old_string"].as_str().unwrap_or("") } else { edit };
+                let hint = nearest_lines(&base, probe)
+                    .map(|h| {
+                        format!(
+                            "
+{h}"
+                        )
+                    })
+                    .unwrap_or_default();
+                return ToolOutput::error(format!("edit failed, `{path}` unchanged: {e}{hint}"));
+            }
         };
         if updated == base {
             return ToolOutput::error(format!("edit made no change to `{path}`"));
@@ -388,5 +399,49 @@ mod limits {
         file.set_len(MAX_EDIT_BYTES + 1).unwrap(); // sparse: no real disk use
         let out = f.run(&Edit, json!({"path": "big.log", "edit": "x"}));
         assert!(out.is_error && out.content.contains("MB limit"), "{}", out.content);
+    }
+}
+
+/// "Did you mean" hint for a failed edit (GRAFT-0035, after Aider and goose): find the
+/// first line of the edit's search text that exists in the file (ignoring whitespace)
+/// and show it with surrounding lines and numbers.
+fn nearest_lines(file: &str, edit: &str) -> Option<String> {
+    let is_marker = |l: &str| {
+        let t = l.trim();
+        t.starts_with("<<<<<<<")
+            || t.starts_with("=======")
+            || t.starts_with(">>>>>>>")
+            || t.starts_with("***")
+            || t.starts_with("@@")
+    };
+    let lines: Vec<&str> = file.lines().collect();
+    for candidate in edit.lines().filter(|l| !is_marker(l)) {
+        let wanted = candidate.trim_start_matches(['+', '-', ' ']).trim();
+        if wanted.len() < 4 {
+            continue;
+        }
+        if let Some(i) = lines.iter().position(|l| l.trim() == wanted) {
+            let start = i.saturating_sub(2);
+            let end = (i + 3).min(lines.len());
+            let shown: Vec<String> = (start..end).map(|n| format!("{:>6}\t{}", n + 1, lines[n])).collect();
+            return Some(format!("Closest match in the file (copy these lines exactly):\n{}", shown.join("\n")));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod hints {
+    use super::*;
+    use crate::testing::Fixture;
+
+    #[test]
+    fn failed_edits_show_the_nearest_real_lines() {
+        let f = Fixture::new("hint");
+        f.file("a.py", "def f():\n    return 1\n\ndef g():\n    return 2\n");
+        let edit = "<<<<<<< SEARCH\ndef g():\n  return 2\n=======\ndef g():\n  return 3\n>>>>>>> REPLACE";
+        let out = f.run(&Edit, json!({"path": "a.py", "edit": edit}));
+        assert!(out.is_error);
+        assert!(out.content.contains("Closest match") && out.content.contains("     4\tdef g():"), "{}", out.content);
     }
 }

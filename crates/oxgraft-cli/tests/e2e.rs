@@ -149,6 +149,14 @@ fn workspace_config_and_profiles() {
     std::fs::create_dir_all(ws.0.join(".oxgraft")).unwrap();
     std::fs::write(ws.0.join(".oxgraft/config.toml"), format!("model = {:?}\nprofile = \"baseline\"\n", model))
         .unwrap();
+    // GRAFT-0034: an untrusted workspace cannot choose the model.
+    let out = ws.oxgraft(&["run", "--json", "hi"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("workspace not trusted"));
+    let user_dir = ws.0.join("no-user-config").join("oxgraft");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::write(user_dir.join("config.toml"), format!("trusted_workspaces = [{:?}]\n", ws.0.display().to_string()))
+        .unwrap();
     let out = ws.oxgraft(&["run", "--json", "hi"]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     let ev = events(&out);

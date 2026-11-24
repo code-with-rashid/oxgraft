@@ -46,3 +46,7 @@ honestly: an iteration is only logged when its tests pass.
 | 38 | 2026-11-25 | (stability) | At most 32 tool calls run per turn; the rest get an error result (history stays valid) | avoid | — | SPEC-0003 | `caps_tool_calls_per_turn` |
 | 39 | 2026-11-25 | claude-code | `oxgraft doctor`: config, model/credentials, profile, live sandbox, MCP, shell, git, instructions, skills | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |
 | 40 | 2026-11-25 | codex, claude-code | `oxgraft init` writes a verified AGENTS.md through the normal loop | adopt | GRAFT-0032 | SPEC-0004 | `init_writes_agents_md_through_the_loop` |
+| 41 | 2026-11-25 | codex, claude-code, opencode, gemini-cli, aider, goose | First upstream reviews at pinned tags; profiles and `last_reviewed` set for six harnesses | review | — | — | `check-learning` |
+| 42 | 2026-11-25 | goose | pre_tool hooks fail closed (found the same flaw in Oxgraft) | avoid | GRAFT-0033 | SPEC-0005 | `failing_pre_tool_hooks_fail_closed` |
+| 43 | 2026-11-25 | codex | Untrusted workspaces cannot choose the model/provider | adopt | GRAFT-0034 | SPEC-0004 | `workspace_config_and_profiles` |
+| 44 | 2026-11-25 | aider, goose | Failed edits return the nearest real lines with numbers | adopt | GRAFT-0035 | SPEC-0002 | `failed_edits_show_the_nearest_real_lines` |

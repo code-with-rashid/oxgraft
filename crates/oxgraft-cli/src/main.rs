@@ -233,6 +233,9 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         },
     )
     .map_err(usage)?;
+    for warning in &cfg.warnings {
+        eprintln!("oxgraft: warning: {warning}");
+    }
     let model_spec = cfg.model.clone().ok_or_else(|| {
         usage(
             "no model configured. Set ANTHROPIC_API_KEY to use anthropic/claude-opus-5-5, or pass --model \
@@ -251,9 +254,6 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.max_session_tokens = cfg.max_session_tokens;
     config.context_window = cfg.context_window;
     config.hooks = cfg.hooks.clone();
-    for warning in &cfg.warnings {
-        eprintln!("oxgraft: warning: {warning}");
-    }
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {
         match oxgraft_tools::mcp::connect(name, server, &ws) {
