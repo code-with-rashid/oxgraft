@@ -61,6 +61,8 @@ pub struct AgentConfig {
     pub hooks: Vec<Hook>,
     /// Model context window in tokens; compaction runs above 80% of it. `None` disables it.
     pub context_window: Option<u64>,
+    /// Offer the read-only `task` subagent tool.
+    pub subagents: bool,
 }
 
 impl AgentConfig {
@@ -77,6 +79,7 @@ impl AgentConfig {
             max_session_tokens: None,
             hooks: Vec::new(),
             context_window: Some(200_000),
+            subagents: true,
         }
     }
 
@@ -128,7 +131,11 @@ impl std::fmt::Debug for Agent<'_> {
 struct RunState {
     always: HashSet<String>,
     recent: Vec<(String, Value)>,
+    depth: u32,
 }
+
+/// Tools a subagent may use: read-only, so its work never needs undo.
+const SUBAGENT_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "skill"];
 
 impl<'a> Agent<'a> {
     pub fn new(
@@ -141,8 +148,56 @@ impl<'a> Agent<'a> {
         Self { toolkit, provider, tools, approver, config, sleep: std::thread::sleep }
     }
 
-    fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.iter().map(|t| t.spec(self.toolkit.edit_format.as_ref())).collect()
+    /// Tools visible at a nesting depth: everything at the top level (plus `task`
+    /// when subagents are enabled); read-only tools inside a subagent.
+    fn specs(&self, depth: u32) -> Vec<ToolSpec> {
+        let mut specs: Vec<ToolSpec> = self
+            .tools
+            .iter()
+            .map(|t| t.spec(self.toolkit.edit_format.as_ref()))
+            .filter(|s| depth == 0 || SUBAGENT_TOOLS.contains(&s.name.as_str()))
+            .collect();
+        if depth == 0 && self.config.subagents {
+            specs.push(ToolSpec {
+                name: "task".into(),
+                description: "Delegate a self-contained exploration or research question to a subagent with a fresh \
+                    context. It can read, list, glob and grep (no edits or commands) and returns a concise report. \
+                    Use it to search large codebases without filling your own context; give it a precise prompt."
+                    .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string", "description": "3-5 word label"},
+                        "prompt": {"type": "string", "description": "What to find out, and what to report back"}
+                    },
+                    "required": ["prompt"]
+                }),
+            });
+        }
+        specs
+    }
+
+    /// Run a read-only subagent (GRAFT-0026) and return its final report.
+    fn subagent(&self, session: &mut Session, input: &Value) -> ToolOutput {
+        let Some(prompt) = input.get("prompt").and_then(Value::as_str).filter(|p| !p.trim().is_empty()) else {
+            return ToolOutput::error("missing required field `prompt`");
+        };
+        let mut sub = Session::new(&self.config.model, "subagent", &self.config.workspace);
+        let label = input.get("description").and_then(Value::as_str).unwrap_or("subagent");
+        sub.title = format!("[subagent] {label}");
+        let task = format!(
+            "{prompt}\n\nYou are a read-only subagent: investigate with the available tools, then reply with a concise, \
+             specific report (file paths, line numbers, findings). Do not ask questions."
+        );
+        let outcome = self.run_at(&mut sub, &task, &mut |_| {}, 1);
+        session.usage.add(outcome.usage);
+        match outcome.status {
+            Status::Done if !outcome.final_text.trim().is_empty() => ToolOutput::ok(outcome.final_text),
+            Status::Done => ToolOutput::error("the subagent finished without a report"),
+            Status::Stopped(r) | Status::Failed(r) => {
+                ToolOutput::error(format!("the subagent stopped early ({r}). Partial report:\n{}", outcome.final_text))
+            }
+        }
     }
 
     pub fn system_prompt(&self) -> String {
@@ -157,6 +212,10 @@ impl<'a> Agent<'a> {
     /// Run one user task to completion. `emit` receives every protocol event;
     /// `session` is saved after every turn.
     pub fn run(&self, session: &mut Session, task: &str, emit: &mut dyn FnMut(&Event)) -> Outcome {
+        self.run_at(session, task, emit, 0)
+    }
+
+    fn run_at(&self, session: &mut Session, task: &str, emit: &mut dyn FnMut(&Event), depth: u32) -> Outcome {
         emit(&Event::SessionStarted {
             protocol: PROTOCOL_VERSION,
             profile: self.toolkit.profile.name.clone(),
@@ -179,8 +238,8 @@ impl<'a> Agent<'a> {
         self.save(session, emit);
 
         let system = self.system_prompt();
-        let specs = self.specs();
-        let mut state = RunState { always: HashSet::new(), recent: Vec::new() };
+        let specs = self.specs(depth);
+        let mut state = RunState { always: HashSet::new(), recent: Vec::new(), depth };
         let mut usage = Usage::default();
         let mut continuations = 0;
         let mut final_text = String::new();
@@ -349,8 +408,12 @@ impl<'a> Agent<'a> {
         emit: &mut dyn FnMut(&Event),
     ) -> ToolOutput {
         let edit = self.toolkit.edit_format.as_ref();
-        let Some(tool) = self.tools.iter().find(|t| t.spec(edit).name == name) else {
-            let names: Vec<String> = self.specs().into_iter().map(|s| s.name).collect();
+        if name == "task" && state.depth == 0 && self.config.subagents {
+            return self.subagent(session, input);
+        }
+        let visible = state.depth == 0 || SUBAGENT_TOOLS.contains(&name);
+        let Some(tool) = self.tools.iter().find(|t| visible && t.spec(edit).name == name) else {
+            let names: Vec<String> = self.specs(state.depth).into_iter().map(|s| s.name).collect();
             return ToolOutput::error(format!("unknown tool `{name}`; available tools: {}", names.join(", ")));
         };
 

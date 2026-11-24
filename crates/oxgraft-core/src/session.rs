@@ -107,7 +107,9 @@ impl Session {
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
             .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-            .filter_map(|t| serde_json::from_str(&t).ok())
+            .filter_map(|t| serde_json::from_str::<Session>(&t).ok())
+            // Subagent runs are internal; `last` must mean the user's session.
+            .filter(|s| s.profile != "subagent")
             .collect();
         sessions.sort_by(|a, b| b.id.cmp(&a.id));
         sessions

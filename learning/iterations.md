@@ -35,3 +35,5 @@ honestly: an iteration is only logged when its tests pass.
 | 27 | 2026-11-25 | pi, opencode, claude-code | Append-only context compaction via handover summary | adopt | GRAFT-0023 | SPEC-0003 | `compacts_context_and_continues` |
 | 28 | 2026-11-25 | codex | `apply_patch` edit format + `codex-like` profile | adopt | GRAFT-0024 | SPEC-0002 | apply_patch strategy tests |
 | 29 | 2026-11-25 | codex, claude-code (avoiding opencode/pi gap) | OS sandbox for bash: bubblewrap / Seatbelt, workspace-write, offline, fails closed; `sandboxed` profile | adopt | GRAFT-0025 | SPEC-0002 | `confines_writes_to_the_workspace_when_available` |
+| 30 | 2026-11-25 | opencode, claude-code | Read-only `task` subagent with a fresh context; hidden from `last` | adopt | GRAFT-0026 | SPEC-0005 | `subagent_explores_read_only_and_reports` |
+| 31 | 2026-11-25 | gemini-cli, opencode, claude-code | `web_fetch` tool (approval required, text only) | adopt | GRAFT-0027 | SPEC-0002 | `fetches_over_http_and_rejects_other_schemes` |

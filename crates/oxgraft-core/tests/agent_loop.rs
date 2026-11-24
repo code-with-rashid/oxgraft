@@ -334,3 +334,44 @@ fn compacts_context_and_continues() {
     assert!(session.messages[0].text().starts_with("task"));
     assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("compacted"))));
 }
+
+#[test]
+fn subagent_explores_read_only_and_reports() {
+    let ws = Ws::new("subagent");
+    std::fs::write(ws.0.join("needle.txt"), "the answer is 42\n").unwrap();
+    let (status, events, _) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "task", "input": {"description": "find answer", "prompt": "find the answer"}}]},
+            {"tool_calls": [{"name": "grep", "input": {"pattern": "answer"}}, {"name": "write", "input": {"path": "x", "content": "x"}}]},
+            {"text": "REPORT: needle.txt:1 says 42"},
+            {"text": "The answer is 42."}
+        ]}),
+        |_| {},
+        None,
+    );
+    assert_eq!(status, Status::Done);
+    let results = tool_results(&events);
+    assert_eq!(results.len(), 1, "subagent events stay internal: {results:?}");
+    assert!(results[0].0 && results[0].1.contains("REPORT: needle.txt:1"), "{:?}", results[0]);
+    assert!(!ws.0.join("x").exists(), "subagents cannot write");
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::SessionFinished { .. })).count(), 1);
+}
+
+#[test]
+fn subagent_sessions_are_not_listed() {
+    let ws = Ws::new("sublist");
+    let (_, _, session) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "task", "input": {"prompt": "look"}}]},
+            {"text": "REPORT"},
+            {"text": "done"}
+        ]}),
+        |_| {},
+        None,
+    );
+    let listed = Session::list(&ws.0);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, session.id);
+}

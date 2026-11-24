@@ -7,6 +7,7 @@ pub mod mcp;
 mod sandbox;
 mod search;
 pub mod util;
+mod web;
 
 use oxgraft_seams::Tool;
 
@@ -14,6 +15,7 @@ pub use bash::Bash;
 pub use extra::{Skill, SkillInfo, Todo, discover_skills, skill_dirs, skills_prompt};
 pub use files::{Edit, Ls, Read, Write};
 pub use search::{Glob, Grep};
+pub use web::WebFetch;
 
 /// Default cap on characters returned to the model per tool call.
 pub const DEFAULT_MAX_OUTPUT: usize = 30_000;
@@ -29,6 +31,7 @@ pub fn builtin() -> Vec<Box<dyn Tool>> {
         Box::new(Grep),
         Box::new(Bash),
         Box::new(Todo),
+        Box::new(WebFetch),
     ]
 }
 
