@@ -92,6 +92,10 @@ impl EditFormat for SearchReplace {
         }
         Ok(text)
     }
+
+    fn instructions(&self) -> &'static str {
+        "`edit` is one or more SEARCH/REPLACE blocks:\n<<<<<<< SEARCH\nexact existing lines\n=======\nreplacement lines\n>>>>>>> REPLACE\nThe SEARCH text must match the file exactly (including indentation) and occur exactly once; include enough surrounding lines to make it unique. Blocks apply in order."
+    }
 }
 
 #[cfg(test)]

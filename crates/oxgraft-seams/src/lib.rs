@@ -12,6 +12,15 @@ use std::fmt;
 
 use serde::Serialize;
 
+pub mod model;
+pub mod tool;
+
+pub use model::{
+    Block, Completion, CompletionRequest, ErrorKind, Message, Provider, ProviderError, Role, StopReason, ToolSpec,
+    Usage,
+};
+pub use tool::{FileSnapshot, Tool, ToolContext, ToolOutput};
+
 /// A capability axis on which harnesses differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +113,9 @@ pub enum EditError {
 pub trait EditFormat: Strategy {
     /// Apply `edit` (in this format) to `original`, returning the new content.
     fn apply(&self, original: &str, edit: &str) -> Result<String, EditError>;
+
+    /// How to write an edit in this format; shown to the model in the `edit` tool description.
+    fn instructions(&self) -> &'static str;
 }
 
 // -------------------------------------------------------------------- context

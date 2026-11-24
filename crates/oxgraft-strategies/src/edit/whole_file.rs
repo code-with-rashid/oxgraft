@@ -21,6 +21,10 @@ impl EditFormat for WholeFile {
     fn apply(&self, _original: &str, edit: &str) -> Result<String, EditError> {
         Ok(edit.to_owned())
     }
+
+    fn instructions(&self) -> &'static str {
+        "`edit` is the complete new content of the file. Include every line, not just the changed ones."
+    }
 }
 
 #[cfg(test)]

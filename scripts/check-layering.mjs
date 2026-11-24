@@ -7,8 +7,17 @@ const ALLOWED = {
   "oxgraft-protocol": [],
   "oxgraft-seams": [],
   "oxgraft-strategies": ["oxgraft-seams"],
+  "oxgraft-providers": ["oxgraft-seams"],
+  "oxgraft-tools": ["oxgraft-seams"],
   "oxgraft-core": ["oxgraft-seams", "oxgraft-protocol"],
-  oxgraft: ["oxgraft-core", "oxgraft-strategies", "oxgraft-seams", "oxgraft-protocol"],
+  oxgraft: [
+    "oxgraft-core",
+    "oxgraft-strategies",
+    "oxgraft-seams",
+    "oxgraft-protocol",
+    "oxgraft-providers",
+    "oxgraft-tools",
+  ],
 };
 
 let meta;

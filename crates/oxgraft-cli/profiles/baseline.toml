@@ -1,0 +1,10 @@
+# The simplest possible harness. Every graft is measured against this too,
+# so we know how much each borrowed idea actually adds.
+name = "baseline"
+description = "Whole-file edits and naive context: the floor to measure grafts against."
+
+[strategies]
+edit_format = "whole_file"
+context = "pinned_then_in_order"
+approval = "ordered_rules"
+sandbox = "none"

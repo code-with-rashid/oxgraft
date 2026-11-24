@@ -1,0 +1,24 @@
+[package]
+name = "oxgraft-tools"
+description = "Built-in tools for the Oxgraft coding harness: read, write, edit, ls, glob, grep, bash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Layering rule: depends on oxgraft-seams only.
+[dependencies]
+oxgraft-seams.workspace = true
+serde_json.workspace = true
+globset = "0.4"
+ignore = "0.4"
+regex = "1"
+wait-timeout = "0.2"
+
+[dev-dependencies]
+oxgraft-strategies.workspace = true
+
+[lints]
+workspace = true

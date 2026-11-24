@@ -1,6 +1,14 @@
 //! The Oxgraft core. Knows seams, not strategies: the binary injects every
 //! available strategy and a [`Profile`] picks one per seam.
 
+pub mod agent;
+pub mod prompt;
+pub mod retry;
+pub mod session;
+
+pub use agent::{Agent, AgentConfig, Answer, Approver, Fixed, Outcome, Status};
+pub use session::Session;
+
 use oxgraft_protocol::{Event, PROTOCOL_VERSION};
 use oxgraft_seams::{ApprovalPolicy, ContextStrategy, EditFormat, Sandbox, Seam, Strategy};
 use serde::{Deserialize, Serialize};
@@ -107,7 +115,12 @@ impl Toolkit {
     /// The opening events of a session: which profile and strategies are in force.
     /// Arena runs record these so every result is tied to an exact configuration.
     pub fn session_preamble(&self) -> Vec<Event> {
-        let mut events = vec![Event::SessionStarted { protocol: PROTOCOL_VERSION, profile: self.profile.name.clone() }];
+        let mut events = vec![Event::SessionStarted {
+            protocol: PROTOCOL_VERSION,
+            profile: self.profile.name.clone(),
+            session_id: None,
+            model: None,
+        }];
         let ids = [
             (Seam::EditFormat, self.edit_format.info().id),
             (Seam::Context, self.context.info().id),
@@ -137,6 +150,9 @@ mod tests {
     impl EditFormat for Fake {
         fn apply(&self, _o: &str, e: &str) -> Result<String, EditError> {
             Ok(e.into())
+        }
+        fn instructions(&self) -> &'static str {
+            ""
         }
     }
     impl ContextStrategy for Fake {
@@ -183,7 +199,10 @@ sandbox = "s1"
         assert_eq!(toolkit.edit_format.info().id, "e2");
         let preamble = toolkit.session_preamble();
         assert_eq!(preamble.len(), 1 + Seam::ALL.len());
-        assert_eq!(preamble[0], Event::SessionStarted { protocol: PROTOCOL_VERSION, profile: "test".into() });
+        assert_eq!(
+            preamble[0],
+            Event::SessionStarted { protocol: PROTOCOL_VERSION, profile: "test".into(), session_id: None, model: None }
+        );
     }
 
     #[test]

@@ -14,8 +14,14 @@ authors.workspace = true
 oxgraft-protocol.workspace = true
 oxgraft-seams.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+oxgraft-providers.workspace = true
+oxgraft-strategies.workspace = true
+oxgraft-tools.workspace = true
 
 [lints]
 workspace = true

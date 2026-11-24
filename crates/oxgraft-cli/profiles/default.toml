@@ -1,0 +1,10 @@
+# The current Oxgraft defaults. Change a line here only when a graft's
+# evaluation shows it beats the current default (see learning/README.md).
+name = "default"
+description = "Oxgraft's current best-known combination."
+
+[strategies]
+edit_format = "search_replace"
+context = "pinned_then_in_order"
+approval = "ordered_rules"
+sandbox = "none"

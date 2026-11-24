@@ -5,10 +5,9 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/code-with-rashid/oxgraft"
-homepage = "https://github.com/code-with-rashid/oxgraft"
 authors = ["Rashid Mahmood"]
 
 [workspace.dependencies]
@@ -16,6 +15,8 @@ oxgraft-protocol = { path = "crates/oxgraft-protocol", version = "0.0.1" }
 oxgraft-seams = { path = "crates/oxgraft-seams", version = "0.0.1" }
 oxgraft-strategies = { path = "crates/oxgraft-strategies", version = "0.0.1" }
 oxgraft-core = { path = "crates/oxgraft-core", version = "0.0.1" }
+oxgraft-providers = { path = "crates/oxgraft-providers", version = "0.0.1" }
+oxgraft-tools = { path = "crates/oxgraft-tools", version = "0.0.1" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

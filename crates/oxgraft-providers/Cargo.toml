@@ -1,0 +1,19 @@
+[package]
+name = "oxgraft-providers"
+description = "Model providers for Oxgraft: Anthropic, OpenAI-compatible APIs (OpenAI, OpenRouter, Ollama, ...), and a scripted mock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Layering rule: depends on oxgraft-seams only.
+[dependencies]
+oxgraft-seams.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2", features = ["json"] }
+
+[lints]
+workspace = true
