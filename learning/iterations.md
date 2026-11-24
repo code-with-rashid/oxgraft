@@ -44,3 +44,4 @@ honestly: an iteration is only logged when its tests pass.
 | 36 | 2026-11-25 | (stability) | Size caps: read 50 MB, edit 10 MB, grep skips files over 5 MB (no OOM on logs/dumps) | avoid | — | SPEC-0002 | `huge_files_are_refused_not_loaded` |
 | 37 | 2026-11-25 | (stability) | Fuzz test: 12 000 malformed edits across all edit formats, plus approval/context/sandbox seams, never panic | — | — | SPEC-0002 | `edit_formats_never_panic` |
 | 38 | 2026-11-25 | (stability) | At most 32 tool calls run per turn; the rest get an error result (history stays valid) | avoid | — | SPEC-0003 | `caps_tool_calls_per_turn` |
+| 39 | 2026-11-25 | claude-code | `oxgraft doctor`: config, model/credentials, profile, live sandbox, MCP, shell, git, instructions, skills | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |

@@ -64,6 +64,13 @@ pub fn confined(command: &str, workspace: &Path, writable: &[String], network: b
     Err("no OS sandbox is supported on this platform (Linux: bubblewrap, macOS: Seatbelt)".into())
 }
 
+/// Check that the OS sandbox can actually run a command here.
+pub fn check(workspace: &Path) -> Result<(), String> {
+    let mut c = confined("true", workspace, &[], false)?;
+    let out = c.current_dir(workspace).output().map_err(|e| e.to_string())?;
+    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

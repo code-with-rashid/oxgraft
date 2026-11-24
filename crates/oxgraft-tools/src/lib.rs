@@ -17,6 +17,11 @@ pub use files::{Edit, Ls, Read, Write};
 pub use search::{Glob, Grep};
 pub use web::WebFetch;
 
+/// Whether the OS sandbox used by `workspace_write` works in this workspace.
+pub fn sandbox_check(workspace: &std::path::Path) -> Result<(), String> {
+    sandbox::check(workspace)
+}
+
 /// Default cap on characters returned to the model per tool call.
 pub const DEFAULT_MAX_OUTPUT: usize = 30_000;
 

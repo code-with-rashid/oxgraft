@@ -214,3 +214,17 @@ fn mcp_tools_work_end_to_end() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn doctor_reports_problems_and_readiness() {
+    let ws = Ws::new("doctor");
+    let out = ws.oxgraft(&["doctor"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("FAIL model"), "{text}");
+    let model = ws.script(json!([]));
+    let out = ws.oxgraft(&["doctor", "--model", &model]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("ready"));
+}

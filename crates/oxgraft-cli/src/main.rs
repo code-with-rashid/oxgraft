@@ -69,6 +69,8 @@ enum Command {
     Sessions,
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Check the setup: model and credentials, shell, sandbox, git, skills, MCP, config.
+    Doctor,
     /// Show supported providers and how to configure them.
     Models,
     /// List every strategy and where it was learned from.
@@ -165,6 +167,7 @@ fn dispatch(cli: Cli) -> CliResult {
             oxgraft_tools::mcp::serve_fixture();
             Ok(0)
         }
+        Some(Command::Doctor) => doctor(&common),
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -431,4 +434,92 @@ impl Approver for TerminalApprover {
             }
         }
     }
+}
+
+/// `oxgraft doctor` (GRAFT-0031, after Claude Code's /doctor): check everything a
+/// session depends on and say what to fix. Exit 0 if a session can start.
+fn doctor(common: &Common) -> CliResult {
+    let ws = workspace(common)?;
+    let mut problems = 0;
+    let mut line = |ok: bool, what: &str, detail: String| {
+        if !ok {
+            problems += 1;
+        }
+        println!("{} {what:<14} {detail}", if ok { "ok  " } else { "FAIL" });
+    };
+    println!("oxgraft {} · workspace {}", env!("CARGO_PKG_VERSION"), ws.display());
+    let flags = config::Flags {
+        model: common.model.as_deref(),
+        profile: common.profile.as_deref(),
+        effort: common.effort.as_deref(),
+        max_turns: common.max_turns,
+    };
+    let cfg = match config::resolve(&ws, &flags) {
+        Ok(c) => {
+            let sources = if c.sources.is_empty() { "defaults only".to_string() } else { c.sources.join(", ") };
+            line(true, "config", sources);
+            for w in &c.warnings {
+                println!("warn {:<14} {w}", "config");
+            }
+            Some(c)
+        }
+        Err(e) => {
+            line(false, "config", e);
+            None
+        }
+    };
+    if let Some(cfg) = &cfg {
+        match &cfg.model {
+            None => {
+                line(false, "model", "none configured: set ANTHROPIC_API_KEY or pass --model provider/model".into())
+            }
+            Some(spec) => match oxgraft_providers::parse_model(spec)
+                .and_then(|m| oxgraft_providers::build(&m, &oxgraft_providers::Options::default()).map(|_| m))
+            {
+                Ok(m) => line(true, "model", format!("{spec} (credentials found for `{}`)", m.provider)),
+                Err(e) => line(false, "model", format!("{spec}: {}", e.message)),
+            },
+        }
+        match profiles::load(&ws, &cfg.profile).and_then(|(src, t)| {
+            Profile::from_toml(&t)
+                .map_err(|e| e.to_string())
+                .and_then(|p| Toolkit::assemble(p, available()).map_err(|e| e.to_string()))
+                .map(|tk| (src, tk))
+        }) {
+            Ok((src, tk)) => {
+                line(true, "profile", format!("{} ({src}), sandbox `{}`", tk.profile.name, tk.sandbox.info().id));
+                if tk.sandbox.info().id != "none" {
+                    match oxgraft_tools::sandbox_check(&ws) {
+                        Ok(()) => line(true, "sandbox", "OS sandbox works here".into()),
+                        Err(e) => line(false, "sandbox", format!("{e} (shell commands will be refused)")),
+                    }
+                }
+            }
+            Err(e) => line(false, "profile", e),
+        }
+        for (name, server) in &cfg.mcp_servers {
+            match oxgraft_tools::mcp::connect(name, server, &ws) {
+                Ok(tools) => line(true, "mcp", format!("{name}: {} tools", tools.len())),
+                Err(e) => line(false, "mcp", e),
+            }
+        }
+    }
+    let shell = match oxgraft_tools::shell_kind() {
+        oxgraft_tools::ShellKind::Posix(p) => format!("POSIX sh ({})", p.display()),
+        oxgraft_tools::ShellKind::PowerShell => "PowerShell (install Git for Windows for a POSIX sh)".into(),
+    };
+    line(true, "shell", shell);
+    let git = oxgraft_core::prompt::git_summary(&ws).map(|s| s.lines().next().unwrap_or("").trim().trim_start_matches("- ").to_string());
+    line(true, "git", git.unwrap_or_else(|| "not a git repository (undo still works)".into()));
+    let instructions: Vec<&str> =
+        oxgraft_core::prompt::INSTRUCTION_FILES.iter().copied().filter(|f| ws.join(f).is_file()).collect();
+    line(
+        true,
+        "instructions",
+        if instructions.is_empty() { "none (AGENTS.md recommended)".into() } else { instructions.join(", ") },
+    );
+    let skills = oxgraft_tools::discover_skills(&ws);
+    line(true, "skills", format!("{} found", skills.len()));
+    println!("\n{}", if problems == 0 { "ready".to_string() } else { format!("{problems} problem(s) found") });
+    Ok(if problems == 0 { 0 } else { EXIT_USAGE })
 }
