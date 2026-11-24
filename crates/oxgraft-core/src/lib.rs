@@ -87,10 +87,11 @@ impl std::fmt::Debug for Available {
 
 fn pick<T: ?Sized + Strategy>(items: Vec<Box<T>>, seam: Seam, id: &str) -> Result<Box<T>, ProfileError> {
     let available = items.iter().map(|s| s.info().id).collect::<Vec<_>>().join(", ");
-    items
-        .into_iter()
-        .find(|s| s.info().id == id)
-        .ok_or_else(|| ProfileError::UnknownStrategy { seam, id: id.to_owned(), available })
+    items.into_iter().find(|s| s.info().id == id).ok_or_else(|| ProfileError::UnknownStrategy {
+        seam,
+        id: id.to_owned(),
+        available,
+    })
 }
 
 impl Toolkit {
