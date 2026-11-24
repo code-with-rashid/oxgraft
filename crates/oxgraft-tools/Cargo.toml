@@ -11,6 +11,7 @@ authors.workspace = true
 # Layering rule: depends on oxgraft-seams only.
 [dependencies]
 oxgraft-seams.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 globset = "0.4"
 ignore = "0.4"

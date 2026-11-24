@@ -166,3 +166,50 @@ fn introspection_commands() {
     let out = ws.oxgraft(&["--version"]);
     assert!(String::from_utf8_lossy(&out.stdout).contains("oxgraft"));
 }
+
+// GRAFT-0022: MCP servers from the user config become tools; workspace .mcp.json needs trust.
+#[test]
+fn mcp_tools_work_end_to_end() {
+    let ws = Ws::new("mcp");
+    let user_dir = ws.0.join("no-user-config").join("oxgraft");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_oxgraft").replace('\\', "/");
+    std::fs::write(
+        user_dir.join("config.toml"),
+        format!("[mcp_servers.fixture]\ncommand = \"{exe}\"\nargs = [\"__mcp-fixture\"]\n"),
+    )
+    .unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [
+            {"name": "mcp__fixture__echo", "input": {"text": "hello"}},
+            {"name": "mcp__fixture__fail", "input": {}}
+        ]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "use mcp"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let results: Vec<(bool, String)> = events(&out)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::ToolResult { ok, output, .. } => Some((ok, output)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results[0], (true, "echo: hello".to_string()));
+    assert!(!results[1].0 && results[1].1.contains("it failed"));
+
+    // Untrusted project-level .mcp.json is ignored with a warning.
+    std::fs::write(user_dir.join("config.toml"), "").unwrap();
+    std::fs::write(
+        ws.0.join(".mcp.json"),
+        format!("{{\"mcpServers\":{{\"p\":{{\"command\":\"{exe}\",\"args\":[\"__mcp-fixture\"]}}}}}}"),
+    )
+    .unwrap();
+    let model = ws.script(json!([{"text": "hi"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "x"]);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("ignoring 1 MCP server"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

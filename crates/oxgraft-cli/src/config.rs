@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
 use oxgraft_core::hooks::Hook;
+use oxgraft_tools::mcp::ServerConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -17,7 +20,10 @@ pub struct FileConfig {
     pub max_session_tokens: Option<u64>,
     #[serde(default)]
     pub hooks: Vec<Hook>,
-    /// User config only: workspaces whose own hooks may run.
+    /// MCP servers to start (name -> command). Workspace entries need trust.
+    #[serde(default)]
+    pub mcp_servers: BTreeMap<String, ServerConfig>,
+    /// User config only: workspaces whose own hooks and MCP servers may run.
     #[serde(default)]
     pub trusted_workspaces: Vec<String>,
 }
@@ -31,6 +37,7 @@ pub struct Config {
     pub max_tokens: u32,
     pub max_session_tokens: Option<u64>,
     pub hooks: Vec<Hook>,
+    pub mcp_servers: BTreeMap<String, ServerConfig>,
     pub warnings: Vec<String>,
     pub sources: Vec<String>,
 }
@@ -79,6 +86,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_tokens: 16_000,
         max_session_tokens: None,
         hooks: Vec::new(),
+        mcp_servers: BTreeMap::new(),
         warnings: Vec::new(),
         sources: Vec::new(),
     };
@@ -90,19 +98,49 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
     {
         trusted = c.trusted_workspaces.clone();
         cfg.hooks.extend(c.hooks.clone());
+        cfg.mcp_servers.extend(c.mcp_servers.clone());
         layers.push((p.display().to_string(), c));
+    }
+    let is_trusted = trusted.iter().any(|t| same_dir(t, workspace));
+    // Claude Code-style project MCP file (.mcp.json), honoured only for trusted workspaces.
+    if let Ok(text) = std::fs::read_to_string(workspace.join(".mcp.json")) {
+        #[derive(Deserialize)]
+        struct McpJson {
+            #[serde(rename = "mcpServers", default)]
+            servers: BTreeMap<String, ServerConfig>,
+        }
+        match serde_json::from_str::<McpJson>(&text) {
+            Ok(m) if is_trusted => cfg.mcp_servers.extend(m.servers),
+            Ok(m) if !m.servers.is_empty() => cfg.warnings.push(format!(
+                "ignoring {} MCP server(s) in .mcp.json: add this workspace to `trusted_workspaces` in your user config to enable them",
+                m.servers.len()
+            )),
+            Ok(_) => {}
+            Err(e) => cfg.warnings.push(format!(".mcp.json is invalid: {e}")),
+        }
     }
     let ws_path = workspace.join(".oxgraft").join("config.toml");
     if let Some(c) = read(&ws_path)? {
         // A repository's own hooks are code from whoever wrote the repo: run them only
         // for workspaces the user has trusted in their own config (GRAFT-0019).
         if !c.hooks.is_empty() {
-            if trusted.iter().any(|t| same_dir(t, workspace)) {
+            if is_trusted {
                 cfg.hooks.extend(c.hooks.clone());
             } else {
                 cfg.warnings.push(format!(
                     "ignoring {} hook(s) in {}: add this workspace to `trusted_workspaces` in your user config to enable them",
                     c.hooks.len(),
+                    ws_path.display()
+                ));
+            }
+        }
+        if !c.mcp_servers.is_empty() {
+            if is_trusted {
+                cfg.mcp_servers.extend(c.mcp_servers.clone());
+            } else {
+                cfg.warnings.push(format!(
+                    "ignoring {} MCP server(s) in {}: workspace not trusted",
+                    c.mcp_servers.len(),
                     ws_path.display()
                 ));
             }

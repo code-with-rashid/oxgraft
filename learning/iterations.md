@@ -30,3 +30,5 @@ honestly: an iteration is only logged when its tests pass.
 | 22 | 2026-11-25 | cline, claude-code, codex | Ctrl-C interrupts the run and running commands; second Ctrl-C exits | adopt | GRAFT-0020 | SPEC-0003 | `cancellation_stops_before_the_next_turn` |
 | 23 | 2026-11-25 | cline | Resume repairs dangling tool calls from interrupted runs | adopt | GRAFT-0020 | SPEC-0004 | `resume_repairs_dangling_tool_calls` |
 | 24 | 2026-11-25 | openhands | Per-run token budget | avoid | GRAFT-0021 | SPEC-0003 | `token_budget_stops_runaway_sessions` |
+| 25 | 2026-11-25 | goose, claude-code, codex | MCP client over stdio with timeouts; tools as `mcp__server__tool` | adopt | GRAFT-0022 | SPEC-0002 | `mcp_tools_work_end_to_end` |
+| 26 | 2026-11-25 | claude-code, goose | `.mcp.json` / workspace MCP servers only in trusted workspaces | avoid | GRAFT-0019 | SPEC-0004 | `mcp_tools_work_end_to_end` |

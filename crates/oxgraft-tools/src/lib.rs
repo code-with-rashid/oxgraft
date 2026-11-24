@@ -3,6 +3,7 @@
 mod bash;
 mod extra;
 mod files;
+pub mod mcp;
 mod search;
 pub mod util;
 

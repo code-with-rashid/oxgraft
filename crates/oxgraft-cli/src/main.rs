@@ -82,6 +82,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run a tiny MCP server over stdio (for tests and MCP setup checks).
+    #[command(name = "__mcp-fixture", hide = true)]
+    McpFixture,
 }
 
 /// Exit codes (SPEC-0004 AC2).
@@ -158,6 +161,10 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             Ok(0)
         }
+        Some(Command::McpFixture) => {
+            oxgraft_tools::mcp::serve_fixture();
+            Ok(0)
+        }
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -230,7 +237,14 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     for warning in &cfg.warnings {
         eprintln!("oxgraft: warning: {warning}");
     }
-    let (tools, skills) = oxgraft_tools::for_workspace(&ws);
+    let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
+    for (name, server) in &cfg.mcp_servers {
+        match oxgraft_tools::mcp::connect(name, server, &ws) {
+            Ok(found) => tools.extend(found),
+            // One broken server must not stop the session (stability over completeness).
+            Err(e) => eprintln!("oxgraft: warning: {e}"),
+        }
+    }
     config.append_system = skills;
     // First Ctrl-C interrupts the current run (tools and model turns stop promptly);
     // a second one exits (GRAFT-0020).
