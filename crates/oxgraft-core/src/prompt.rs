@@ -133,6 +133,40 @@ pub fn today() -> String {
     civil_date(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0))
 }
 
+/// Just-in-time instructions (GRAFT-0037, after Gemini CLI): instruction files in the
+/// directories between a touched file and the workspace root (exclusive), each shown
+/// once per run, appended to the tool result so history stays append-only.
+pub fn nested_instructions(
+    workspace: &Path,
+    file: &Path,
+    shown: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> Option<String> {
+    let root = workspace.canonicalize().ok()?;
+    let mut dir = file.parent()?.to_path_buf();
+    let mut found = Vec::new();
+    while dir.starts_with(&root) && dir != root {
+        for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] {
+            let candidate = dir.join(name);
+            if candidate.is_file() && shown.insert(candidate.clone()) {
+                found.push(candidate);
+            }
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    if found.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for path in found.iter().rev() {
+        let text: String = std::fs::read_to_string(path).unwrap_or_default().chars().take(8_000).collect();
+        let rel = path.strip_prefix(&root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+        out.push_str(&format!("\n\n[Instructions from {rel} apply to files in its directory:]\n{}", text.trim()));
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

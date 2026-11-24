@@ -453,3 +453,25 @@ fn failing_pre_tool_hooks_fail_closed() {
     assert!(!r[0].0 && r[0].1.contains("pre_tool hook failed"), "{:?}", r[0]);
     assert!(!ws.0.join("w.txt").exists());
 }
+
+#[test]
+fn nested_instructions_are_shown_once_when_touched() {
+    let ws = Ws::new("jit");
+    std::fs::create_dir_all(ws.0.join("web/src")).unwrap();
+    std::fs::write(ws.0.join("web/AGENTS.md"), "Use pnpm in web/.").unwrap();
+    std::fs::write(ws.0.join("web/src/a.ts"), "export {}\n").unwrap();
+    std::fs::write(ws.0.join("web/src/b.ts"), "export {}\n").unwrap();
+    let (_, events, _) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "read", "input": {"path": "web/src/a.ts"}}]},
+            {"tool_calls": [{"name": "read", "input": {"path": "web/src/b.ts"}}]},
+            {"text": "ok"}
+        ]}),
+        |_| {},
+        None,
+    );
+    let r = tool_results(&events);
+    assert!(r[0].1.contains("[Instructions from web/AGENTS.md") && r[0].1.contains("Use pnpm in web/."), "{}", r[0].1);
+    assert!(!r[1].1.contains("Instructions from"), "shown only once");
+}

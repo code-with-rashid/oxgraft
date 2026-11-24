@@ -136,6 +136,8 @@ struct RunState {
     depth: u32,
     /// Files the model has read (or written) this run, with the mtime it saw.
     seen: HashMap<PathBuf, Option<std::time::SystemTime>>,
+    /// Subdirectory instruction files already shown this run.
+    instructions: HashSet<PathBuf>,
 }
 
 /// Tools a subagent may use: read-only, so its work never needs undo.
@@ -243,7 +245,13 @@ impl<'a> Agent<'a> {
 
         let system = self.system_prompt();
         let specs = self.specs(depth);
-        let mut state = RunState { always: HashSet::new(), recent: Vec::new(), depth, seen: HashMap::new() };
+        let mut state = RunState {
+            always: HashSet::new(),
+            recent: Vec::new(),
+            depth,
+            seen: HashMap::new(),
+            instructions: HashSet::new(),
+        };
         let mut usage = Usage::default();
         let mut continuations = 0;
         let mut final_text = String::new();
@@ -549,6 +557,11 @@ impl<'a> Agent<'a> {
             // After a read, or after our own write, the model's view matches the disk.
             let path = path.canonicalize().unwrap_or(path);
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            if let Some(extra) =
+                crate::prompt::nested_instructions(&self.config.workspace, &path, &mut state.instructions)
+            {
+                output.content.push_str(&extra);
+            }
             state.seen.insert(path, mtime);
         }
         for snap in snapshots.into_inner().unwrap_or_else(|e| e.into_inner()) {
