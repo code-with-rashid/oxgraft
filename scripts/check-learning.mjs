@@ -49,6 +49,13 @@ for (const file of readdirSync("learning/grafts").filter((f) => /^GRAFT-\d{4}-.+
   }
 }
 
+if (existsSync("learning/iterations.md")) {
+  const log = readFileSync("learning/iterations.md", "utf8");
+  for (const ref of new Set(log.match(/GRAFT-\d{4}/g) ?? [])) {
+    if (!ids.has(ref)) errors.push(`learning/iterations.md references ${ref}, which has no record in learning/grafts/`);
+  }
+}
+
 if (errors.length) {
   console.error("Learning records invalid:\n  " + errors.join("\n  "));
   process.exit(1);
