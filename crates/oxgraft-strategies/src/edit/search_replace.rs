@@ -32,7 +32,7 @@ const START: &str = "<<<<<<< SEARCH";
 const DIVIDER: &str = "=======";
 const END: &str = ">>>>>>> REPLACE";
 
-fn parse(edit: &str) -> Result<Vec<(String, String)>, EditError> {
+pub(crate) fn parse(edit: &str) -> Result<Vec<(String, String)>, EditError> {
     let mut blocks = Vec::new();
     let mut lines = edit.lines();
     while let Some(line) = lines.next() {

@@ -1,0 +1,11 @@
+# Default profile with whitespace-tolerant edits (GRAFT-0015). Candidate to
+# replace `default` once evaluated: it should cut failed edits from models that
+# re-indent or strip trailing spaces in SEARCH blocks.
+name = "tolerant"
+description = "Default strategies with whitespace-tolerant SEARCH/REPLACE edits."
+
+[strategies]
+edit_format = "search_replace_tolerant"
+context = "pinned_then_in_order"
+approval = "ordered_rules"
+sandbox = "none"

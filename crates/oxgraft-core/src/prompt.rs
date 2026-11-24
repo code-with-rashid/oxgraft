@@ -24,6 +24,9 @@ pub fn system_prompt(workspace: &Path, today: &str) -> String {
         workspace.display(),
         std::env::consts::OS
     );
+    if let Some(git) = git_summary(workspace) {
+        prompt.push_str(&git);
+    }
     let instructions = project_instructions(workspace);
     if !instructions.is_empty() {
         prompt.push_str(
@@ -32,6 +35,38 @@ pub fn system_prompt(workspace: &Path, today: &str) -> String {
         prompt.push_str(&instructions);
     }
     prompt
+}
+
+/// Branch and a short `git status` (GRAFT-0013, as Claude Code and Codex give the model repo state up front).
+pub fn git_summary(workspace: &Path) -> Option<String> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(workspace)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
+    };
+    let branch = git(&["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let status = git(&["status", "--porcelain"]).unwrap_or_default();
+    let lines: Vec<&str> = status.lines().collect();
+    let mut out = format!("- Git branch: {branch}\n");
+    if lines.is_empty() {
+        out.push_str("- Git status: clean\n");
+    } else {
+        out.push_str(&format!("- Git status ({} changed paths):\n", lines.len()));
+        for l in lines.iter().take(20) {
+            out.push_str(&format!("    {l}\n"));
+        }
+        if lines.len() > 20 {
+            out.push_str(&format!("    … {} more\n", lines.len() - 20));
+        }
+    }
+    Some(out)
 }
 
 /// Concatenate the instruction files that exist, resolving `@path` import lines

@@ -195,6 +195,7 @@ struct Setup {
     provider: Box<dyn oxgraft_seams::Provider>,
     model: String,
     config: AgentConfig,
+    tools: Vec<Box<dyn oxgraft_seams::Tool>>,
 }
 
 fn setup(common: &Common) -> Result<Setup, (u8, String)> {
@@ -224,7 +225,9 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;
-    Ok(Setup { ws, toolkit, provider, model: model_spec, config })
+    let (tools, skills) = oxgraft_tools::for_workspace(&ws);
+    config.append_system = skills;
+    Ok(Setup { ws, toolkit, provider, model: model_spec, config, tools })
 }
 
 fn status_code(status: &Status) -> u8 {
@@ -261,7 +264,7 @@ fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>) -
     } else {
         Box::new(TerminalApprover)
     };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), oxgraft_tools::builtin(), approver.as_ref(), s.config);
+    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     let mut renderer = render::Human::default();
     let outcome = agent.run(&mut session, task.trim(), &mut |e: &Event| {
         if json {
@@ -285,7 +288,7 @@ fn chat(common: &Common, resume: Option<String>) -> CliResult {
     };
     let approver: Box<dyn Approver> =
         if common.yes { Box::new(Fixed(Answer::Yes)) } else { Box::new(TerminalApprover) };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), oxgraft_tools::builtin(), approver.as_ref(), s.config);
+    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     eprintln!(
         "oxgraft · {} · profile {} · {}\nType a task. Commands: /undo, /sessions, /exit",
         s.model,

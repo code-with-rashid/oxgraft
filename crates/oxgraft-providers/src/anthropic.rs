@@ -57,11 +57,24 @@ impl Anthropic {
         Ok(Self { credential, base_url, effort, fallbacks })
     }
 
+    /// Explicit construction (tests, embedding). `fallbacks` enables server-side refusal fallbacks.
+    pub fn new(api_key: &str, base_url: &str, effort: Option<String>, fallbacks: bool) -> Self {
+        Self {
+            credential: Credential::ApiKey(api_key.into()),
+            base_url: base_url.trim_end_matches('/').into(),
+            effort,
+            fallbacks,
+        }
+    }
+
     pub fn request_body(&self, req: &CompletionRequest) -> Value {
         let mut body = json!({
             "model": req.model,
             "max_tokens": req.max_tokens,
             "messages": messages_json(req),
+            // Automatic prompt caching: the agent loop resends a growing, append-only
+            // prefix every turn, which is exactly what caching rewards.
+            "cache_control": {"type": "ephemeral"},
         });
         if !req.system.is_empty() {
             body["system"] = json!(req.system);

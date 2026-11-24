@@ -18,3 +18,10 @@ honestly: an iteration is only logged when its tests pass.
 | 10 | 2026-11-25 | mini-swe-agent | Loop guard on identical repeated calls | avoid | GRAFT-0007 | SPEC-0003 | `blocks_repeated_identical_calls` |
 | 11 | 2026-11-25 | aider | Never run tool calls truncated by max_tokens | avoid | GRAFT-0011 | SPEC-0003 | `handles_max_tokens` |
 | 12 | 2026-11-25 | codex, claude-code, pi | Headless JSONL events + exit codes | adopt | GRAFT-0010 | SPEC-0004 | CLI e2e tests |
+| 13 | 2026-11-25 | (stability) | Provider HTTP paths tested against a local fake server: headers, 429 + retry-after, 401, x-should-retry, refused connections, bad JSON | — | — | SPEC-0001 | `http_fake.rs` |
+| 14 | 2026-11-25 | claude-code | Anthropic automatic prompt caching on the append-only loop | adopt | GRAFT-0009 | SPEC-0001 | `anthropic_round_trip_over_http` |
+| 15 | 2026-11-25 | claude-code, codex | Git branch + status in the system prompt | adopt | GRAFT-0013 | SPEC-0003 | agent tests |
+| 16 | 2026-11-25 | opencode, claude-code | Edit tool accepts `old_string`/`new_string` | avoid | GRAFT-0014 | SPEC-0002 | `edit_accepts_old_new_string_inputs` |
+| 17 | 2026-11-25 | aider, cline | Whitespace-tolerant SEARCH/REPLACE strategy + `tolerant` profile | adopt | GRAFT-0015 | SPEC-0002 | tolerant strategy tests |
+| 18 | 2026-11-25 | claude-code, codex | `todo` plan tool | adopt | GRAFT-0016 | SPEC-0002 | `todo_renders_plan` |
+| 19 | 2026-11-25 | claude-code, codex, gemini-cli | Agent Skills discovery + `skill` tool | adopt | GRAFT-0017 | SPEC-0002 | `discovers_and_loads_workspace_skills` |

@@ -1,6 +1,7 @@
 //! Built-in tools (SPEC-0002). Small and sharp: read, write, edit, ls, glob, grep, bash.
 
 mod bash;
+mod extra;
 mod files;
 mod search;
 pub mod util;
@@ -8,6 +9,7 @@ pub mod util;
 use oxgraft_seams::Tool;
 
 pub use bash::Bash;
+pub use extra::{Skill, SkillInfo, Todo, discover_skills, skill_dirs, skills_prompt};
 pub use files::{Edit, Ls, Read, Write};
 pub use search::{Glob, Grep};
 
@@ -16,7 +18,28 @@ pub const DEFAULT_MAX_OUTPUT: usize = 30_000;
 
 /// Every built-in tool, in the order they are advertised.
 pub fn builtin() -> Vec<Box<dyn Tool>> {
-    vec![Box::new(Read), Box::new(Write), Box::new(Edit), Box::new(Ls), Box::new(Glob), Box::new(Grep), Box::new(Bash)]
+    vec![
+        Box::new(Read),
+        Box::new(Write),
+        Box::new(Edit),
+        Box::new(Ls),
+        Box::new(Glob),
+        Box::new(Grep),
+        Box::new(Bash),
+        Box::new(Todo),
+    ]
+}
+
+/// Built-in tools plus the `skill` tool when skills are installed, and the
+/// system-prompt section that advertises them.
+pub fn for_workspace(workspace: &std::path::Path) -> (Vec<Box<dyn Tool>>, Option<String>) {
+    let mut tools = builtin();
+    let skills = discover_skills(workspace);
+    let prompt = skills_prompt(&skills);
+    if !skills.is_empty() {
+        tools.push(Box::new(Skill { skills }));
+    }
+    (tools, prompt)
 }
 
 #[cfg(test)]

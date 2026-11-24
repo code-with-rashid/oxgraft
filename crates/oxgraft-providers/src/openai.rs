@@ -126,6 +126,11 @@ impl OpenAiCompatible {
         Ok(Self { preset, base_url, api_key })
     }
 
+    /// Explicit construction (tests, embedding).
+    pub fn new(preset: Preset, base_url: &str, api_key: Option<String>) -> Self {
+        Self { preset, base_url: base_url.trim_end_matches('/').into(), api_key }
+    }
+
     pub fn request_body(&self, req: &CompletionRequest) -> Value {
         let mut body = json!({ "model": req.model, "messages": messages_json(req) });
         // OpenAI's own API wants max_completion_tokens; most compatible servers accept max_tokens.

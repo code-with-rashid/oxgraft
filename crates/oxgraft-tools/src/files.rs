@@ -173,7 +173,10 @@ impl Tool for Edit {
 
     fn run(&self, input: &Value, ctx: &ToolContext<'_>) -> ToolOutput {
         let path = try_tool!(str_field(input, "path"));
-        let edit = try_tool!(str_field(input, "edit"));
+        // Models trained on other harnesses often send `old_string`/`new_string`
+        // (Claude Code, OpenCode). Accept that too rather than failing (GRAFT-0014).
+        let legacy = input.get("edit").is_none() && input.get("old_string").is_some();
+        let edit = if legacy { "" } else { try_tool!(str_field(input, "edit")) };
         let full = try_tool!(resolve(ctx.workspace, path));
         let original = match std::fs::read(&full) {
             Ok(b) if looks_binary(&b) => return ToolOutput::error(format!("`{path}` is binary; cannot edit")),
@@ -183,7 +186,21 @@ impl Tool for Edit {
         // Models often send \r\n-free edits for CRLF files: normalise, then restore.
         let crlf = original.contains("\r\n");
         let base = if crlf { original.replace("\r\n", "\n") } else { original.clone() };
-        let updated = match ctx.edit_format.apply(&base, &edit.replace("\r\n", "\n")) {
+        let result = if legacy {
+            let old = try_tool!(str_field(input, "old_string")).replace("\r\n", "\n");
+            let new = try_tool!(str_field(input, "new_string")).replace("\r\n", "\n");
+            let all = input.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
+            match base.matches(old.as_str()).count() {
+                _ if old.is_empty() => Err("`old_string` is empty".to_string()),
+                0 => Err(format!("`old_string` not found: {:?}", truncate(&old, 200))),
+                1 => Ok(base.replacen(old.as_str(), &new, 1)),
+                _ if all => Ok(base.replace(old.as_str(), &new)),
+                n => Err(format!("`old_string` matches {n} times; add context to make it unique or set replace_all")),
+            }
+        } else {
+            ctx.edit_format.apply(&base, &edit.replace("\r\n", "\n")).map_err(|e| e.to_string())
+        };
+        let updated = match result {
             Ok(text) => text,
             Err(e) => return ToolOutput::error(format!("edit failed, `{path}` unchanged: {e}")),
         };
@@ -303,6 +320,20 @@ mod tests {
         let snaps = f.snapshots.lock().unwrap();
         assert_eq!(snaps.len(), 1);
         assert_eq!(snaps[0].original.as_deref(), Some("fn a() {}\nfn b() {}\n".as_bytes()));
+    }
+
+    #[test]
+    fn edit_accepts_old_new_string_inputs() {
+        let f = Fixture::new("legacy");
+        f.file("a.txt", "x = 1\ny = 1\n");
+        let out = f.run(&Edit, json!({"path": "a.txt", "old_string": "y = 1", "new_string": "y = 2"}));
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(f.read("a.txt"), "x = 1\ny = 2\n");
+        let out = f.run(&Edit, json!({"path": "a.txt", "old_string": "= ", "new_string": "=="}));
+        assert!(out.content.contains("matches 2 times"));
+        let out = f.run(&Edit, json!({"path": "a.txt", "old_string": "= ", "new_string": "=", "replace_all": true}));
+        assert!(!out.is_error);
+        assert_eq!(f.read("a.txt"), "x =1\ny =2\n");
     }
 
     #[test]
