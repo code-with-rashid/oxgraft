@@ -2,6 +2,7 @@
 //! available strategy and a [`Profile`] picks one per seam.
 
 pub mod agent;
+pub mod hooks;
 pub mod prompt;
 pub mod retry;
 pub mod session;

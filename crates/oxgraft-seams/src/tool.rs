@@ -41,6 +41,8 @@ pub struct ToolContext<'a> {
     pub snapshots: &'a Mutex<Vec<FileSnapshot>>,
     /// Maximum characters of output returned to the model.
     pub max_output_chars: usize,
+    /// Set when the user interrupts; long-running tools should stop promptly.
+    pub cancel: &'a std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for ToolContext<'_> {

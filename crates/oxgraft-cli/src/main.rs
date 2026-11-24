@@ -225,8 +225,23 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;
+    config.max_session_tokens = cfg.max_session_tokens;
+    config.hooks = cfg.hooks.clone();
+    for warning in &cfg.warnings {
+        eprintln!("oxgraft: warning: {warning}");
+    }
     let (tools, skills) = oxgraft_tools::for_workspace(&ws);
     config.append_system = skills;
+    // First Ctrl-C interrupts the current run (tools and model turns stop promptly);
+    // a second one exits (GRAFT-0020).
+    let cancel = config.cancel.clone();
+    let _ = ctrlc::set_handler(move || {
+        if cancel.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            eprintln!("\noxgraft: exiting");
+            std::process::exit(130);
+        }
+        eprintln!("\noxgraft: interrupting… (press Ctrl-C again to quit)");
+    });
     Ok(Setup { ws, toolkit, provider, model: model_spec, config, tools })
 }
 
@@ -324,6 +339,7 @@ fn chat(common: &Common, resume: Option<String>) -> CliResult {
             }
             _ => {}
         }
+        agent.config.cancel.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut renderer = render::Human::default();
         let outcome = agent.run(&mut session, line, &mut |e: &Event| renderer.event(e));
         last = status_code(&outcome.status);

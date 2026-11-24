@@ -230,3 +230,87 @@ fn refusal_stops_the_session() {
     let (status, _, _) = run(&ws, "allow_all", Answer::Yes, json!({"turns": [{"text": "no", "stop": "refusal"}]}), 5);
     assert_eq!(status, Status::Stopped("the model refused".into()));
 }
+
+fn run_with(
+    ws: &Ws,
+    script: serde_json::Value,
+    configure: impl FnOnce(&mut AgentConfig),
+    session: Option<Session>,
+) -> (Status, Vec<Event>, Session) {
+    let script: Script = serde_json::from_value(script).unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    configure(&mut config);
+    let mut agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    agent.sleep = |_| {};
+    let mut session = session.unwrap_or_else(|| Session::new("mock", "test", &ws.0));
+    let mut events = Vec::new();
+    let outcome = agent.run(&mut session, "task", &mut |e| events.push(e.clone()));
+    (outcome.status, events, session)
+}
+
+#[test]
+fn cancellation_stops_before_the_next_turn() {
+    let ws = Ws::new("cancel");
+    let (status, _, _) = run_with(
+        &ws,
+        json!({"turns": [{"text": "never"}]}),
+        |c| c.cancel.store(true, std::sync::atomic::Ordering::Relaxed),
+        None,
+    );
+    assert_eq!(status, Status::Stopped("interrupted by the user".into()));
+}
+
+#[test]
+fn token_budget_stops_runaway_sessions() {
+    let ws = Ws::new("budget");
+    let turns: Vec<_> =
+        (0..10).map(|i| json!({"tool_calls": [{"name": "ls", "input": {"path": ".".repeat(1 + i % 2)}}]})).collect();
+    let (status, _, _) = run_with(&ws, json!({ "turns": turns }), |c| c.max_session_tokens = Some(1), None);
+    assert!(matches!(status, Status::Stopped(ref r) if r.contains("token budget")), "{status:?}");
+}
+
+#[test]
+fn hooks_block_and_give_feedback() {
+    let ws = Ws::new("hooks");
+    let hooks: Vec<oxgraft_core::hooks::Hook> =
+        toml::from_str::<std::collections::HashMap<String, Vec<oxgraft_core::hooks::Hook>>>(
+            "[[hooks]]\nevent = \"pre_tool\"\ntools = [\"bash\"]\ncommand = \"echo no shell today 1>&2 && exit 2\"\n\
+         [[hooks]]\nevent = \"post_tool\"\ntools = [\"write\"]\ncommand = \"echo formatted 1>&2 && exit 2\"\n",
+        )
+        .unwrap()
+        .remove("hooks")
+        .unwrap();
+    let (_, events, _) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "bash", "input": {"command": "echo hi"}}, {"name": "write", "input": {"path": "f.txt", "content": "x"}}]},
+            {"text": "ok"}
+        ]}),
+        |c| c.hooks = hooks,
+        None,
+    );
+    let results = tool_results(&events);
+    assert!(results[0].1.contains("Blocked by a pre_tool hook: no shell today"), "{:?}", results[0]);
+    assert!(results[1].0 && results[1].1.contains("Feedback from a post_tool hook:\nformatted"), "{:?}", results[1]);
+}
+
+#[test]
+fn resume_repairs_dangling_tool_calls() {
+    let ws = Ws::new("repair");
+    let mut session = Session::new("mock", "test", &ws.0);
+    session.messages.push(oxgraft_seams::Message::user("earlier"));
+    session.messages.push(oxgraft_seams::Message::assistant(vec![oxgraft_seams::Block::ToolUse {
+        id: "dangling".into(),
+        name: "ls".into(),
+        input: json!({}),
+    }]));
+    let (status, events, session) = run_with(&ws, json!({"turns": [{"text": "fine"}]}), |_| {}, Some(session));
+    assert_eq!(status, Status::Done);
+    assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("unanswered"))));
+    assert!(
+        matches!(&session.messages[2].content[0], oxgraft_seams::Block::ToolResult { tool_use_id, .. } if tool_use_id == "dangling")
+    );
+}

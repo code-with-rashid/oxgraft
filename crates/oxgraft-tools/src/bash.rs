@@ -103,14 +103,23 @@ impl Tool for Bash {
         }
         drop(tx);
 
-        let status = match child.wait_timeout(Duration::from_secs(timeout)) {
-            Ok(Some(status)) => Some(status),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                None
+        // Wait in short slices so a user interrupt (Ctrl-C) stops the command promptly.
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout);
+        let mut interrupted = false;
+        let status = loop {
+            match child.wait_timeout(Duration::from_millis(200)) {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    let cancelled = ctx.cancel.load(std::sync::atomic::Ordering::Relaxed);
+                    if cancelled || std::time::Instant::now() >= deadline {
+                        interrupted = cancelled;
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                }
+                Err(e) => return ToolOutput::error(format!("waiting for command failed: {e}")),
             }
-            Err(e) => return ToolOutput::error(format!("waiting for command failed: {e}")),
         };
 
         // Grandchildren may keep pipes open; don't wait on them forever.
@@ -127,6 +136,7 @@ impl Tool for Bash {
         let mut out = String::new();
         match status {
             Some(s) => out.push_str(&format!("exit code: {}\n", s.code().map_or("signal".into(), |c| c.to_string()))),
+            None if interrupted => out.push_str("interrupted by the user; process killed\n"),
             None => out.push_str(&format!("timed out after {timeout}s; process killed\n")),
         }
         if !stdout.trim().is_empty() {

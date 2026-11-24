@@ -1,0 +1,148 @@
+//! User hooks around tool calls (GRAFT-0018, after Claude Code's hooks).
+//!
+//! ```toml
+//! [[hooks]]
+//! event = "post_tool"        # pre_tool | post_tool | session_end
+//! tools = ["edit", "write"]  # empty = every tool
+//! command = "cargo fmt --all"
+//! ```
+//!
+//! The command runs in the workspace with `OXGRAFT_HOOK_EVENT`, `OXGRAFT_TOOL`,
+//! `OXGRAFT_TOOL_INPUT` (JSON) and, for post_tool, `OXGRAFT_TOOL_OUTPUT`.
+//! Exit code 2 is feedback for the model: a pre_tool hook blocks the call with its
+//! stderr as the reason; a post_tool hook's stderr is appended to the tool result.
+//! Other non-zero exits are reported as warnings and otherwise ignored.
+
+use std::io::Read as _;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use serde::Deserialize;
+use wait_timeout::ChildExt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    PreTool,
+    PostTool,
+    SessionEnd,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hook {
+    pub event: HookEvent,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    pub command: String,
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_timeout() -> u64 {
+    60
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookResult {
+    Ok,
+    /// Exit code 2: stderr is feedback for the model.
+    Feedback(String),
+    /// Hook failed to run or exited non-zero (not 2).
+    Failed(String),
+}
+
+impl Hook {
+    pub fn matches(&self, event: HookEvent, tool: &str) -> bool {
+        self.event == event && (self.tools.is_empty() || self.tools.iter().any(|t| t == tool))
+    }
+
+    pub fn run(&self, workspace: &Path, event: HookEvent, tool: &str, input: &str, output: Option<&str>) -> HookResult {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(&self.command);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(&self.command);
+            c
+        };
+        let event_name = match event {
+            HookEvent::PreTool => "pre_tool",
+            HookEvent::PostTool => "post_tool",
+            HookEvent::SessionEnd => "session_end",
+        };
+        cmd.current_dir(workspace)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .env("OXGRAFT_HOOK_EVENT", event_name)
+            .env("OXGRAFT_TOOL", tool)
+            .env("OXGRAFT_TOOL_INPUT", input);
+        if let Some(out) = output {
+            cmd.env("OXGRAFT_TOOL_OUTPUT", out.chars().take(100_000).collect::<String>());
+        }
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => return HookResult::Failed(format!("hook `{}` could not start: {e}", self.command)),
+        };
+        let mut stderr = child.stderr.take();
+        let reader = std::thread::spawn(move || {
+            let mut s = String::new();
+            if let Some(e) = stderr.as_mut() {
+                let _ = e.read_to_string(&mut s);
+            }
+            s
+        });
+        let status = match child.wait_timeout(Duration::from_secs(self.timeout_secs.max(1))) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return HookResult::Failed(format!("hook `{}` timed out after {}s", self.command, self.timeout_secs));
+            }
+            Err(e) => return HookResult::Failed(format!("hook `{}`: {e}", self.command)),
+        };
+        let err = reader.join().unwrap_or_default().trim().to_string();
+        match status.code() {
+            Some(0) => HookResult::Ok,
+            Some(2) => {
+                HookResult::Feedback(if err.is_empty() { format!("blocked by hook `{}`", self.command) } else { err })
+            }
+            code => HookResult::Failed(format!("hook `{}` exited with {code:?}: {err}", self.command)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hook(command: &str) -> Hook {
+        Hook { event: HookEvent::PreTool, tools: vec!["bash".into()], command: command.into(), timeout_secs: 5 }
+    }
+
+    #[test]
+    fn matching_and_exit_codes() {
+        let ws = std::env::temp_dir();
+        assert!(hook("x").matches(HookEvent::PreTool, "bash"));
+        assert!(!hook("x").matches(HookEvent::PreTool, "read"));
+        assert!(!hook("x").matches(HookEvent::PostTool, "bash"));
+        assert_eq!(hook("exit 0").run(&ws, HookEvent::PreTool, "bash", "{}", None), HookResult::Ok);
+        let blocked = hook("echo no rm please 1>&2 && exit 2").run(&ws, HookEvent::PreTool, "bash", "{}", None);
+        assert_eq!(blocked, HookResult::Feedback("no rm please".into()));
+        assert!(matches!(hook("exit 1").run(&ws, HookEvent::PreTool, "bash", "{}", None), HookResult::Failed(_)));
+    }
+
+    #[test]
+    fn parses_config() {
+        #[derive(Deserialize)]
+        struct C {
+            hooks: Vec<Hook>,
+        }
+        let c: C = toml::from_str("[[hooks]]\nevent = \"post_tool\"\ncommand = \"fmt\"\n").unwrap();
+        assert_eq!(c.hooks[0].event, HookEvent::PostTool);
+        assert_eq!(c.hooks[0].timeout_secs, 60);
+    }
+}

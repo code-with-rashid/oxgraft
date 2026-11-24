@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use oxgraft_core::hooks::Hook;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -12,6 +13,13 @@ pub struct FileConfig {
     pub effort: Option<String>,
     pub max_turns: Option<u32>,
     pub max_tokens: Option<u32>,
+    /// Stop a run when input + output tokens exceed this.
+    pub max_session_tokens: Option<u64>,
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
+    /// User config only: workspaces whose own hooks may run.
+    #[serde(default)]
+    pub trusted_workspaces: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +29,9 @@ pub struct Config {
     pub effort: Option<String>,
     pub max_turns: u32,
     pub max_tokens: u32,
+    pub max_session_tokens: Option<u64>,
+    pub hooks: Vec<Hook>,
+    pub warnings: Vec<String>,
     pub sources: Vec<String>,
 }
 
@@ -55,25 +66,64 @@ pub struct Flags<'a> {
     pub max_turns: Option<u32>,
 }
 
+fn same_dir(a: &str, b: &Path) -> bool {
+    Path::new(a).canonicalize().map(|a| a == b).unwrap_or(false)
+}
+
 pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
+    let mut cfg = Config {
+        model: None,
+        profile: "default".into(),
+        effort: Some("high".into()),
+        max_turns: 50,
+        max_tokens: 16_000,
+        max_session_tokens: None,
+        hooks: Vec::new(),
+        warnings: Vec::new(),
+        sources: Vec::new(),
+    };
+
     let mut layers: Vec<(String, FileConfig)> = Vec::new();
+    let mut trusted = Vec::new();
     if let Some(p) = user_config_path()
         && let Some(c) = read(&p)?
     {
+        trusted = c.trusted_workspaces.clone();
+        cfg.hooks.extend(c.hooks.clone());
         layers.push((p.display().to_string(), c));
     }
-    let ws = workspace.join(".oxgraft").join("config.toml");
-    if let Some(c) = read(&ws)? {
-        layers.push((ws.display().to_string(), c));
+    let ws_path = workspace.join(".oxgraft").join("config.toml");
+    if let Some(c) = read(&ws_path)? {
+        // A repository's own hooks are code from whoever wrote the repo: run them only
+        // for workspaces the user has trusted in their own config (GRAFT-0019).
+        if !c.hooks.is_empty() {
+            if trusted.iter().any(|t| same_dir(t, workspace)) {
+                cfg.hooks.extend(c.hooks.clone());
+            } else {
+                cfg.warnings.push(format!(
+                    "ignoring {} hook(s) in {}: add this workspace to `trusted_workspaces` in your user config to enable them",
+                    c.hooks.len(),
+                    ws_path.display()
+                ));
+            }
+        }
+        if !c.trusted_workspaces.is_empty() {
+            cfg.warnings.push("`trusted_workspaces` is only read from the user config".into());
+        }
+        layers.push((ws_path.display().to_string(), c));
     }
-    let env_layer = FileConfig {
-        model: env("OXGRAFT_MODEL"),
-        profile: env("OXGRAFT_PROFILE"),
-        effort: env("OXGRAFT_EFFORT"),
-        max_turns: env("OXGRAFT_MAX_TURNS").and_then(|v| v.parse().ok()),
-        max_tokens: env("OXGRAFT_MAX_TOKENS").and_then(|v| v.parse().ok()),
-    };
-    layers.push(("environment".into(), env_layer));
+    layers.push((
+        "environment".into(),
+        FileConfig {
+            model: env("OXGRAFT_MODEL"),
+            profile: env("OXGRAFT_PROFILE"),
+            effort: env("OXGRAFT_EFFORT"),
+            max_turns: env("OXGRAFT_MAX_TURNS").and_then(|v| v.parse().ok()),
+            max_tokens: env("OXGRAFT_MAX_TOKENS").and_then(|v| v.parse().ok()),
+            max_session_tokens: env("OXGRAFT_MAX_SESSION_TOKENS").and_then(|v| v.parse().ok()),
+            ..FileConfig::default()
+        },
+    ));
     layers.push((
         "flags".into(),
         FileConfig {
@@ -81,18 +131,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             profile: flags.profile.map(str::to_string),
             effort: flags.effort.map(str::to_string),
             max_turns: flags.max_turns,
-            max_tokens: None,
+            ..FileConfig::default()
         },
     ));
 
-    let mut cfg = Config {
-        model: None,
-        profile: "default".into(),
-        effort: Some("high".into()),
-        max_turns: 50,
-        max_tokens: 16_000,
-        sources: Vec::new(),
-    };
     for (source, layer) in layers {
         let mut used = false;
         if let Some(v) = layer.model {
@@ -115,6 +157,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             cfg.max_tokens = v.max(256);
             used = true;
         }
+        if let Some(v) = layer.max_session_tokens {
+            cfg.max_session_tokens = Some(v);
+            used = true;
+        }
         if used {
             cfg.sources.push(source);
         }
@@ -133,13 +179,19 @@ mod tests {
     fn workspace_config_and_flags_layer() {
         let ws = std::env::temp_dir().join(format!("oxgraft-cfg-{}", std::process::id()));
         std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
-        std::fs::write(ws.join(".oxgraft/config.toml"), "model = \"ollama/qwen3\"\nmax_turns = 7\n").unwrap();
+        std::fs::write(
+            ws.join(".oxgraft/config.toml"),
+            "model = \"ollama/qwen3\"\nmax_turns = 7\n[[hooks]]\nevent = \"pre_tool\"\ncommand = \"evil\"\n",
+        )
+        .unwrap();
         let flags = Flags { model: None, profile: Some("baseline"), effort: None, max_turns: None };
         let cfg = resolve(&ws, &flags).unwrap();
         if std::env::var("OXGRAFT_MODEL").is_err() {
             assert_eq!(cfg.model.as_deref(), Some("ollama/qwen3"));
         }
         assert_eq!(cfg.profile, "baseline");
+        assert!(cfg.hooks.iter().all(|h| h.command != "evil"), "untrusted workspace hooks must not load");
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring 1 hook")));
         let flags = Flags { model: Some("mock:x.json"), profile: None, effort: None, max_turns: Some(3) };
         let cfg = resolve(&ws, &flags).unwrap();
         assert_eq!(cfg.model.as_deref(), Some("mock:x.json"));

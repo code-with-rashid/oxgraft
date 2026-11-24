@@ -55,6 +55,7 @@ pub(crate) mod testing {
     pub struct Fixture {
         pub dir: PathBuf,
         pub snapshots: Mutex<Vec<FileSnapshot>>,
+        pub cancel: std::sync::atomic::AtomicBool,
     }
 
     impl Fixture {
@@ -62,7 +63,7 @@ pub(crate) mod testing {
             let dir = std::env::temp_dir().join(format!("oxgraft-tools-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            Self { dir, snapshots: Mutex::new(Vec::new()) }
+            Self { dir, snapshots: Mutex::new(Vec::new()), cancel: std::sync::atomic::AtomicBool::new(false) }
         }
 
         pub fn file(&self, rel: &str, content: &str) {
@@ -82,6 +83,7 @@ pub(crate) mod testing {
                 sandbox: &NoSandbox,
                 snapshots: &self.snapshots,
                 max_output_chars: 2_000,
+                cancel: &self.cancel,
             };
             tool.run(&input, &ctx)
         }

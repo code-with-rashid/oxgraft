@@ -106,6 +106,29 @@ impl Session {
         sessions
     }
 
+    /// Make the history valid after a crash or interrupt: every tool call in the last
+    /// assistant message must be followed by a result. Returns how many were closed.
+    pub fn repair(&mut self) -> usize {
+        let Some(last) = self.messages.last() else { return 0 };
+        if last.role != oxgraft_seams::Role::Assistant {
+            return 0;
+        }
+        let ids: Vec<String> = last.tool_uses().into_iter().map(|(id, _, _)| id.to_string()).collect();
+        if ids.is_empty() {
+            return 0;
+        }
+        let results = ids
+            .iter()
+            .map(|id| oxgraft_seams::Block::ToolResult {
+                tool_use_id: id.clone(),
+                content: "Not executed: the previous run was interrupted.".into(),
+                is_error: true,
+            })
+            .collect();
+        self.messages.push(Message { role: oxgraft_seams::Role::User, content: results });
+        ids.len()
+    }
+
     /// Record a file's original content before its first change in this session.
     pub fn record_original(&mut self, path: &Path, original: Option<&[u8]>) -> std::io::Result<()> {
         if self.changed_files.iter().any(|r| r.path == path) {

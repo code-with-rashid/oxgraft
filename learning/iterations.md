@@ -25,3 +25,8 @@ honestly: an iteration is only logged when its tests pass.
 | 17 | 2026-11-25 | aider, cline | Whitespace-tolerant SEARCH/REPLACE strategy + `tolerant` profile | adopt | GRAFT-0015 | SPEC-0002 | tolerant strategy tests |
 | 18 | 2026-11-25 | claude-code, codex | `todo` plan tool | adopt | GRAFT-0016 | SPEC-0002 | `todo_renders_plan` |
 | 19 | 2026-11-25 | claude-code, codex, gemini-cli | Agent Skills discovery + `skill` tool | adopt | GRAFT-0017 | SPEC-0002 | `discovers_and_loads_workspace_skills` |
+| 20 | 2026-11-25 | claude-code | Tool hooks (pre/post/session_end, exit 2 = block/feedback) | adopt | GRAFT-0018 | SPEC-0003 | `hooks_block_and_give_feedback` |
+| 21 | 2026-11-25 | goose | Repository hooks run only in trusted workspaces | avoid | GRAFT-0019 | SPEC-0004 | `workspace_config_and_flags_layer` |
+| 22 | 2026-11-25 | cline, claude-code, codex | Ctrl-C interrupts the run and running commands; second Ctrl-C exits | adopt | GRAFT-0020 | SPEC-0003 | `cancellation_stops_before_the_next_turn` |
+| 23 | 2026-11-25 | cline | Resume repairs dangling tool calls from interrupted runs | adopt | GRAFT-0020 | SPEC-0004 | `resume_repairs_dangling_tool_calls` |
+| 24 | 2026-11-25 | openhands | Per-run token budget | avoid | GRAFT-0021 | SPEC-0003 | `token_budget_stops_runaway_sessions` |

@@ -3,8 +3,11 @@
 use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::hooks::{Hook, HookEvent, HookResult};
 
 use oxgraft_protocol::{Event, PROTOCOL_VERSION, Role as EventRole};
 use oxgraft_seams::{
@@ -51,6 +54,11 @@ pub struct AgentConfig {
     pub retry: RetryPolicy,
     /// Extra system prompt text appended after the generated one.
     pub append_system: Option<String>,
+    /// Set by the UI (e.g. Ctrl-C) to interrupt the current run.
+    pub cancel: Arc<AtomicBool>,
+    /// Stop when input + output tokens for one run exceed this.
+    pub max_session_tokens: Option<u64>,
+    pub hooks: Vec<Hook>,
 }
 
 impl AgentConfig {
@@ -63,9 +71,18 @@ impl AgentConfig {
             max_output_chars: 30_000,
             retry: RetryPolicy::default(),
             append_system: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            max_session_tokens: None,
+            hooks: Vec::new(),
         }
     }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
 }
+
+const INTERRUPTED: &str = "Not executed: the user interrupted the session.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -149,6 +166,12 @@ impl<'a> Agent<'a> {
         if session.title.is_empty() {
             session.title = task.lines().next().unwrap_or("").chars().take(80).collect();
         }
+        let repaired = session.repair();
+        if repaired > 0 {
+            emit(&Event::Warning {
+                message: format!("closed {repaired} unanswered tool call(s) left by an interrupted run"),
+            });
+        }
         session.messages.push(Message::user(task));
         self.save(session, emit);
 
@@ -160,6 +183,22 @@ impl<'a> Agent<'a> {
         let mut final_text = String::new();
 
         for turn in 1..=self.config.max_turns {
+            if self.config.cancelled() {
+                return self.finish(
+                    session,
+                    emit,
+                    Status::Stopped("interrupted by the user".into()),
+                    turn - 1,
+                    usage,
+                    final_text,
+                );
+            }
+            if let Some(budget) = self.config.max_session_tokens
+                && usage.input_tokens + usage.output_tokens > budget
+            {
+                let reason = format!("token budget exhausted ({budget} tokens)");
+                return self.finish(session, emit, Status::Stopped(reason), turn - 1, usage, final_text);
+            }
             let request = CompletionRequest {
                 model: self.config.model.clone(),
                 system: system.clone(),
@@ -221,7 +260,9 @@ impl<'a> Agent<'a> {
             let mut results = Vec::with_capacity(calls.len());
             for (id, name, input) in calls {
                 emit(&Event::ToolCall { id: id.clone(), tool: name.clone(), input: input.clone() });
-                let output = if truncated {
+                let output = if self.config.cancelled() {
+                    ToolOutput::error(INTERRUPTED)
+                } else if truncated {
                     ToolOutput::error(
                         "Not executed: your response hit the output token limit, so this tool call may be incomplete. \
                          Retry with a smaller step (e.g. several smaller edits instead of one large write).",
@@ -269,6 +310,18 @@ impl<'a> Agent<'a> {
             state.recent.remove(0);
         }
 
+        let input_json = input.to_string();
+        for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PreTool, name)) {
+            match hook.run(&self.config.workspace, HookEvent::PreTool, name, &input_json, None) {
+                HookResult::Ok => {}
+                HookResult::Feedback(reason) => {
+                    emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
+                    return ToolOutput::error(format!("Blocked by a pre_tool hook: {reason}"));
+                }
+                HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+            }
+        }
+
         let action = tool.action(input);
         let decision = match self.toolkit.approval.decide(&action) {
             Decision::Ask if state.always.contains(name) => Decision::Allow,
@@ -308,10 +361,20 @@ impl<'a> Agent<'a> {
             sandbox: self.toolkit.sandbox.as_ref(),
             snapshots: &snapshots,
             max_output_chars: self.config.max_output_chars,
+            cancel: &self.config.cancel,
         };
-        let output = catch_unwind(AssertUnwindSafe(|| tool.run(input, &ctx))).unwrap_or_else(|_| {
+        let mut output = catch_unwind(AssertUnwindSafe(|| tool.run(input, &ctx))).unwrap_or_else(|_| {
             ToolOutput::error(format!("internal error: the `{name}` tool panicked; the session continues"))
         });
+        for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PostTool, name)) {
+            match hook.run(&self.config.workspace, HookEvent::PostTool, name, &input_json, Some(&output.content)) {
+                HookResult::Ok => {}
+                HookResult::Feedback(feedback) => {
+                    output.content.push_str(&format!("\n\nFeedback from a post_tool hook:\n{feedback}"));
+                }
+                HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+            }
+        }
         for snap in snapshots.into_inner().unwrap_or_else(|e| e.into_inner()) {
             if let Err(e) = session.record_original(&snap.path, snap.original.as_deref()) {
                 emit(&Event::Warning { message: format!("could not back up {} for undo: {e}", snap.path.display()) });
@@ -336,6 +399,11 @@ impl<'a> Agent<'a> {
         final_text: String,
     ) -> Outcome {
         self.save(session, emit);
+        for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::SessionEnd) {
+            if let HookResult::Failed(msg) = hook.run(&self.config.workspace, HookEvent::SessionEnd, "", "{}", None) {
+                emit(&Event::Warning { message: msg });
+            }
+        }
         let (ok, reason) = match &status {
             Status::Done => (true, None),
             Status::Stopped(r) | Status::Failed(r) => (false, Some(r.clone())),
