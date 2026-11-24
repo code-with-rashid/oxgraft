@@ -34,3 +34,4 @@ honestly: an iteration is only logged when its tests pass.
 | 26 | 2026-11-25 | claude-code, goose | `.mcp.json` / workspace MCP servers only in trusted workspaces | avoid | GRAFT-0019 | SPEC-0004 | `mcp_tools_work_end_to_end` |
 | 27 | 2026-11-25 | pi, opencode, claude-code | Append-only context compaction via handover summary | adopt | GRAFT-0023 | SPEC-0003 | `compacts_context_and_continues` |
 | 28 | 2026-11-25 | codex | `apply_patch` edit format + `codex-like` profile | adopt | GRAFT-0024 | SPEC-0002 | apply_patch strategy tests |
+| 29 | 2026-11-25 | codex, claude-code (avoiding opencode/pi gap) | OS sandbox for bash: bubblewrap / Seatbelt, workspace-write, offline, fails closed; `sandboxed` profile | adopt | GRAFT-0025 | SPEC-0002 | `confines_writes_to_the_workspace_when_available` |

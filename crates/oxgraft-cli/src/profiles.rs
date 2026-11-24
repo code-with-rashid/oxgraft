@@ -6,6 +6,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("ci", include_str!("../profiles/ci.toml")),
     ("tolerant", include_str!("../profiles/tolerant.toml")),
     ("codex-like", include_str!("../profiles/codex-like.toml")),
+    ("sandboxed", include_str!("../profiles/sandboxed.toml")),
 ];
 
 /// Resolve a profile by path, by name in `<workspace>/profiles/`, or built-in (SPEC-0004 AC5).

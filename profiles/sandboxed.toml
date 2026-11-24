@@ -1,0 +1,11 @@
+# Default strategies plus an OS sandbox for shell commands (GRAFT-0025):
+# writes only inside the workspace, no network. Fails closed where no sandbox
+# is available (Windows, or Linux without bubblewrap).
+name = "sandboxed"
+description = "Default strategies with shell commands confined to the workspace and offline."
+
+[strategies]
+edit_format = "search_replace"
+context = "pinned_then_in_order"
+approval = "ordered_rules"
+sandbox = "workspace_write"

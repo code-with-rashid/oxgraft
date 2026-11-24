@@ -28,7 +28,7 @@ pub fn approvals() -> Vec<Box<dyn ApprovalPolicy>> {
 }
 
 pub fn sandboxes() -> Vec<Box<dyn Sandbox>> {
-    vec![Box::new(sandbox::NoSandbox)]
+    vec![Box::new(sandbox::NoSandbox), Box::new(sandbox::WorkspaceWrite)]
 }
 
 /// Every registered strategy's identity and lineage.

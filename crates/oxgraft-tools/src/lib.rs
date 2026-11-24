@@ -4,6 +4,7 @@ mod bash;
 mod extra;
 mod files;
 pub mod mcp;
+mod sandbox;
 mod search;
 pub mod util;
 

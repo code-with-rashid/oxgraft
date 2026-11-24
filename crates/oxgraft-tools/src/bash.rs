@@ -63,13 +63,16 @@ impl Tool for Bash {
             Err(e) => return ToolOutput::error(e),
         };
         let parts = oxgraft_seams::Command { program: "shell".into(), args: vec![command.into()] };
-        if let Confinement::Restricted { .. } = ctx.sandbox.confinement(&parts) {
-            return ToolOutput::error(
-                "the selected sandbox strategy requires confinement that this build cannot enforce; refusing to run",
-            );
-        }
-
-        let mut cmd = shell(command);
+        let mut cmd = match ctx.sandbox.confinement(&parts) {
+            Confinement::None => shell(command),
+            Confinement::Restricted { writable, network } => {
+                match crate::sandbox::confined(command, ctx.workspace, &writable, network) {
+                    Ok(c) => c,
+                    // Fail closed: never fall back to running unconfined.
+                    Err(e) => return ToolOutput::error(format!("sandbox unavailable, command not run: {e}")),
+                }
+            }
+        };
         cmd.current_dir(ctx.workspace)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
