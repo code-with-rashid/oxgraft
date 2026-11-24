@@ -1,0 +1,20 @@
+{
+  "name": "oxgraft",
+  "version": "0.0.1",
+  "description": "Oxgraft: a coding-agent harness that keeps learning from every open source harness. Early development.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/code-with-rashid/oxgraft",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/code-with-rashid/oxgraft.git",
+    "directory": "packaging/npm"
+  },
+  "keywords": ["ai", "agent", "coding-agent", "llm", "cli", "harness"],
+  "bin": {
+    "oxgraft": "bin/oxgraft.js"
+  },
+  "files": ["bin", "README.md"],
+  "engines": {
+    "node": ">=18"
+  }
+}

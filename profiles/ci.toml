@@ -1,0 +1,9 @@
+# For arena runs and CI, where an outer container provides isolation.
+name = "ci"
+description = "Unattended runs inside an outer sandbox: approve everything."
+
+[strategies]
+edit_format = "search_replace"
+context = "pinned_then_in_order"
+approval = "allow_all"
+sandbox = "none"

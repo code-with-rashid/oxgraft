@@ -1,0 +1,21 @@
+{
+  "name": "oxgraft-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "pnpm check:rust && pnpm check:repo && pnpm site:build",
+    "check:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace",
+    "check:repo": "node scripts/check-layering.mjs && node scripts/sync-skills.mjs --check && node scripts/check-learning.mjs",
+    "skills:sync": "node scripts/sync-skills.mjs",
+    "watch": "node scripts/watch-harnesses.mjs",
+    "site:dev": "pnpm --filter @oxgraft/site dev",
+    "site:build": "pnpm --filter @oxgraft/site build"
+  },
+  "devDependencies": {
+    "smol-toml": "^1.3.1"
+  }
+}

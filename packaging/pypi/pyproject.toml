@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oxgraft"
+version = "0.0.1"
+description = "Oxgraft: a coding-agent harness that keeps learning from every open source harness. Early development."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+keywords = ["ai", "agent", "coding-agent", "llm", "cli"]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Environment :: Console",
+  "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/code-with-rashid/oxgraft"
+
+[project.scripts]
+oxgraft = "oxgraft:main"

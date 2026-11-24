@@ -1,0 +1,16 @@
+/target/
+node_modules/
+dist/
+.astro/
+web/site/src/content/docs/guides/
+web/site/src/content/docs/learning/
+web/site/src/content/docs/adr/
+packaging/pypi/dist/
+*.env
+.env*
+!.env.example
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

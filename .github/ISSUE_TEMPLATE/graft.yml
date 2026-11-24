@@ -1,0 +1,35 @@
+name: Graft proposal
+description: Suggest an idea Oxgraft should adopt from another harness, or a limitation it should avoid.
+labels: [graft]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [adopt a strength, avoid a limitation]
+    validations:
+      required: true
+  - type: input
+    id: donor
+    attributes:
+      label: Harness (id from learning/watch.toml, or name if new)
+      placeholder: codex
+    validations:
+      required: true
+  - type: dropdown
+    id: seam
+    attributes:
+      label: Seam
+      options: [edit_format, context, approval, sandbox, provider, tools, session, extension, delegation, not sure]
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: What does the harness do (with links to docs, code or changelog)?
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: What would improve for Oxgraft users, and how could we measure it?

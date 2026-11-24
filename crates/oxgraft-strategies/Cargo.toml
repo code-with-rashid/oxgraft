@@ -1,0 +1,16 @@
+[package]
+name = "oxgraft-strategies"
+description = "Interchangeable Oxgraft strategies, each tagged with the harness it was learned from."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Layering rule: depends on oxgraft-seams only. Checked by scripts/check-layering.mjs.
+[dependencies]
+oxgraft-seams.workspace = true
+
+[lints]
+workspace = true

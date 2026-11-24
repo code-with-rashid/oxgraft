@@ -1,0 +1,40 @@
+name: harness-watch
+
+# Weekly report of upstream harness releases newer than learning/watch.toml.
+# Keeps one open issue labelled `harness-watch` up to date; an AI agent or a
+# maintainer triages it with .agents/skills/watch-harnesses.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: build report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/watch-harnesses.mjs > report.md || true
+      - name: update the harness-watch issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create harness-watch --color 0E8A16 --description "Upstream harness changes to review" 2>/dev/null || true
+          number=$(gh issue list --label harness-watch --state open --json number --jq '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file report.md
+          else
+            gh issue create --title "Harness watch: upstream changes to review" --label harness-watch --body-file report.md
+          fi

@@ -1,0 +1,188 @@
+# Harnesses Oxgraft watches and learns from. One [[harness]] per project.
+#
+# policy:
+#   adapt       permissive license (MIT/Apache-2.0): code may be adapted with
+#               attribution in NOTICE and provenance on the strategy
+#   clean-room  source-available or unclear license: learn from behaviour and
+#               docs only; never copy source
+#   reference   closed source: public docs, changelogs and observed behaviour only
+#
+# last_reviewed: the upstream release tag (or commit) whose changes are fully
+# reflected in learning/harnesses/<id>.md. Empty = never reviewed.
+# scripts/watch-harnesses.mjs compares this with upstream and reports drift.
+# Licenses verified via the GitHub API on 2026-11-24; re-check on each review.
+
+[[harness]]
+id = "codex"
+name = "OpenAI Codex CLI"
+repo = "openai/codex"
+license = "Apache-2.0"
+language = "Rust"
+policy = "adapt"
+last_reviewed = ""
+focus = ["sandbox", "approval", "edit_format"]
+
+[[harness]]
+id = "goose"
+name = "goose"
+repo = "aaif-goose/goose"
+license = "Apache-2.0"
+language = "Rust"
+policy = "adapt"
+last_reviewed = ""
+focus = ["mcp", "recipes", "extensions"]
+
+[[harness]]
+id = "opencode"
+name = "OpenCode"
+repo = "anomalyco/opencode"
+license = "MIT"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["approval", "sessions", "server_api"]
+
+[[harness]]
+id = "claude-code"
+name = "Claude Code"
+repo = "anthropics/claude-code"
+license = "proprietary"
+language = "TypeScript"
+policy = "reference"
+last_reviewed = ""
+focus = ["context", "skills", "hooks", "subagents"]
+notes = "The public repo holds issues, plugins and the changelog, not the source."
+
+[[harness]]
+id = "gemini-cli"
+name = "Gemini CLI"
+repo = "google-gemini/gemini-cli"
+license = "Apache-2.0"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["context", "tools"]
+
+[[harness]]
+id = "pi"
+name = "Pi"
+repo = "earendil-works/pi"
+license = "MIT"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["minimal_tools", "sessions", "compaction"]
+
+[[harness]]
+id = "deepseek-harness"
+name = "DeepSeek Harness"
+repo = "deepseek-ai/deepseek-harness"
+license = "MIT"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["plugins", "event_log", "profiles"]
+
+[[harness]]
+id = "aider"
+name = "Aider"
+repo = "Aider-AI/aider"
+license = "Apache-2.0"
+language = "Python"
+policy = "adapt"
+last_reviewed = ""
+focus = ["edit_format", "context", "git"]
+
+[[harness]]
+id = "cline"
+name = "Cline"
+repo = "cline/cline"
+license = "Apache-2.0"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["checkpoints", "approval", "headless"]
+
+[[harness]]
+id = "kilocode"
+name = "Kilo Code"
+repo = "Kilo-Org/kilocode"
+license = "MIT"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["modes", "orchestration"]
+
+[[harness]]
+id = "roo-code"
+name = "Roo Code"
+repo = "RooCodeInc/Roo-Code"
+license = "Apache-2.0"
+language = "TypeScript"
+policy = "adapt"
+status = "archived"
+last_reviewed = ""
+focus = ["modes"]
+notes = "Archived upstream (checked 2026-11-24). Keep for history; do not expect releases."
+
+[[harness]]
+id = "continue"
+name = "Continue"
+repo = "continuedev/continue"
+license = "Apache-2.0"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["ide", "checks"]
+
+[[harness]]
+id = "qwen-code"
+name = "Qwen Code"
+repo = "QwenLM/qwen-code"
+license = "Apache-2.0"
+language = "TypeScript"
+policy = "adapt"
+last_reviewed = ""
+focus = ["context", "tools"]
+
+[[harness]]
+id = "openhands"
+name = "OpenHands"
+repo = "OpenHands/OpenHands"
+license = "MIT"
+language = "Python"
+policy = "adapt"
+last_reviewed = ""
+focus = ["sandbox", "remote_workspace", "events"]
+notes = "Agent core lives in OpenHands/software-agent-sdk (MIT, Python)."
+
+[[harness]]
+id = "swe-agent"
+name = "SWE-agent"
+repo = "SWE-agent/SWE-agent"
+license = "MIT"
+language = "Python"
+policy = "adapt"
+last_reviewed = ""
+focus = ["trajectories", "tool_design", "evaluation"]
+
+[[harness]]
+id = "mini-swe-agent"
+name = "mini-SWE-agent"
+repo = "SWE-agent/mini-swe-agent"
+license = "MIT"
+language = "Python"
+policy = "adapt"
+last_reviewed = ""
+focus = ["minimal_loop", "evaluation"]
+
+[[harness]]
+id = "crush"
+name = "Crush"
+repo = "charmbracelet/crush"
+license = "NOASSERTION"
+language = "Go"
+policy = "clean-room"
+last_reviewed = ""
+focus = ["tui", "lsp"]
+notes = "GitHub reports no standard SPDX license; treat as source-available until checked."

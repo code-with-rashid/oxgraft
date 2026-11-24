@@ -1,0 +1,21 @@
+[package]
+name = "oxgraft-core"
+description = "The Oxgraft agent core: profiles, strategy assembly, and the session loop."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Layering rule: core depends on seams + protocol, NEVER on oxgraft-strategies.
+# Strategies are injected by the binary. Checked by scripts/check-layering.mjs.
+[dependencies]
+oxgraft-protocol.workspace = true
+oxgraft-seams.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
