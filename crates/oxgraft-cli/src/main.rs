@@ -253,7 +253,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let model_ref = oxgraft_providers::parse_model(&model_spec).map_err(usage)?;
     let provider = oxgraft_providers::build(&model_ref, &oxgraft_providers::Options { effort: cfg.effort.clone() })
         .map_err(usage)?;
-    let (_, profile_text) = profiles::load(&ws, &cfg.profile).map_err(usage)?;
+    let (_, profile_text) =
+        profiles::load(&ws, &profiles::resolve_auto(&cfg.profile, &model_ref.model)).map_err(usage)?;
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
     let toolkit = Toolkit::assemble(profile, available_with(cfg.rules.clone())).map_err(usage)?;
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
@@ -501,12 +502,14 @@ fn doctor(common: &Common) -> CliResult {
                 Err(e) => line(false, "model", format!("{spec}: {}", e.message)),
             },
         }
-        match profiles::load(&ws, &cfg.profile).and_then(|(src, t)| {
-            Profile::from_toml(&t)
-                .map_err(|e| e.to_string())
-                .and_then(|p| Toolkit::assemble(p, available()).map_err(|e| e.to_string()))
-                .map(|tk| (src, tk))
-        }) {
+        match profiles::load(&ws, &profiles::resolve_auto(&cfg.profile, cfg.model.as_deref().unwrap_or(""))).and_then(
+            |(src, t)| {
+                Profile::from_toml(&t)
+                    .map_err(|e| e.to_string())
+                    .and_then(|p| Toolkit::assemble(p, available()).map_err(|e| e.to_string()))
+                    .map(|tk| (src, tk))
+            },
+        ) {
             Ok((src, tk)) => {
                 line(true, "profile", format!("{} ({src}), sandbox `{}`", tk.profile.name, tk.sandbox.info().id));
                 if tk.sandbox.info().id != "none" {

@@ -50,7 +50,7 @@ Exit codes: `0` done, `1` provider or internal failure, `2` usage/config error,
 
 ```toml
 model = "anthropic/claude-opus-5-5"
-profile = "default"            # default, baseline, ci, tolerant, codex-like, sandboxed, or a path
+profile = "auto"               # auto (by model family), default, baseline, ci, tolerant, codex-like, sandboxed, or a path
 effort = "high"                # Anthropic effort: low, medium, high, xhigh, max, none
 max_turns = 50
 max_tokens = 16000             # per response

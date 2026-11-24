@@ -46,3 +46,40 @@ mod tests {
         }
     }
 }
+
+/// Model families trained on a particular edit format (GRAFT-0038, after OpenCode's
+/// per-model edit tool, but as a table instead of ad-hoc substring checks).
+const MODEL_FAMILIES: &[(&str, &str)] = &[
+    // (model-name prefix after any vendor/ part, profile)
+    ("gpt-5", "codex-like"),
+    ("codex", "codex-like"),
+    ("o3", "codex-like"),
+    ("o4", "codex-like"),
+];
+
+/// Resolve the `auto` profile for a model; any other name is returned unchanged.
+pub fn resolve_auto(name: &str, model: &str) -> String {
+    if name != "auto" {
+        return name.to_string();
+    }
+    let bare = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    MODEL_FAMILIES
+        .iter()
+        .find(|(prefix, _)| bare.starts_with(prefix))
+        .map(|(_, profile)| (*profile).to_string())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::resolve_auto;
+
+    #[test]
+    fn auto_picks_profile_by_model_family() {
+        assert_eq!(resolve_auto("auto", "gpt-5.1-codex"), "codex-like");
+        assert_eq!(resolve_auto("auto", "openai/gpt-5"), "codex-like");
+        assert_eq!(resolve_auto("auto", "claude-opus-5-5"), "default");
+        assert_eq!(resolve_auto("auto", "qwen3"), "default");
+        assert_eq!(resolve_auto("tolerant", "gpt-5"), "tolerant", "explicit profiles are never overridden");
+    }
+}

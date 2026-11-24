@@ -87,7 +87,7 @@ fn same_dir(a: &str, b: &Path) -> bool {
 pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
     let mut cfg = Config {
         model: None,
-        profile: "default".into(),
+        profile: "auto".into(),
         effort: Some("high".into()),
         max_turns: 50,
         max_tokens: 16_000,
