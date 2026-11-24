@@ -56,3 +56,5 @@ honestly: an iteration is only logged when its tests pass.
 | 48 | 2026-11-25 | opencode | `auto` profile: edit format chosen by model-family table (trial default) | adopt | GRAFT-0038 | SPEC-0004 | `auto_picks_profile_by_model_family` |
 | 49 | 2026-11-25 | aider | `verify_command` after editing turns; failures fed back, capped at 3 rounds; trusted-only in workspaces | adopt | GRAFT-0039 | SPEC-0005 | `verify_command_feeds_failures_back_after_edits` |
 | 50 | 2026-11-25 | openhands, swe-agent, mini-swe-agent, pi, cline, kilocode, qwen-code, continue, deepseek-harness, crush | Second review batch: 16 of 17 watched harnesses reviewed at pinned tags (roo-code archived); Crush license corrected to FSL-1.1-MIT, clean-room | review | — | — | `check-learning`, `pnpm watch` |
+| 51 | 2026-11-25 | qwen-code | Protected self-modification paths always ask, whatever the rules | adopt | GRAFT-0040 | SPEC-0006 | `protected_paths_always_ask_and_mistakes_trip_the_breaker` |
+| 52 | 2026-11-25 | cline, openhands | Consecutive-mistake breaker: nudge at 6, stop at 12 | adopt | GRAFT-0041 | SPEC-0006 | `protected_paths_always_ask_and_mistakes_trip_the_breaker` |

@@ -118,6 +118,8 @@ const LOOP_LIMIT: usize = 3;
 const MAX_CALLS_PER_TURN: usize = 32;
 /// Consecutive failing verify rounds before automatic checks pause (Aider uses 3).
 const MAX_VERIFY_ROUNDS: u32 = 3;
+const MISTAKE_NUDGE: u32 = 6;
+const MISTAKE_STOP: u32 = 12;
 
 pub struct Agent<'a> {
     pub toolkit: &'a Toolkit,
@@ -186,6 +188,15 @@ impl<'a> Agent<'a> {
             });
         }
         specs
+    }
+
+    /// Self-modification and persistence paths (after Qwen Code's protected list).
+    fn is_protected(&self, path: &std::path::Path) -> bool {
+        let root = self.config.workspace.canonicalize().unwrap_or_else(|_| self.config.workspace.clone());
+        let rel = path.strip_prefix(&root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+        const DIRS: &[&str] = &[".oxgraft/", ".git/", ".github/workflows/", ".agents/", ".claude/", ".gemini/"];
+        const FILES: &[&str] = &[".mcp.json", "AGENTS.md", "CLAUDE.md", "GEMINI.md"];
+        DIRS.iter().any(|d| rel.starts_with(d)) || FILES.iter().any(|f| rel == *f || rel.ends_with(&format!("/{f}")))
     }
 
     /// Run a read-only subagent (GRAFT-0026) and return its final report.
@@ -261,6 +272,7 @@ impl<'a> Agent<'a> {
         let mut continuations = 0;
         let mut changed_files = false;
         let mut verify_failures = 0;
+        let mut consecutive_errors = 0u32;
         let mut final_text = String::new();
 
         for turn in 1..=self.config.max_turns {
@@ -359,6 +371,7 @@ impl<'a> Agent<'a> {
                 if matches!(name.as_str(), "edit" | "write") && !output.is_error {
                     changed_files = true;
                 }
+                consecutive_errors = if output.is_error { consecutive_errors + 1 } else { 0 };
                 results.push(Block::ToolResult { tool_use_id: id, content: output.content, is_error: output.is_error });
             }
             // Automatic verification after edits (GRAFT-0039, Aider's lint/test-and-fix loop).
@@ -378,8 +391,21 @@ impl<'a> Agent<'a> {
                 }
             }
             changed_files = false;
+            // Consecutive-mistake breaker (GRAFT-0041, after Cline's mistake tracker):
+            // nudge at 6 failed tool calls in a row, stop at 12.
+            if consecutive_errors == MISTAKE_NUDGE {
+                results.push(Block::text(format!(
+                    "[{MISTAKE_NUDGE} tool calls in a row have failed. Stop and reconsider: re-read the relevant files, \
+                     check your assumptions, and try a different approach.]"
+                )));
+            }
+            let stop = consecutive_errors >= MISTAKE_STOP;
             session.messages.push(Message { role: Role::User, content: results });
             self.save(session, emit);
+            if stop {
+                let reason = format!("{MISTAKE_STOP} consecutive tool errors");
+                return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
+            }
 
             let context_used = completion.usage.input_tokens + completion.usage.output_tokens;
             if let Some(window) = self.config.context_window
@@ -525,7 +551,11 @@ impl<'a> Agent<'a> {
         }
 
         let action = tool.action(input);
+        let protected = file.as_ref().is_some_and(|p| matches!(name, "edit" | "write") && self.is_protected(p));
         let decision = match self.toolkit.approval.decide(&action) {
+            // Protected paths (GRAFT-0040) always need an explicit yes: no rule or
+            // "always" answer can fast-path changes to agent config, CI or git internals.
+            Decision::Allow | Decision::Ask if protected => Decision::Ask,
             Decision::Ask if state.always.contains(name) => Decision::Allow,
             d => d,
         };

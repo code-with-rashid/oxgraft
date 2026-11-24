@@ -498,3 +498,31 @@ fn verify_command_feeds_failures_back_after_edits() {
     assert!(!texts[4].contains("Automatic check"), "read-only turns are not checked");
     assert!(!texts[6].contains("Automatic check"), "passing check adds nothing");
 }
+
+#[test]
+fn protected_paths_always_ask_and_mistakes_trip_the_breaker() {
+    let ws = Ws::new("protected");
+    // allow_all would normally approve; protected paths still go to the approver (which says no here).
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [{"name": "write", "input": {"path": ".github/workflows/ci.yml", "content": "x"}}]},
+        {"text": "ok"}
+    ]}))
+    .unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::No);
+    let mut agent =
+        Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, AgentConfig::new("mock", ws.0.clone()));
+    agent.sleep = |_| {};
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    agent.run(&mut session, "task", &mut |e| events.push(e.clone()));
+    assert!(tool_results(&events)[0].1.contains("declined"));
+    assert!(!ws.0.join(".github/workflows/ci.yml").exists());
+
+    let bad: Vec<_> = (0..12)
+        .map(|i| json!({"tool_calls": [{"name": "read", "input": {"path": format!("missing-{i}.txt")}}]}))
+        .collect();
+    let (status, _, _) = run_with(&ws, json!({ "turns": bad }), |_| {}, None);
+    assert_eq!(status, Status::Stopped("12 consecutive tool errors".into()));
+}
