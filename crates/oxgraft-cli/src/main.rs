@@ -71,6 +71,11 @@ enum Command {
     Undo { id: Option<String> },
     /// Check the setup: model and credentials, shell, sandbox, git, skills, MCP, config.
     Doctor,
+    /// Have the agent study this repository and write (or improve) AGENTS.md.
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
     /// Show supported providers and how to configure them.
     Models,
     /// List every strategy and where it was learned from.
@@ -88,6 +93,12 @@ enum Command {
     #[command(name = "__mcp-fixture", hide = true)]
     McpFixture,
 }
+
+const INIT_TASK: &str = "Study this repository and write AGENTS.md at its root: concise instructions for coding \
+agents working here. Cover: what the project is (2-3 sentences); the layout (key directories and what lives in them); \
+exact commands to install, build, test, lint and run (verify each one you can by running it); code conventions you can \
+see in the code; and anything surprising a newcomer would get wrong. If AGENTS.md already exists, read it first and \
+improve it rather than replacing good content. Keep it under 150 lines; no generic advice.";
 
 /// Exit codes (SPEC-0004 AC2).
 const EXIT_ERROR: u8 = 1;
@@ -168,6 +179,8 @@ fn dispatch(cli: Cli) -> CliResult {
             Ok(0)
         }
         Some(Command::Doctor) => doctor(&common),
+        // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
+        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None),
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -509,7 +522,8 @@ fn doctor(common: &Common) -> CliResult {
         oxgraft_tools::ShellKind::PowerShell => "PowerShell (install Git for Windows for a POSIX sh)".into(),
     };
     line(true, "shell", shell);
-    let git = oxgraft_core::prompt::git_summary(&ws).map(|s| s.lines().next().unwrap_or("").trim().trim_start_matches("- ").to_string());
+    let git = oxgraft_core::prompt::git_summary(&ws)
+        .map(|s| s.lines().next().unwrap_or("").trim().trim_start_matches("- ").to_string());
     line(true, "git", git.unwrap_or_else(|| "not a git repository (undo still works)".into()));
     let instructions: Vec<&str> =
         oxgraft_core::prompt::INSTRUCTION_FILES.iter().copied().filter(|f| ws.join(f).is_file()).collect();

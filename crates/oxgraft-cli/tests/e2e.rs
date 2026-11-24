@@ -228,3 +228,15 @@ fn doctor_reports_problems_and_readiness() {
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("ready"));
 }
+
+#[test]
+fn init_writes_agents_md_through_the_loop() {
+    let ws = Ws::new("init");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "AGENTS.md", "content": "# AGENTS.md\n\nRun `make test`.\n"}}]},
+        {"text": "Wrote AGENTS.md"}
+    ]));
+    let out = ws.oxgraft(&["init", "--json", "--yes", "--model", &model]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(ws.read("AGENTS.md").contains("make test"));
+}

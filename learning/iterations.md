@@ -45,3 +45,4 @@ honestly: an iteration is only logged when its tests pass.
 | 37 | 2026-11-25 | (stability) | Fuzz test: 12 000 malformed edits across all edit formats, plus approval/context/sandbox seams, never panic | — | — | SPEC-0002 | `edit_formats_never_panic` |
 | 38 | 2026-11-25 | (stability) | At most 32 tool calls run per turn; the rest get an error result (history stays valid) | avoid | — | SPEC-0003 | `caps_tool_calls_per_turn` |
 | 39 | 2026-11-25 | claude-code | `oxgraft doctor`: config, model/credentials, profile, live sandbox, MCP, shell, git, instructions, skills | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |
+| 40 | 2026-11-25 | codex, claude-code | `oxgraft init` writes a verified AGENTS.md through the normal loop | adopt | GRAFT-0032 | SPEC-0004 | `init_writes_agents_md_through_the_loop` |
