@@ -16,7 +16,7 @@ pub mod sandbox;
 use oxgraft_seams::{ApprovalPolicy, ContextStrategy, EditFormat, Sandbox, StrategyInfo};
 
 pub fn edit_formats() -> Vec<Box<dyn EditFormat>> {
-    vec![Box::new(edit::WholeFile), Box::new(edit::SearchReplace), Box::new(edit::Tolerant)]
+    vec![Box::new(edit::WholeFile), Box::new(edit::SearchReplace), Box::new(edit::Tolerant), Box::new(edit::ApplyPatch)]
 }
 
 pub fn contexts() -> Vec<Box<dyn ContextStrategy>> {

@@ -32,3 +32,5 @@ honestly: an iteration is only logged when its tests pass.
 | 24 | 2026-11-25 | openhands | Per-run token budget | avoid | GRAFT-0021 | SPEC-0003 | `token_budget_stops_runaway_sessions` |
 | 25 | 2026-11-25 | goose, claude-code, codex | MCP client over stdio with timeouts; tools as `mcp__server__tool` | adopt | GRAFT-0022 | SPEC-0002 | `mcp_tools_work_end_to_end` |
 | 26 | 2026-11-25 | claude-code, goose | `.mcp.json` / workspace MCP servers only in trusted workspaces | avoid | GRAFT-0019 | SPEC-0004 | `mcp_tools_work_end_to_end` |
+| 27 | 2026-11-25 | pi, opencode, claude-code | Append-only context compaction via handover summary | adopt | GRAFT-0023 | SPEC-0003 | `compacts_context_and_continues` |
+| 28 | 2026-11-25 | codex | `apply_patch` edit format + `codex-like` profile | adopt | GRAFT-0024 | SPEC-0002 | apply_patch strategy tests |

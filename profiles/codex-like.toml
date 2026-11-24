@@ -1,0 +1,10 @@
+# Codex-style editing: apply_patch hunks (GRAFT-0024). Useful with models
+# trained on Codex's patch format, and for comparing edit formats on the arena.
+name = "codex-like"
+description = "apply_patch edit format with the default context, approval and sandbox strategies."
+
+[strategies]
+edit_format = "apply_patch"
+context = "pinned_then_in_order"
+approval = "ordered_rules"
+sandbox = "none"

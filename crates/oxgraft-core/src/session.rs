@@ -27,6 +27,11 @@ pub struct Session {
     pub usage: Usage,
     #[serde(default)]
     pub changed_files: Vec<UndoRecord>,
+    /// How many times the context was compacted, and how many messages were summarised away.
+    #[serde(default)]
+    pub compactions: u32,
+    #[serde(default)]
+    pub archived_messages: usize,
 }
 
 impl Session {
@@ -51,6 +56,8 @@ impl Session {
             messages: Vec::new(),
             usage: Usage::default(),
             changed_files: Vec::new(),
+            compactions: 0,
+            archived_messages: 0,
         }
     }
 

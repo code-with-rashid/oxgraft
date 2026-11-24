@@ -233,6 +233,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;
     config.max_session_tokens = cfg.max_session_tokens;
+    config.context_window = cfg.context_window;
     config.hooks = cfg.hooks.clone();
     for warning in &cfg.warnings {
         eprintln!("oxgraft: warning: {warning}");

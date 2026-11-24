@@ -18,6 +18,8 @@ pub struct FileConfig {
     pub max_tokens: Option<u32>,
     /// Stop a run when input + output tokens exceed this.
     pub max_session_tokens: Option<u64>,
+    /// Model context window in tokens (compaction at 80%); 0 disables compaction.
+    pub context_window: Option<u64>,
     #[serde(default)]
     pub hooks: Vec<Hook>,
     /// MCP servers to start (name -> command). Workspace entries need trust.
@@ -36,6 +38,7 @@ pub struct Config {
     pub max_turns: u32,
     pub max_tokens: u32,
     pub max_session_tokens: Option<u64>,
+    pub context_window: Option<u64>,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
     pub warnings: Vec<String>,
@@ -85,6 +88,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_turns: 50,
         max_tokens: 16_000,
         max_session_tokens: None,
+        context_window: Some(200_000),
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
         warnings: Vec::new(),
@@ -159,6 +163,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             max_turns: env("OXGRAFT_MAX_TURNS").and_then(|v| v.parse().ok()),
             max_tokens: env("OXGRAFT_MAX_TOKENS").and_then(|v| v.parse().ok()),
             max_session_tokens: env("OXGRAFT_MAX_SESSION_TOKENS").and_then(|v| v.parse().ok()),
+            context_window: env("OXGRAFT_CONTEXT_WINDOW").and_then(|v| v.parse().ok()),
             ..FileConfig::default()
         },
     ));
@@ -193,6 +198,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.max_tokens {
             cfg.max_tokens = v.max(256);
+            used = true;
+        }
+        if let Some(v) = layer.context_window {
+            cfg.context_window = if v == 0 { None } else { Some(v) };
             used = true;
         }
         if let Some(v) = layer.max_session_tokens {

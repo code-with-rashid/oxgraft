@@ -314,3 +314,23 @@ fn resume_repairs_dangling_tool_calls() {
         matches!(&session.messages[2].content[0], oxgraft_seams::Block::ToolResult { tool_use_id, .. } if tool_use_id == "dangling")
     );
 }
+
+#[test]
+fn compacts_context_and_continues() {
+    let ws = Ws::new("compact");
+    let (status, events, session) = run_with(
+        &ws,
+        json!({"turns": [
+            {"tool_calls": [{"name": "ls", "input": {}}]},
+            {"text": "SUMMARY: listed the workspace, nothing else yet"},
+            {"text": "all done"}
+        ]}),
+        |c| c.context_window = Some(10),
+        None,
+    );
+    assert_eq!(status, Status::Done);
+    assert_eq!(session.compactions, 1);
+    assert!(session.messages[0].text().contains("SUMMARY: listed the workspace"));
+    assert!(session.messages[0].text().starts_with("task"));
+    assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("compacted"))));
+}

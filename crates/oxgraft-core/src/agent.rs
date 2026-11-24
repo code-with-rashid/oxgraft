@@ -59,6 +59,8 @@ pub struct AgentConfig {
     /// Stop when input + output tokens for one run exceed this.
     pub max_session_tokens: Option<u64>,
     pub hooks: Vec<Hook>,
+    /// Model context window in tokens; compaction runs above 80% of it. `None` disables it.
+    pub context_window: Option<u64>,
 }
 
 impl AgentConfig {
@@ -74,6 +76,7 @@ impl AgentConfig {
             cancel: Arc::new(AtomicBool::new(false)),
             max_session_tokens: None,
             hooks: Vec::new(),
+            context_window: Some(200_000),
         }
     }
 
@@ -275,9 +278,65 @@ impl<'a> Agent<'a> {
             }
             session.messages.push(Message { role: Role::User, content: results });
             self.save(session, emit);
+
+            let context_used = completion.usage.input_tokens + completion.usage.output_tokens;
+            if let Some(window) = self.config.context_window
+                && context_used > window * 8 / 10
+            {
+                self.compact(session, task, &system, &mut usage, emit);
+            }
         }
         let turns = self.config.max_turns;
         self.finish(session, emit, Status::Stopped(format!("reached max turns ({turns})")), turns, usage, final_text)
+    }
+
+    /// Context compaction (GRAFT-0023, after Pi, OpenCode and Claude Code): ask the model
+    /// for a handover summary, archive the old messages, and continue from the summary.
+    /// The history is never edited in place, so provider-specific blocks stay valid.
+    fn compact(
+        &self,
+        session: &mut Session,
+        task: &str,
+        system: &str,
+        usage: &mut Usage,
+        emit: &mut dyn FnMut(&Event),
+    ) {
+        let mut messages = session.messages.clone();
+        messages.push(Message::user(
+            "Context is nearly full. Write a handover summary for yourself so you can continue in a fresh context: \
+             the task, what you have done (files changed and why), what you verified, the current state, open \
+             problems, and the exact next steps. Do not call tools.",
+        ));
+        let request = CompletionRequest {
+            model: self.config.model.clone(),
+            system: system.to_string(),
+            messages,
+            tools: Vec::new(),
+            max_tokens: self.config.max_tokens,
+        };
+        let summary =
+            complete_with_retries(self.provider, &request, &self.config.retry, &|d| (self.sleep)(d), &mut |_, _, _| {})
+                .map(|c| {
+                    usage.add(c.usage);
+                    session.usage.add(c.usage);
+                    Message::assistant(c.content).text()
+                });
+        let summary = match summary {
+            Ok(s) if !s.trim().is_empty() => s,
+            Ok(_) | Err(_) => {
+                emit(&Event::Warning { message: "context compaction failed; continuing with the full history".into() });
+                return;
+            }
+        };
+        let old = std::mem::take(&mut session.messages);
+        session.archived_messages += old.len();
+        session.compactions += 1;
+        session.messages.push(Message::user(format!(
+            "{task}\n\n[Context was compacted. Your handover summary of the work so far:]\n{summary}\n\n\
+             Continue the task from where you left off."
+        )));
+        emit(&Event::Warning { message: format!("context compacted ({} messages summarised)", old.len()) });
+        self.save(session, emit);
     }
 
     fn execute(
