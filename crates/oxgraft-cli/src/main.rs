@@ -320,7 +320,7 @@ fn chat(common: &Common, resume: Option<String>) -> CliResult {
         if common.yes { Box::new(Fixed(Answer::Yes)) } else { Box::new(TerminalApprover) };
     let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     eprintln!(
-        "oxgraft · {} · profile {} · {}\nType a task. Commands: /undo, /sessions, /exit",
+        "oxgraft · {} · profile {} · {}\nType a task, or /help for commands.",
         s.model,
         s.toolkit.profile.name,
         s.ws.display()
@@ -350,6 +350,35 @@ fn chat(common: &Common, resume: Option<String>) -> CliResult {
                 for s in Session::list(&session.workspace) {
                     eprintln!("{}  {}", s.id, s.title);
                 }
+                continue;
+            }
+            "/cost" | "/usage" => {
+                eprintln!(
+                    "session {}: {} input + {} output tokens, {} messages, {} files changed, {} compactions",
+                    session.id,
+                    session.usage.input_tokens,
+                    session.usage.output_tokens,
+                    session.messages.len(),
+                    session.changed_files.len(),
+                    session.compactions
+                );
+                continue;
+            }
+            "/clear" | "/new" => {
+                session = Session::new(&s.model, &s.toolkit.profile.name, &s.ws);
+                eprintln!("started a new session {}", session.id);
+                continue;
+            }
+            "/help" => {
+                eprintln!(
+                    "/undo      restore files changed in this session\n/cost      token usage for this session\n\
+                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
+                     /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
+                );
+                continue;
+            }
+            other if other.starts_with('/') && !other.contains(' ') => {
+                eprintln!("unknown command {other}; try /help");
                 continue;
             }
             _ => {}

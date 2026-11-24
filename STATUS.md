@@ -3,37 +3,60 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-24 by the scaffold session._
+_Last updated: 2026-11-25 by the autonomous build session (Claude Code)._
 
 ## Current milestone
 
-**M1: Rootstock.** See `ROADMAP.md`.
+**M3: grafts from real reviews**, with M2 (working agent) done. See `ROADMAP.md`.
 
-## Works now
+## Works now (verified by tests; CI on Linux, macOS, Windows)
 
-- Cargo workspace: `oxgraft-seams`, `oxgraft-strategies`, `oxgraft-core`,
-  `oxgraft-protocol`, `oxgraft-cli` (binary `oxgraft`).
-- Four seams (edit_format, context, approval, sandbox) with five strategies,
-  each with provenance and unit tests.
-- `oxgraft strategies` lists strategies and donors; `oxgraft profile <path>`
-  validates a profile and prints the session preamble as JSONL.
-- Learning system: 17 harnesses in `learning/watch.toml`, a profile stub per
-  harness (8 seeded from agentic-arena's reviews), GRAFT-0001 and GRAFT-0002 in trial.
-- Repo checks (`pnpm check:repo`), skills mirror, upstream watcher, docs site, CI.
+- **Any model**: Anthropic native Messages API (raw HTTP, prompt caching, refusal
+  fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets (OpenAI,
+  OpenRouter, DeepSeek, Groq, Gemini, xAI, Mistral, Ollama, LM Studio, custom),
+  and a scripted `mock:` provider. Retries with backoff and `retry-after`.
+- **Tools**: read, write, edit (4 edit formats), ls, glob, grep, bash, todo,
+  web_fetch, skill (Agent Skills), MCP servers over stdio, read-only `task` subagent.
+- **Safety**: workspace path confinement, ordered approval rules, previews in the
+  approval prompt, read-before-edit and stale-file guards, OS sandbox profile
+  (bubblewrap/Seatbelt, fails closed), trusted-workspace gate for repo hooks and
+  MCP servers, `oxgraft undo`.
+- **Stability**: loop guard, max turns, token budget, max_tokens handling,
+  context compaction, Ctrl-C interrupts, crash-safe sessions with repair on resume.
+- **CLI**: `oxgraft` (chat with /help, /undo, /cost, /clear), `run` (`--json`,
+  `--resume`), `sessions`, `undo`, `models`, `strategies`, `profile`; layered
+  config; profiles default, baseline, ci, tolerant, codex-like, sandboxed.
+- **Learning system**: 17 watched harnesses, 30 graft records, 34 logged
+  iterations (`learning/iterations.md`), specs SPEC-0001..0006.
+- Release workflow builds 5 targets on a `v*` tag (not yet exercised).
 
-## In flight
+## Not verified
 
-- Nothing.
+- **No real model has been called.** No API key or local model server was
+  available during the build; providers are tested against a local fake HTTP
+  server and the mock. First task for a human: run
+  `oxgraft run "list the crates and summarise each"` with a real key.
+- The release workflow has never run (no tag pushed yet).
+- Comparative evaluations of grafts (agentic-arena) have not been run; every graft
+  is `trial`, not `adopted`.
+- Harness profiles in `learning/harnesses/` are still stubs/seeds; learnings so far
+  came from agentic-arena's pinned reviews and documented behaviour, not from a
+  fresh read of each upstream at a pinned version.
 
 ## Next up
 
-1. First real review of `codex` and `opencode` with the `watch-harnesses`
-   skill (they cover the most seams); set their `last_reviewed`.
-2. M2: the model loop (provider seam ADR, Anthropic provider, tool set).
+1. Smoke-test with a real Anthropic key and with a local Ollama model; fix what breaks.
+2. Review codex and opencode upstream with the `watch-harnesses` skill; set `last_reviewed`.
+3. agentic-arena adapter for `oxgraft run --json` (ROADMAP M4), then evaluate GRAFT-0001/0015/0024.
 
 ## Known problems
 
-- The scaffold was written on a machine without a Rust toolchain; the first
-  CI run is the first compile. If CI is red, fixing it is the top task.
-- No harness has been fully reviewed yet; capability-matrix cells are mostly "?".
-- Package names (`oxgraft` on crates.io, npm, PyPI) are not published yet.
+- On Windows without Git for Windows, `bash` falls back to PowerShell; models may
+  still write POSIX syntax there.
+- `web_fetch`'s HTML-to-text conversion is basic (no readability extraction).
+- No streaming output yet; long responses appear when complete.
+
+## Dev notes
+
+- On the maintainer's Windows machine, Rust lives in WSL Ubuntu:
+  `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/rashi/dev/opensource/oxgraft && CARGO_TARGET_DIR=~/oxgraft-target cargo test --workspace"`.

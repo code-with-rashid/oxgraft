@@ -35,8 +35,11 @@ crates/
   oxgraft-strategies/  one module per strategy, grouped by seam; carries Provenance
   oxgraft-core/        profiles, strategy assembly, session loop; NEVER depends on strategies
   oxgraft-protocol/    versioned JSONL event stream; append-only
-  oxgraft-cli/         the `oxgraft` binary; wires strategies into core
-profiles/              strategy combinations (default, baseline, ci)
+  oxgraft-providers/   model backends: anthropic (raw HTTP), OpenAI-compatible presets, mock
+  oxgraft-tools/       built-in tools, skills, MCP client, OS sandbox wrapper
+  oxgraft-cli/         the `oxgraft` binary; config, approvals UI, wires everything into core
+specs/                 SPEC-NNNN behaviour specs; tests cite their acceptance criteria
+profiles/              strategy combinations (default, baseline, ci, tolerant, codex-like, sandboxed)
 learning/              watch list, harness profiles, capability matrix, graft records
 docs/adr/              architecture decisions; read before changing a seam
 web/site/              docs site (Astro + Starlight); renders docs/ and learning/
@@ -59,10 +62,26 @@ packaging/             npm and PyPI distribution wrappers
 Setup: Rust stable via rustup, Node 22+, pnpm 9+. On Windows, develop in WSL
 or install the MSVC build tools; CI builds Linux, macOS and Windows.
 
+## Spec-driven workflow
+
+1. New behaviour starts as a spec in `specs/` (or an edit to an existing one)
+   with numbered acceptance criteria.
+2. Write tests that cite the criteria (`// SPEC-0003 AC4`).
+3. Implement until they pass; then log the iteration in `learning/iterations.md`
+   and, if the idea came from another harness, add or update its graft record.
+4. End-to-end behaviour is tested with the `mock:` provider (see
+   `crates/oxgraft-cli/tests/e2e.rs`); provider HTTP code with a local fake server.
+
 ## Architecture rules (enforced by tests or `pnpm check:repo`)
 
-- **`oxgraft-core` must not depend on `oxgraft-strategies`.** Core knows seams;
-  the binary injects strategies. `oxgraft-strategies` depends on `oxgraft-seams` only.
+- **`oxgraft-core` must not depend on `oxgraft-strategies`, `-providers` or `-tools`.**
+  Core knows seams; the binary injects implementations. Strategies, providers and
+  tools depend on `oxgraft-seams` only.
+- **History is append-only.** Never edit or delete earlier messages in place
+  (provider-specific blocks such as Anthropic thinking must round-trip unchanged);
+  compaction replaces the whole history with a summary instead.
+- **Fail closed on safety.** If a sandbox, trust check or approval cannot be
+  enforced, refuse the action; never silently run it unconfined.
 - **A new idea is a new strategy, not an edit to core.** If a seam can't
   express it, write an ADR (`docs/adr/`) proposing the seam change first.
 - **Every strategy declares `Provenance`.** Borrowed ideas name donor, SPDX

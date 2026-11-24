@@ -40,3 +40,4 @@ honestly: an iteration is only logged when its tests pass.
 | 32 | 2026-11-25 | claude-code, opencode | Read-before-edit and stale-file guards | adopt | GRAFT-0028 | SPEC-0003 | `edits_require_a_fresh_read` |
 | 33 | 2026-11-25 | cline, claude-code | Approval prompt previews edits and writes | adopt | GRAFT-0029 | SPEC-0004 | approval tests (manual preview) |
 | 34 | 2026-11-25 | claude-code, codex | Windows: Git Bash `sh` first, PowerShell fallback, never cmd.exe | avoid | GRAFT-0030 | SPEC-0002 | bash tests on Windows CI |
+| 35 | 2026-11-25 | claude-code, codex | Chat slash commands: /help, /cost, /clear, unknown-command hints | adopt | — | SPEC-0004 | manual smoke test |
