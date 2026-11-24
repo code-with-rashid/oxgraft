@@ -25,6 +25,9 @@ pub struct FileConfig {
     /// MCP servers to start (name -> command). Workspace entries need trust.
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, ServerConfig>,
+    /// Extra approval rules: `[[rules]] tool = "bash", resource = "cargo *", decision = "allow"`.
+    #[serde(default)]
+    pub rules: Vec<RuleConfig>,
     /// User config only: workspaces whose own hooks and MCP servers may run.
     #[serde(default)]
     pub trusted_workspaces: Vec<String>,
@@ -41,6 +44,7 @@ pub struct Config {
     pub context_window: Option<u64>,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
+    pub rules: Vec<oxgraft_strategies::approval::Rule>,
     pub warnings: Vec<String>,
     pub sources: Vec<String>,
 }
@@ -91,6 +95,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         context_window: Some(200_000),
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
+        rules: Vec::new(),
         warnings: Vec::new(),
         sources: Vec::new(),
     };
@@ -103,6 +108,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         trusted = c.trusted_workspaces.clone();
         cfg.hooks.extend(c.hooks.clone());
         cfg.mcp_servers.extend(c.mcp_servers.clone());
+        cfg.rules.extend(convert_rules(&c.rules, &mut cfg.warnings));
         layers.push((p.display().to_string(), c));
     }
     let is_trusted = trusted.iter().any(|t| same_dir(t, workspace));
@@ -145,6 +151,18 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
                 cfg.warnings.push(format!(
                     "ignoring {} MCP server(s) in {}: workspace not trusted",
                     c.mcp_servers.len(),
+                    ws_path.display()
+                ));
+            }
+        }
+        if !c.rules.is_empty() {
+            if is_trusted {
+                let rules = convert_rules(&c.rules, &mut cfg.warnings);
+                cfg.rules.extend(rules);
+            } else {
+                cfg.warnings.push(format!(
+                    "ignoring {} approval rule(s) in {}: workspace not trusted",
+                    c.rules.len(),
                     ws_path.display()
                 ));
             }
@@ -255,4 +273,40 @@ mod tests {
         assert!(resolve(&ws, &flags).is_err());
         let _ = std::fs::remove_dir_all(&ws);
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleConfig {
+    pub tool: String,
+    #[serde(default = "any")]
+    pub resource: String,
+    pub decision: String,
+    pub justification: Option<String>,
+}
+
+fn any() -> String {
+    "*".into()
+}
+
+fn convert_rules(rules: &[RuleConfig], warnings: &mut Vec<String>) -> Vec<oxgraft_strategies::approval::Rule> {
+    use oxgraft_seams::Decision;
+    rules
+        .iter()
+        .filter_map(|r| {
+            let decision = match r.decision.as_str() {
+                "allow" => Decision::Allow,
+                "ask" => Decision::Ask,
+                "deny" => Decision::Deny,
+                other => {
+                    warnings
+                        .push(format!("ignoring rule for `{}`: decision `{other}` is not allow, ask or deny", r.tool));
+                    return None;
+                }
+            };
+            let mut rule = oxgraft_strategies::approval::Rule::new(&r.tool, &r.resource, decision);
+            rule.justification = r.justification.clone();
+            Some(rule)
+        })
+        .collect()
 }

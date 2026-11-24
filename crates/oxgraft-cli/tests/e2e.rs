@@ -248,3 +248,36 @@ fn init_writes_agents_md_through_the_loop() {
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(ws.read("AGENTS.md").contains("make test"));
 }
+
+// GRAFT-0036: user rules with justification; deny wins over a broad allow; compound commands split.
+#[test]
+fn configured_rules_apply_with_reasons() {
+    let ws = Ws::new("rules");
+    let user_dir = ws.0.join("no-user-config").join("oxgraft");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::write(
+        user_dir.join("config.toml"),
+        "[[rules]]\ntool = \"bash\"\nresource = \"echo *\"\ndecision = \"allow\"\n\n\
+         [[rules]]\ntool = \"bash\"\nresource = \"rm *\"\ndecision = \"deny\"\njustification = \"never delete files\"\n",
+    )
+    .unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [
+            {"name": "bash", "input": {"command": "echo hello"}},
+            {"name": "bash", "input": {"command": "echo hi && rm -rf nothing"}}
+        ]},
+        {"text": "done"}
+    ]));
+    // No --yes: `ask` would be declined, so the first call passing proves the allow rule applied.
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let results: Vec<(bool, String)> = events(&out)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::ToolResult { ok, output, .. } => Some((ok, output)),
+            _ => None,
+        })
+        .collect();
+    assert!(results[0].0 && results[0].1.contains("hello"), "{:?}", results[0]);
+    assert!(!results[1].0 && results[1].1.contains("never delete files"), "{:?}", results[1]);
+}

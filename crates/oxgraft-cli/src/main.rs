@@ -106,10 +106,18 @@ const EXIT_USAGE: u8 = 2;
 const EXIT_STOPPED: u8 = 3;
 
 fn available() -> Available {
+    available_with(Vec::new())
+}
+
+/// Strategies, with user-configured approval rules appended to the defaults.
+fn available_with(rules: Vec<oxgraft_strategies::approval::Rule>) -> Available {
     Available {
         edit_formats: oxgraft_strategies::edit_formats(),
         contexts: oxgraft_strategies::contexts(),
-        approvals: oxgraft_strategies::approvals(),
+        approvals: vec![
+            Box::new(oxgraft_strategies::approval::OrderedRules::with_extra(rules)),
+            Box::new(oxgraft_strategies::approval::AllowAll),
+        ],
         sandboxes: oxgraft_strategies::sandboxes(),
     }
 }
@@ -247,7 +255,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         .map_err(usage)?;
     let (_, profile_text) = profiles::load(&ws, &cfg.profile).map_err(usage)?;
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
-    let toolkit = Toolkit::assemble(profile, available()).map_err(usage)?;
+    let toolkit = Toolkit::assemble(profile, available_with(cfg.rules.clone())).map_err(usage)?;
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;

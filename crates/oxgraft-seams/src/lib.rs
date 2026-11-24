@@ -157,6 +157,11 @@ pub enum Decision {
 /// Which actions run without asking the user.
 pub trait ApprovalPolicy: Strategy {
     fn decide(&self, action: &Action) -> Decision;
+
+    /// Why the decision was made, for the model (e.g. what to do instead of a denied action).
+    fn explain(&self, _action: &Action) -> Option<String> {
+        None
+    }
 }
 
 // -------------------------------------------------------------------- sandbox

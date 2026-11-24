@@ -50,3 +50,5 @@ honestly: an iteration is only logged when its tests pass.
 | 42 | 2026-11-25 | goose | pre_tool hooks fail closed (found the same flaw in Oxgraft) | avoid | GRAFT-0033 | SPEC-0005 | `failing_pre_tool_hooks_fail_closed` |
 | 43 | 2026-11-25 | codex | Untrusted workspaces cannot choose the model/provider | adopt | GRAFT-0034 | SPEC-0004 | `workspace_config_and_profiles` |
 | 44 | 2026-11-25 | aider, goose | Failed edits return the nearest real lines with numbers | adopt | GRAFT-0035 | SPEC-0002 | `failed_edits_show_the_nearest_real_lines` |
+| 45 | 2026-11-25 | claude-code (avoiding opencode last-match) | Deny always wins; compound bash commands checked per part; `$(` asks | adopt | GRAFT-0036 | SPEC-0003 | `deny_always_wins_and_compound_commands_are_checked_per_part` |
+| 46 | 2026-11-25 | codex | Configurable `[[rules]]` with justifications shown to the model | adopt | GRAFT-0036 | SPEC-0004 | `configured_rules_apply_with_reasons` |

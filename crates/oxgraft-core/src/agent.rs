@@ -497,8 +497,9 @@ impl<'a> Agent<'a> {
         match decision {
             Decision::Deny => {
                 emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
+                let why = self.toolkit.approval.explain(&action).map(|w| format!(" Reason: {w}.")).unwrap_or_default();
                 return ToolOutput::error(format!(
-                    "Denied by the approval policy: `{name}` on `{}` is not allowed. Choose another approach.",
+                    "Denied by the approval policy: `{name}` on `{}` is not allowed.{why} Choose another approach.",
                     action.resource
                 ));
             }
