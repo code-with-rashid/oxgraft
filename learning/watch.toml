@@ -19,7 +19,7 @@ repo = "openai/codex"
 license = "Apache-2.0"
 language = "Rust"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "rust-v0.172.0"
 focus = ["sandbox", "approval", "edit_format"]
 
 [[harness]]
@@ -29,7 +29,7 @@ repo = "aaif-goose/goose"
 license = "Apache-2.0"
 language = "Rust"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v1.60.2"
 focus = ["mcp", "recipes", "extensions"]
 
 [[harness]]
@@ -39,7 +39,7 @@ repo = "anomalyco/opencode"
 license = "MIT"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v1.19.6"
 focus = ["approval", "sessions", "server_api"]
 
 [[harness]]
@@ -49,7 +49,7 @@ repo = "anthropics/claude-code"
 license = "proprietary"
 language = "TypeScript"
 policy = "reference"
-last_reviewed = ""
+last_reviewed = "v2.1.331"
 focus = ["context", "skills", "hooks", "subagents"]
 notes = "The public repo holds issues, plugins and the changelog, not the source."
 
@@ -60,7 +60,7 @@ repo = "google-gemini/gemini-cli"
 license = "Apache-2.0"
 language = "TypeScript"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v0.71.1"
 focus = ["context", "tools"]
 
 [[harness]]
@@ -90,7 +90,7 @@ repo = "Aider-AI/aider"
 license = "Apache-2.0"
 language = "Python"
 policy = "adapt"
-last_reviewed = ""
+last_reviewed = "v0.86.0"
 focus = ["edit_format", "context", "git"]
 
 [[harness]]
