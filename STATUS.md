@@ -7,56 +7,54 @@ _Last updated: 2026-11-25 by the autonomous build session (Claude Code)._
 
 ## Current milestone
 
-**M3: grafts from real reviews**, with M2 (working agent) done. See `ROADMAP.md`.
+**M3 (grafts) mostly done; M4 (evidence) not started.** See `ROADMAP.md`.
 
 ## Works now (verified by tests; CI on Linux, macOS, Windows)
 
 - **Any model**: Anthropic native Messages API (raw HTTP, prompt caching, refusal
-  fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets (OpenAI,
-  OpenRouter, DeepSeek, Groq, Gemini, xAI, Mistral, Ollama, LM Studio, custom),
-  and a scripted `mock:` provider. Retries with backoff and `retry-after`.
-- **Tools**: read, write, edit (4 edit formats), ls, glob, grep, bash, todo,
-  web_fetch, skill (Agent Skills), MCP servers over stdio, read-only `task` subagent.
-- **Safety**: workspace path confinement, ordered approval rules, previews in the
-  approval prompt, read-before-edit and stale-file guards, OS sandbox profile
-  (bubblewrap/Seatbelt, fails closed), trusted-workspace gate for repo hooks and
-  MCP servers, `oxgraft undo`.
-- **Stability**: loop guard, max turns, token budget, max_tokens handling,
-  context compaction, Ctrl-C interrupts, crash-safe sessions with repair on resume.
-- **CLI**: `oxgraft` (chat with /help, /undo, /cost, /clear), `run` (`--json`,
-  `--resume`), `sessions`, `undo`, `models`, `strategies`, `profile`; layered
-  config; profiles default, baseline, ci, tolerant, codex-like, sandboxed.
-- **Learning system**: 17 watched harnesses, 30 graft records, 34 logged
-  iterations (`learning/iterations.md`), specs SPEC-0001..0006.
-- Release workflow builds 5 targets on a `v*` tag (not yet exercised).
+  fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets, `mock:`.
+  Retries with backoff and `retry-after`. `auto` profile picks the edit format by
+  model family.
+- **Tools**: read, write, edit (4 formats + old/new_string), ls, glob, grep, bash
+  (POSIX sh, Git Bash or PowerShell on Windows), todo, web_fetch, skill, MCP
+  (stdio), read-only `task` subagent.
+- **Safety**: workspace path confinement; deny-wins approval rules with per-part
+  shell command checks and justifications; `[[rules]]` config; protected paths;
+  approval previews; read-before-edit and stale-file guards; OS sandbox profile
+  (bubblewrap/Seatbelt, fails closed); fail-closed pre_tool hooks; trusted-workspace
+  gate for repo hooks, MCP servers, rules, model and verify_command; `oxgraft undo`.
+- **Stability**: loop guard, mistake breaker, max turns, token budget, per-turn call
+  cap, size caps, max_tokens handling, compaction, Ctrl-C interrupts, crash-safe
+  sessions with repair, fuzz-tested strategies, verify_command feedback loop.
+- **CLI**: chat (/help /undo /cost /clear), run (--json, --resume), init, doctor,
+  sessions, undo, models, strategies, profile.
+- **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
+  archived); 41 graft records; 52 logged iterations; specs SPEC-0001..0006.
 
 ## Not verified
 
-- **No real model has been called.** No API key or local model server was
-  available during the build; providers are tested against a local fake HTTP
-  server and the mock. First task for a human: run
-  `oxgraft run "list the crates and summarise each"` with a real key.
-- The release workflow has never run (no tag pushed yet).
-- Comparative evaluations of grafts (agentic-arena) have not been run; every graft
-  is `trial`, not `adopted`.
-- Harness profiles in `learning/harnesses/` are still stubs/seeds; learnings so far
-  came from agentic-arena's pinned reviews and documented behaviour, not from a
-  fresh read of each upstream at a pinned version.
+- **No real model has been called.** No API key or local model server was available.
+  Providers are tested against a local fake HTTP server and the mock. First human
+  task: `oxgraft doctor`, then `oxgraft run "summarise this repo"` with a real key
+  and with Ollama.
+- Release workflow never run (no tag pushed). Packages not published.
+- No comparative evaluation: every graft is `trial`. The `auto` profile is a trial default.
+- macOS Seatbelt profile is exercised only by CI's test, not by a human.
 
 ## Next up
 
-1. Smoke-test with a real Anthropic key and with a local Ollama model; fix what breaks.
-2. Review codex and opencode upstream with the `watch-harnesses` skill; set `last_reviewed`.
-3. agentic-arena adapter for `oxgraft run --json` (ROADMAP M4), then evaluate GRAFT-0001/0015/0024.
+1. Real-model smoke tests (Anthropic, OpenAI-compatible, Ollama); fix what breaks.
+2. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats (GRAFT-0001/0015/0024/0038).
+3. Top backlog items from reviews (ROADMAP "Backlog from reviews").
 
 ## Known problems
 
-- On Windows without Git for Windows, `bash` falls back to PowerShell; models may
-  still write POSIX syntax there.
-- `web_fetch`'s HTML-to-text conversion is basic (no readability extraction).
 - No streaming output yet; long responses appear when complete.
+- `web_fetch` HTML-to-text is basic.
+- Verify commands and hooks run via `cmd` on Windows, not Git Bash.
 
 ## Dev notes
 
-- On the maintainer's Windows machine, Rust lives in WSL Ubuntu:
+- On the maintainer's Windows machine Rust lives in WSL Ubuntu:
   `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/rashi/dev/opensource/oxgraft && CARGO_TARGET_DIR=~/oxgraft-target cargo test --workspace"`.
+- Prefer the Edit tool over shell heredocs for Rust code containing backslashes.

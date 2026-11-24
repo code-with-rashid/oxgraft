@@ -18,20 +18,26 @@ updates a harness profile or adds or promotes a strategy.
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
 | delegation | read-only `task` subagent (0026) | — | named subagents with policies (opencode) |
 
-## By harness (what we have reviewed)
+## By harness
 
-| Harness | Reviewed | Edit format | Context | Approval | Sandbox | Taken into Oxgraft |
-|---|---|---|---|---|---|---|
-| codex | documented behaviour | apply_patch | AGENTS.md | modes | Landlock/Seatbelt | 0006, 0008, 0010, 0024, 0025, 0030 |
-| goose | via agentic-arena | ? | ? | tool permissions | outer isolation advised | 0019, 0022 |
-| opencode | via agentic-arena | ? | compaction | ordered allow/ask/deny | none built in | 0002, 0003, 0009, 0014, 0026 |
-| claude-code | public docs/behaviour | str_replace | CLAUDE.md, @imports, compaction | permission rules, hooks | bubblewrap/Seatbelt | 0012, 0013, 0016, 0017, 0018, 0028 |
-| gemini-cli | public docs | ? | GEMINI.md | ? | ? | 0006, 0027 |
-| pi | via agentic-arena | ? | compaction | none built in | none built in | 0003, 0023 |
-| deepseek-harness | via agentic-arena | ? | ? | presets + policy plugins | profile-selected | — |
-| aider | via agentic-arena | multiple formats | repo map | user interaction | none | 0001, 0011, 0015 |
-| cline | via agentic-arena | diff | ? | auto-approve + interactive | none | 0005, 0020, 0029 |
-| openhands | via agentic-arena | ? | ? | security analyzer | local or container | 0021 |
-| swe-agent | via agentic-arena | ? | bounded observations | blocklists | SWE-ReX | 0004 |
-| mini-swe-agent | documented behaviour | bash only | minimal | none | outer | 0007 |
-| others in watch.toml | no | ? | ? | ? | ? | — |
+Every watched harness except Roo Code (archived) was reviewed at a pinned tag on 2026-11-25; the per-seam detail, strengths and limitations with sources are in `learning/harnesses/<id>.md`, and the ideas not yet taken are ranked in ROADMAP.md ("Backlog from reviews"). Grafts per donor:
+
+| Harness | Reviewed at | Grafts taken into Oxgraft |
+|---|---|---|
+| codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034 |
+| claude-code | v2.1.331 (docs) | 0012, 0013, 0016, 0017, 0018, 0028, 0031, 0036 |
+| opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038 |
+| gemini-cli | v0.71.1 | 0027, 0037 |
+| aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039 |
+| goose | v1.60.2 | 0019, 0022, 0033 |
+| pi | v1.6.0 | 0023 |
+| cline | v4.1.27 | 0005, 0020, 0029, 0041 |
+| openhands | v1.45.0 (sdk v1.64.0) | 0021 |
+| swe-agent | v1.1.0 | 0004 |
+| mini-swe-agent | v2.4.6 | 0007 |
+| qwen-code | v0.28.4 | 0040 |
+| kilocode | v7.8.32 | — |
+| continue | v2.0.0-vscode (archived) | — |
+| deepseek-harness | dsh-v0.2.3-alpha.2 | — |
+| crush | v0.102.0 (FSL, clean-room) | — |
+| roo-code | not reviewed (archived) | — |

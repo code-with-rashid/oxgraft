@@ -30,10 +30,24 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 - [x] OS sandbox (codex/claude-code); avoid graft "permissions are not a sandbox"
 - [x] Skills, hooks, MCP, subagents, web_fetch, todo
 - [x] Stability: interrupts, budgets, read-before-edit, session repair, Windows shell
-- [ ] Review codex, opencode, aider, claude-code, pi upstream at pinned versions (`watch-harnesses` skill)
+- [x] Review 16 watched harnesses upstream at pinned versions
+- [x] Deny-wins rules, compound-command checks, protected paths, mistake breaker, verify loop, JIT instructions
 - [ ] Streaming output (Anthropic SSE, OpenAI stream)
-- [ ] Repo map context strategy (aider)
-- [ ] Git checkpoints per turn (cline) in addition to file undo
+
+## Backlog from reviews (ranked; each needs a graft record first)
+
+1. Git-ref checkpoints per turn with a private index, outside the user's history (cline, kilocode)
+2. Sandbox network egress via a proxy with an allowlist, empty by default (claude-code, codex)
+3. Self-testing approval rules: `match`/`not_match` examples validated at load (codex)
+4. Deterministic risk rails for shell: fetch-to-exec, raw disk, recursive force delete → always ask (openhands)
+5. Auto-allow read-only shell commands only when the whole command parses as inert (crush, clean-room)
+6. Re-query on malformed tool calls without polluting history (swe-agent)
+7. Review-on-submit: show the session diff and a checklist before finishing (swe-agent)
+8. Goal mode with an independent verifier and a visible budget (qwen-code)
+9. Session tree / fork from any message (pi, goose)
+10. Batched multi-edits matched against the original file (pi)
+11. Repo map under a token budget (aider); LSP diagnostics after edits (opencode, claude-code)
+12. Worktree-isolated writing subagents (claude-code); sandbox expansion on denial (gemini-cli)
 
 ## M4: Evidence
 
