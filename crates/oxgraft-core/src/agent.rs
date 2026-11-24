@@ -111,6 +111,8 @@ pub struct Outcome {
 
 const MAX_CONTINUATIONS: u32 = 3;
 const LOOP_LIMIT: usize = 3;
+/// Tool calls executed per model turn; extra calls get an error result (stability).
+const MAX_CALLS_PER_TURN: usize = 32;
 
 pub struct Agent<'a> {
     pub toolkit: &'a Toolkit,
@@ -322,9 +324,13 @@ impl<'a> Agent<'a> {
 
             let truncated = completion.stop == StopReason::MaxTokens;
             let mut results = Vec::with_capacity(calls.len());
-            for (id, name, input) in calls {
+            for (index, (id, name, input)) in calls.into_iter().enumerate() {
                 emit(&Event::ToolCall { id: id.clone(), tool: name.clone(), input: input.clone() });
-                let output = if self.config.cancelled() {
+                let output = if index >= MAX_CALLS_PER_TURN {
+                    ToolOutput::error(format!(
+                        "Not executed: at most {MAX_CALLS_PER_TURN} tool calls run per turn. Repeat the remaining calls in your next turn."
+                    ))
+                } else if self.config.cancelled() {
                     ToolOutput::error(INTERRUPTED)
                 } else if truncated {
                     ToolOutput::error(

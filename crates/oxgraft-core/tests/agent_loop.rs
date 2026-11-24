@@ -419,3 +419,17 @@ fn created_files_can_be_edited_and_paths_normalise() {
     assert!(r[1].0, "{:?}", r[1]);
     assert_eq!(std::fs::read_to_string(ws.0.join("made.txt")).unwrap(), "newer\n");
 }
+
+#[test]
+fn caps_tool_calls_per_turn() {
+    let ws = Ws::new("callcap");
+    let calls: Vec<_> = (0..40).map(|i| json!({"name": "glob", "input": {"pattern": format!("*.{i}")}})).collect();
+    let (status, events, session) =
+        run_with(&ws, json!({"turns": [{"tool_calls": calls}, {"text": "ok"}]}), |_| {}, None);
+    assert_eq!(status, Status::Done);
+    let r = tool_results(&events);
+    assert_eq!(r.len(), 40, "every call still gets a result");
+    assert!(r[..32].iter().all(|(ok, _)| *ok));
+    assert!(r[32..].iter().all(|(ok, out)| !ok && out.contains("at most 32")));
+    assert_eq!(session.messages[2].content.len(), 40);
+}
