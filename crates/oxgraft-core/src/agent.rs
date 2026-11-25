@@ -546,6 +546,9 @@ impl<'a> Agent<'a> {
                 let reason = format!("token budget exhausted ({budget} tokens)");
                 return self.finish(session, emit, Status::Stopped(reason), turn - 1, usage, final_text);
             }
+            if depth == 0 {
+                emit(&Event::TurnStarted { turn });
+            }
             let request = CompletionRequest {
                 model: self.config.model.clone(),
                 system: system.clone(),

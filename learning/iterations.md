@@ -113,3 +113,4 @@ honestly: an iteration is only logged when its tests pass.
 | 105 | 2026-11-25 | claude-code, codex | Chat `/mode X` switches approval mode without restarting (one toolkit per mode) | adopt | GRAFT-0077 | SPEC-0004 | `chat_mode_switches_approvals` |
 | 106 | 2026-11-25 | claude-code | Decline an approval with guidance: typed text goes to the model (`Answer::NoWith`) | adopt | GRAFT-0078 | SPEC-0003 | `declining_with_feedback_reaches_the_model` |
 | 107 | 2026-11-25 | aider | `verify_command = "auto"`: detect cargo check / go vet / typecheck-or-lint script / Python compile; trusted workspaces only | adopt | GRAFT-0079 | SPEC-0005 | `verify_command_auto_detects_the_project_check` |
+| 108 | 2026-11-25 | claude-code | `turn_started` event; the terminal shows a dim "… thinking" line until output arrives (Unix terminals and Windows Terminal; not with NO_COLOR) | adopt | GRAFT-0080 | SPEC-0003 | `protocol round-trip` |

@@ -79,6 +79,7 @@ types and optional fields may be added, so ignore what you don't know):
 |---|---|
 | `session_started` | protocol version, profile, session id, model |
 | `strategy_selected` | one per seam: which strategy the profile picked |
+| `turn_started` | a request to the model is going out (`turn`) |
 | `text_delta` | streamed assistant text; the full text follows in `message` |
 | `message` | a complete assistant reply |
 | `tool_call` / `tool_result` | a tool call and its result (`ok`, `output`) |

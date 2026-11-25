@@ -7,6 +7,8 @@ pub struct Human {
     tools: std::collections::HashMap<String, String>,
     /// Text deltas have been printed for the reply in progress (ADR 0007).
     streaming: bool,
+    /// A "thinking…" line is on screen (only on a terminal).
+    waiting: bool,
 }
 
 fn one_line(s: &str, max: usize) -> String {
@@ -20,7 +22,22 @@ fn one_line(s: &str, max: usize) -> String {
 
 impl Human {
     pub fn event(&mut self, event: &Event) {
-        use std::io::Write;
+        use std::io::{IsTerminal, Write};
+        // Clear the "thinking…" line once anything else happens (GRAFT-0080).
+        if self.waiting {
+            self.waiting = false;
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
+        }
+        if let Event::TurnStarted { .. } = event {
+            let ansi = !cfg!(windows) || std::env::var_os("WT_SESSION").is_some();
+            if std::io::stderr().is_terminal() && ansi && std::env::var_os("NO_COLOR").is_none() {
+                eprint!("\x1b[2m  … thinking\x1b[0m");
+                let _ = std::io::stderr().flush();
+                self.waiting = true;
+            }
+            return;
+        }
         if self.streaming && !matches!(event, Event::TextDelta { .. }) {
             // End the streamed line before anything else is printed.
             println!();
