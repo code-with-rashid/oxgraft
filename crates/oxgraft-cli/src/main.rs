@@ -824,6 +824,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         let _ = std::io::stderr().flush();
         let Some(input) = read_message(&mut stdin.lock()).map_err(usage)? else { break };
         let line = input.trim();
+        // `/init` (GRAFT-0032 in chat): write or improve AGENTS.md.
+        let line = if line == "/init" { INIT_TASK } else { line };
         match line {
             "" => continue,
             bang if bang.starts_with('!') => {
@@ -950,7 +952,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
