@@ -123,8 +123,14 @@ impl Tool for Read {
         let offset = try_tool!(opt_u64(input, "offset")).unwrap_or(1).max(1);
         let limit = try_tool!(opt_u64(input, "limit")).unwrap_or(DEFAULT_READ_LINES).max(1);
         let full = try_tool!(resolve(ctx.workspace, path));
+        // A directory gets its listing (GRAFT-0110, after OpenCode's read tool),
+        // which is what the model wanted, instead of an error and another turn.
         if full.is_dir() {
-            return ToolOutput::error(format!("`{path}` is a directory; use `ls` to list it"));
+            let listing = Ls.run(&serde_json::json!({"path": path}), ctx);
+            if listing.is_error {
+                return listing;
+            }
+            return ToolOutput::ok(format!("`{path}` is a directory; its entries:\n{}", listing.content));
         }
         if let Some(msg) = special_file(&full, path) {
             return ToolOutput::error(msg);
@@ -634,6 +640,20 @@ mod tests {
         assert_eq!(normalize_path("../outside"), "../outside");
         assert_eq!(normalize_path("/abs/./p"), "/abs/p");
         assert_eq!(action("write", &json!({"path": "src//../x.rs"}), "path").resource, "x.rs");
+    }
+
+    // GRAFT-0110
+    #[test]
+    fn reading_a_directory_lists_it() {
+        let f = Fixture::new("readdir");
+        std::fs::create_dir_all(f.dir.join("src")).unwrap();
+        std::fs::write(f.dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let out = f.run(&Read, json!({"path": "src"}));
+        assert!(
+            !out.is_error && out.content.contains("is a directory") && out.content.contains("main.rs"),
+            "{}",
+            out.content
+        );
     }
 
     // GRAFT-0105

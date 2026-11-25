@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092, GRAFT-0104, GRAFT-0105, GRAFT-0104, GRAFT-0109]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092, GRAFT-0104, GRAFT-0105, GRAFT-0104, GRAFT-0109, GRAFT-0110]
 ---
 
 # SPEC-0002: Built-in tools
@@ -91,3 +91,4 @@ tools beat many overlapping ones) that is safe by default.
   way, including a second Ctrl-C) also stops the processes it started.
 - **AC21** `bash_output` with `filter` returns only the new lines matching the
   regex; an invalid regex is an error.
+- **AC22** `read` on a directory returns the directory's listing.

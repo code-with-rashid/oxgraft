@@ -159,3 +159,4 @@ honestly: an iteration is only logged when its tests pass.
 | 151 | 2026-11-25 | review | Syntax notes only when an edit breaks a file that parsed before; `tsconfig.json`, `.vscode/*.json` and other JSON-with-comments files are skipped | fix | GRAFT-0105 | SPEC-0002 | `broken_json_and_toml_are_reported` |
 | 152 | 2026-11-25 | claude-code | Chat `/agents` lists named subagents with their descriptions and tools | adopt | GRAFT-0106 | SPEC-0004 | `chat_lists_named_agents` |
 | 153 | 2026-11-25 | claude-code | `bash_output` takes a `filter` regex and returns only matching new lines | adopt | GRAFT-0109 | SPEC-0002 | `output_can_be_filtered` |
+| 154 | 2026-11-25 | opencode | `read` on a directory returns its listing instead of an error | adopt | GRAFT-0110 | SPEC-0002 | `reading_a_directory_lists_it` |
