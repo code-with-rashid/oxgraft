@@ -27,7 +27,7 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   pre_tool hooks; trusted-workspace gate for hooks, MCP, rules, model, profile,
   approval mode, verify_command and the repo's own `profiles/`; `@imports`
   confined to the workspace; web/MCP output fenced as `<untrusted>`.
-- **Recovery**: per-turn **checkpoints** in `.oxgraft/checkpoints.git` (captures
+- **Recovery**: per-turn **checkpoints** in a private repo under the user data dir (captures
   shell changes; never touches the user's `.git`), `oxgraft checkpoints`,
   `oxgraft restore N` (undoable), change summary after each run, `oxgraft undo`.
 - **Stability**: loop guard, mistake breaker, malformed tool calls re-asked out of

@@ -45,7 +45,8 @@ otherwise an error explaining how to choose one.
 - **AC6** End-to-end test: with the mock provider, `oxgraft run` reads a
   file, edits it, runs a command, and exits 0 with the file changed.
 - **AC7** With `checkpoints = true` (default) and git installed, the workspace is
-  snapshotted into `.oxgraft/checkpoints.git` at session start and after every
+  snapshotted into a private repo in the user data dir (never inside the
+  workspace; git runs with only Oxgraft's own config, no hooks or fsmonitor) at session start and after every
   turn that used a tool other than read-only ones, including changes made by
   shell commands. `oxgraft checkpoints` lists them; `oxgraft restore N` returns
   the workspace to checkpoint N after recording a pre-restore checkpoint. The

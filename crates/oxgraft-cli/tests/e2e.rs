@@ -31,8 +31,14 @@ impl Ws {
             .env_remove("OXGRAFT_MODEL")
             .env("XDG_CONFIG_HOME", self.0.join("no-user-config"))
             .env("APPDATA", self.0.join("no-user-config"))
+            .env("OXGRAFT_DATA_DIR", self.data())
             .output()
             .unwrap()
+    }
+
+    /// Per-test data dir (checkpoint repos), outside the workspace.
+    fn data(&self) -> PathBuf {
+        self.0.with_extension("data")
     }
 
     fn read(&self, rel: &str) -> String {
@@ -43,6 +49,7 @@ impl Ws {
 impl Drop for Ws {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(self.data());
     }
 }
 
@@ -242,7 +249,7 @@ fn doctor_reports_problems_and_readiness() {
     for expect in ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming"] {
         assert!(text.contains(expect), "missing {expect}:\n{text}");
     }
-    assert!(!ws.0.join(".oxgraft/checkpoints.git").exists(), "doctor creates nothing");
+    assert!(!ws.data().exists(), "doctor creates nothing");
     let out = ws.oxgraft(&["doctor", "--model", &model, "--mode", "nope"]);
     assert!(String::from_utf8_lossy(&out.stdout).contains("FAIL approvals"));
 }
@@ -312,6 +319,8 @@ fn checkpoints_capture_shell_changes_and_restore() {
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(ws.0.join("made_by_shell.txt").exists());
     assert!(!ws.0.join(".git").exists(), "the user's repository is never created");
+    assert!(!ws.0.join(".oxgraft/checkpoints.git").exists(), "the checkpoint repo lives outside the workspace");
+    assert!(ws.data().join("checkpoints").is_dir());
 
     let list = ws.oxgraft(&["checkpoints"]);
     let listing = String::from_utf8_lossy(&list.stdout).to_string();
@@ -470,6 +479,7 @@ fn chat_lists_and_restores_checkpoints() {
         .env_remove("ANTHROPIC_API_KEY")
         .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
         .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

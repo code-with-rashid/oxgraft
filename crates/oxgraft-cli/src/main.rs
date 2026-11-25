@@ -764,7 +764,12 @@ fn doctor(common: &Common) -> CliResult {
             "off (`checkpoints = false`)".to_string()
         } else {
             match oxgraft_core::checkpoint::Checkpoints::check(&ws) {
-                Ok(()) => "on: snapshots in .oxgraft/checkpoints.git after changing turns".into(),
+                Ok(()) => format!(
+                    "on: snapshots after changing turns in {}",
+                    oxgraft_core::checkpoint::Checkpoints::location(&ws)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                ),
                 Err(e) => format!("unavailable: {e} (`oxgraft undo` still works)"),
             }
         };

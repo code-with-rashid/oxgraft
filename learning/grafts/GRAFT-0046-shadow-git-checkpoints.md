@@ -27,7 +27,7 @@ Every change a session makes, by any tool, can be rolled back to any turn withou
 
 ## Implementation
 
-`oxgraft_core::checkpoint::Checkpoints`: git with `--git-dir .oxgraft/checkpoints.git --work-tree <workspace>`, user env GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE removed, workspace .gitignore plus default heavy-dir excludes. Snapshot at start and after turns using non-read-only tools; records in `Session.checkpoints`. `oxgraft checkpoints` / `oxgraft restore N` (takes a pre-restore checkpoint first). Off for home dir and filesystem roots; failures are warnings.
+`oxgraft_core::checkpoint::Checkpoints`: git with `--git-dir <data dir>/checkpoints/<name>-<hash>.git --work-tree <workspace>`, user env GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE removed, workspace .gitignore plus default heavy-dir excludes. Snapshot at start and after turns using non-read-only tools; records in `Session.checkpoints`. `oxgraft checkpoints` / `oxgraft restore N` (takes a pre-restore checkpoint first). Off for home dir and filesystem roots; failures are warnings.
 
 ## Evaluation
 
