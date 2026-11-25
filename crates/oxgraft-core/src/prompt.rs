@@ -101,8 +101,14 @@ fn expand_imports(workspace: &Path, text: &str, seen: &mut Vec<String>) -> Strin
             if seen.contains(&target) {
                 return String::new();
             }
+            // Imports stay inside the workspace: no `..`, absolute paths or symlinks out,
+            // so a repo's instructions can't pull private files into the prompt.
+            let inside = match (workspace.join(&target).canonicalize(), workspace.canonicalize()) {
+                (Ok(file), Ok(root)) => file.starts_with(&root),
+                _ => false,
+            };
             match std::fs::read_to_string(workspace.join(&target)) {
-                Ok(content) if !target.contains("..") => {
+                Ok(content) if inside && !target.contains("..") => {
                     seen.push(target);
                     content
                 }
@@ -191,5 +197,22 @@ mod tests {
         let prompt = system_prompt(&dir, "2026-11-25");
         assert!(prompt.contains("Date: 2026-11-25"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // SPEC-0003 AC10: imports never read files outside the workspace.
+    #[test]
+    fn imports_stay_inside_the_workspace() {
+        let base = std::env::temp_dir().join(format!("oxgraft-prompt-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let secret = base.join("secret.txt");
+        std::fs::write(&secret, "TOP SECRET").unwrap();
+        let abs = secret.canonicalize().unwrap();
+        std::fs::write(ws.join("AGENTS.md"), format!("@{}\n@../secret.txt\nok", abs.display())).unwrap();
+        let text = project_instructions(&ws);
+        assert!(!text.contains("TOP SECRET"), "{text}");
+        assert!(text.contains("ok"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

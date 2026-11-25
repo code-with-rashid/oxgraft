@@ -69,3 +69,4 @@ honestly: an iteration is only logged when its tests pass.
 | 61 | 2026-11-25 | — | Hooks and verify_command run in the bash tool's shell (Git Bash or PowerShell on Windows, not cmd) | fix | — | SPEC-0005 | `hooks::tests` |
 | 62 | 2026-11-25 | pi | `edit` takes `edits: [{old_string,new_string}]`, matched against the original, all-or-nothing | adopt | GRAFT-0050 | SPEC-0002 | `batched_edits_apply_together_or_not_at_all` |
 | 63 | 2026-11-25 | codex | Security fix from self-review: untrusted workspaces can no longer pick the profile (config `profile` or own `profiles/*.toml`), which could have switched approvals to allow_all | adopt | GRAFT-0051 | SPEC-0005 | `untrusted_workspaces_cannot_choose_the_profile` |
+| 64 | 2026-11-25 | — | Security fix from self-review: `@import` in AGENTS.md/CLAUDE.md could read absolute paths or symlinks outside the workspace into the prompt; now confined | fix | — | SPEC-0003 | `imports_stay_inside_the_workspace` |

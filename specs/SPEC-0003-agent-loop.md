@@ -48,3 +48,6 @@ trips. Every step is an event on the protocol stream.
   truthful. After 2 re-asks the reply is processed normally (calls fail).
 - **AC9** With `stream = true` each reply's text is emitted as `text_delta`
   events before the full `message` event; with `stream = false` only `message`.
+- **AC10** `@path` imports in instruction files resolve only to files inside the
+  workspace (after following symlinks); absolute paths, `..` and links out are
+  left as plain text, so a repository can't pull private files into the prompt.
