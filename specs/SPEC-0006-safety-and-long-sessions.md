@@ -26,3 +26,8 @@ grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025, GRAFT-0042]
   sudo are never auto-allowed by a rule or by an earlier "always" answer; each
   one is asked about with its reason (`ApprovalRequested.risk`). A deny rule
   still wins.
+- **AC7** When a sandboxed shell command fails with a write denial (read-only
+  file system, permission denied) or, without network, a DNS/network error, the
+  result ends with a note that the sandbox likely caused it and that the model
+  should tell the user rather than retry. The sandbox is never widened
+  automatically.

@@ -77,3 +77,4 @@ honestly: an iteration is only logged when its tests pass.
 | 69 | 2026-11-25 | claude-code | `doctor` reports trust, approval mode, checkpoints (side-effect free), streaming | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |
 | 70 | 2026-11-25 | — | web_fetch HTML to Markdown-ish text (headings, lists, links, pre, tables, entities), fuzz-tested; fixed a possible UTF-8 slicing panic | fix | — | SPEC-0002 | `converts_html_to_markdownish_text` |
 | 71 | 2026-11-25 | cline | Chat `/checkpoints` and `/restore N`; checkpoint listing/restore shared with the CLI commands | adopt | GRAFT-0046 | SPEC-0004 | `chat_lists_and_restores_checkpoints` |
+| 72 | 2026-11-25 | gemini-cli | Sandboxed command failures caused by the sandbox (write denied, no network) get a do-not-retry note | adopt | — | SPEC-0006 | `sandbox_failures_get_a_hint` |

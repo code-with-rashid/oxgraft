@@ -47,7 +47,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 9. ~~Fork a session~~ (`--fork ID@N`: GRAFT-0049; a browsable session tree is still open)
 10. ~~Batched multi-edits matched against the original file~~ (done: GRAFT-0050)
 11. ~~Repo map under a budget~~ (`map` tool: GRAFT-0053); LSP diagnostics after edits (opencode, claude-code) still open
-12. Worktree-isolated writing subagents (claude-code); sandbox expansion on denial (gemini-cli)
+12. Worktree-isolated writing subagents (claude-code); sandbox expansion on denial (gemini-cli; a denial hint is done, iteration 72)
 
 ## M4: Evidence
 

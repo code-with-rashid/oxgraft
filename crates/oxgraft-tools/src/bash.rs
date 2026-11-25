@@ -100,9 +100,11 @@ impl Tool for Bash {
             Err(e) => return ToolOutput::error(e),
         };
         let parts = oxgraft_seams::Command { program: "shell".into(), args: vec![command.into()] };
+        let mut sandboxed = None;
         let mut cmd = match ctx.sandbox.confinement(&parts) {
             Confinement::None => shell(command),
             Confinement::Restricted { writable, network } => {
+                sandboxed = Some(network);
                 match crate::sandbox::confined(command, ctx.workspace, &writable, network) {
                     Ok(c) => c,
                     // Fail closed: never fall back to running unconfined.
@@ -185,8 +187,46 @@ impl Tool for Bash {
         if !stderr.trim().is_empty() {
             out.push_str(&format!("--- stderr ---\n{}\n", stderr.trim_end()));
         }
+        let failed = status.is_some_and(|s| !s.success());
+        if let Some(network) = sandboxed
+            && failed
+            && let Some(hint) = sandbox_hint(&stderr, network)
+        {
+            out.push_str(hint);
+        }
         let out = truncate(&out, ctx.max_output_chars);
         if status.is_none() { ToolOutput::error(out) } else { ToolOutput::ok(out) }
+    }
+}
+
+/// When a sandboxed command fails in a way the sandbox causes, say so, so the
+/// model stops retrying and tells the user instead (after Gemini CLI's sandbox
+/// denial handling; here only a hint, never an automatic expansion).
+pub fn sandbox_hint(stderr: &str, network: bool) -> Option<&'static str> {
+    let s = stderr.to_ascii_lowercase();
+    let write_denied =
+        ["read-only file system", "permission denied", "operation not permitted"].iter().any(|p| s.contains(p));
+    let net_denied = !network
+        && [
+            "could not resolve host",
+            "temporary failure in name resolution",
+            "network is unreachable",
+            "name or service not known",
+        ]
+        .iter()
+        .any(|p| s.contains(p));
+    if net_denied {
+        Some(
+            "[note: this command ran in the sandbox, which has no network access; the failure above is likely the \
+             sandbox. Don't retry it; tell the user what needs the network.]\n",
+        )
+    } else if write_denied {
+        Some(
+            "[note: this command ran in the sandbox, which only allows writes inside the workspace and /tmp; the \
+             failure above is likely the sandbox. Don't retry it; tell the user what needs to write elsewhere.]\n",
+        )
+    } else {
+        None
     }
 }
 
@@ -194,6 +234,15 @@ impl Tool for Bash {
 mod tests {
     use super::*;
     use crate::testing::Fixture;
+
+    // SPEC-0006 AC7
+    #[test]
+    fn sandbox_failures_get_a_hint() {
+        assert!(sandbox_hint("touch: /etc/x: Read-only file system", false).unwrap().contains("writes inside"));
+        assert!(sandbox_hint("curl: (6) Could not resolve host: x.dev", false).unwrap().contains("no network"));
+        assert!(sandbox_hint("curl: (6) Could not resolve host: x.dev", true).is_none(), "network allowed");
+        assert!(sandbox_hint("error[E0425]: cannot find value", false).is_none());
+    }
 
     // SPEC-0002 AC4
     #[test]
