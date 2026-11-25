@@ -120,6 +120,35 @@ impl Session {
     }
 
     /// All sessions in a workspace, newest first.
+    /// Delete all but the `keep` newest sessions (and their undo backups) in a
+    /// workspace (GRAFT-0074). Files that aren't sessions are left alone. Returns
+    /// the ids removed (or that would be, with `dry_run`).
+    pub fn prune(workspace: &Path, keep: usize, dry_run: bool) -> std::io::Result<Vec<String>> {
+        let dir = Self::dir(workspace);
+        let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+        let mut ids: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .filter(|p| {
+                std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Session>(&t).ok()).is_some()
+            })
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        ids.sort_by(|a, b| b.cmp(a));
+        let old: Vec<String> = ids.into_iter().skip(keep).collect();
+        if !dry_run {
+            for id in &old {
+                std::fs::remove_file(dir.join(format!("{id}.json")))?;
+                let backups = dir.join(id);
+                if backups.is_dir() {
+                    std::fs::remove_dir_all(backups)?;
+                }
+            }
+        }
+        Ok(old)
+    }
+
     pub fn list(workspace: &Path) -> Vec<Session> {
         let Ok(entries) = std::fs::read_dir(Self::dir(workspace)) else { return Vec::new() };
         let mut sessions: Vec<Session> = entries
@@ -351,5 +380,36 @@ mod fork_tests {
         let err = s.fork(Some(2)).unwrap_err();
         assert!(err.contains("fork points") && err.contains("4, 6"), "{err}");
         assert_eq!(s.messages.len(), 6, "the original is unchanged");
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    // SPEC-0004 AC16 (GRAFT-0074)
+    #[test]
+    fn prune_keeps_the_newest_sessions() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..4 {
+            let mut s = Session::new("m", "default", &ws);
+            s.id = format!("20261125-00000{i}-aaaa");
+            s.save().unwrap();
+            std::fs::create_dir_all(s.backup_dir()).unwrap();
+            ids.push(s.id);
+        }
+        std::fs::write(Session::dir(&ws).join("notes.json"), "not a session").unwrap();
+        let would = Session::prune(&ws, 2, true).unwrap();
+        assert_eq!(would, vec![ids[1].clone(), ids[0].clone()]);
+        assert_eq!(Session::list(&ws).len(), 4, "dry run deletes nothing");
+        Session::prune(&ws, 2, false).unwrap();
+        let left: Vec<String> = Session::list(&ws).into_iter().map(|s| s.id).collect();
+        assert_eq!(left, vec![ids[3].clone(), ids[2].clone()]);
+        assert!(!Session::dir(&ws).join(&ids[0]).exists(), "backups go too");
+        assert!(Session::dir(&ws).join("notes.json").exists(), "non-session files stay");
+        let _ = std::fs::remove_dir_all(&ws);
     }
 }

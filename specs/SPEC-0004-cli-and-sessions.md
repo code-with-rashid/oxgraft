@@ -85,3 +85,5 @@ otherwise an error explaining how to choose one.
 - **AC15** `--plan` runs in read-only mode with an instruction to return a
   numbered plan instead of changing anything; it cannot be combined with
   `--mode`.
+- **AC16** `oxgraft prune [--keep N] [--dry-run]` deletes all but the newest N
+  sessions (default 50) and their undo backups; other files are untouched.

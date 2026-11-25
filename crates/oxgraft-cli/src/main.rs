@@ -92,6 +92,15 @@ enum Command {
     Sessions,
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Delete old sessions in this workspace, keeping the newest ones.
+    Prune {
+        /// How many sessions to keep.
+        #[arg(long, default_value_t = 50)]
+        keep: usize,
+        /// Only list what would be deleted.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Write a session as a Markdown transcript (default: the latest session).
     Export {
         id: Option<String>,
@@ -259,6 +268,16 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             for line in session.undo() {
                 println!("{line}");
+            }
+            Ok(0)
+        }
+        Some(Command::Prune { keep, dry_run }) => {
+            let ws = workspace(&common)?;
+            let removed = Session::prune(&ws, keep, dry_run).map_err(|e| (EXIT_ERROR, e.to_string()))?;
+            let verb = if dry_run { "would delete" } else { "deleted" };
+            println!("{verb} {} session(s), keeping the newest {keep}", removed.len());
+            for id in removed {
+                println!("  {id}");
             }
             Ok(0)
         }
