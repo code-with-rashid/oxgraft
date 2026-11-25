@@ -1035,10 +1035,17 @@ fn chat_commit_writes_a_message() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
+    std::fs::write(ws.0.join(".env"), "TOKEN=hunter2\n").unwrap();
     child.stdin.take().unwrap().write_all(b"add notes\n/commit\n/exit\n").unwrap();
     let out = child.wait_with_output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("committed"), "{err}");
     let log = String::from_utf8_lossy(&git(&["log", "-1", "--format=%B"]).stdout).to_string();
     assert!(log.starts_with("feat: add notes") && !log.contains("Co-authored-by"), "{log}");
+    // Untracked files the session didn't create are left alone and named.
+    let committed = String::from_utf8_lossy(&git(&["show", "--name-only", "--format="]).stdout).to_string();
+    assert!(committed.contains("notes.txt") && !committed.contains(".env"), "{committed}");
+    assert!(err.contains("not included") && err.contains(".env"), "{err}");
+    let staged = String::from_utf8_lossy(&git(&["diff", "--cached", "--name-only"]).stdout).to_string();
+    assert!(staged.trim().is_empty(), "{staged}");
 }

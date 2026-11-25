@@ -1046,10 +1046,17 @@ fn describe_config(ws: &Path, cfg: &config::Config) -> Vec<String> {
 }
 
 /// `/commit` (GRAFT-0103, after Aider's /commit): commit the staged changes, or
-/// all changes when nothing is staged, with a message the model writes from the
-/// diff. The user's git identity is used; attribution lines are never added.
-fn commit_with_message(ws: &Path, provider: &dyn oxgraft_seams::Provider, model: &str) -> Result<String, String> {
-    use oxgraft_seams::{CompletionRequest, Message};
+/// when nothing is staged, changes to tracked files plus the new files this
+/// session created (other untracked files, such as a stray `.env`, are listed but
+/// never staged or sent to the model). The user's git identity is used;
+/// attribution lines are never added. If anything fails after Oxgraft staged
+/// files, the index is put back as it was (review fix).
+fn commit_with_message(
+    ws: &Path,
+    provider: &dyn oxgraft_seams::Provider,
+    model: &str,
+    session_files: &[PathBuf],
+) -> Result<String, String> {
     let git = |args: &[&str]| -> Result<std::process::Output, String> {
         std::process::Command::new("git")
             .arg("-C")
@@ -1061,12 +1068,56 @@ fn commit_with_message(ws: &Path, provider: &dyn oxgraft_seams::Provider, model:
     if !git(&["rev-parse", "--is-inside-work-tree"])?.status.success() {
         return Err("not a git repository".into());
     }
-    let staged = !git(&["diff", "--cached", "--quiet"])?.status.success();
-    if !staged {
-        git(&["add", "-A"])?;
-        if git(&["diff", "--cached", "--quiet"])?.status.success() {
-            return Err("nothing to commit".into());
+    // `diff --quiet` exits 0 (no changes) or 1 (changes); anything else is an error.
+    let has_staged = |git_out: std::process::Output| match git_out.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(format!("git diff failed: {}", String::from_utf8_lossy(&git_out.stderr).trim())),
+    };
+    let mut left_out: Vec<String> = Vec::new();
+    let we_staged = !has_staged(git(&["diff", "--cached", "--quiet"])?)?;
+    if we_staged {
+        let untracked = String::from_utf8_lossy(&git(&["ls-files", "--others", "--exclude-standard", "-z"])?.stdout)
+            .split('\0')
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let ours: Vec<&String> = untracked
+            .iter()
+            .filter(|f| session_files.iter().any(|p| p.ends_with(f.as_str()) || ws.join(f.as_str()) == *p))
+            .collect();
+        left_out = untracked.iter().filter(|f| !ours.contains(f)).cloned().collect();
+        git(&["add", "-u"])?;
+        if !ours.is_empty() {
+            let mut args = vec!["add", "--"];
+            args.extend(ours.iter().map(|f| f.as_str()));
+            git(&args)?;
         }
+    }
+    let result = commit_staged(&git, provider, model);
+    if result.is_err() && we_staged {
+        let _ = git(&["reset", "-q"]);
+    }
+    let mut summary = result?;
+    if !left_out.is_empty() {
+        let shown: Vec<&str> = left_out.iter().take(10).map(String::as_str).collect();
+        summary.push_str(&format!(
+            "\nnot included (untracked; add them with git first): {}{}",
+            shown.join(", "),
+            if left_out.len() > 10 { ", …" } else { "" }
+        ));
+    }
+    Ok(summary)
+}
+
+fn commit_staged(
+    git: &dyn Fn(&[&str]) -> Result<std::process::Output, String>,
+    provider: &dyn oxgraft_seams::Provider,
+    model: &str,
+) -> Result<String, String> {
+    use oxgraft_seams::{CompletionRequest, Message};
+    if git(&["diff", "--cached", "--quiet"])?.status.code() == Some(0) {
+        return Err("nothing to commit".into());
     }
     let files = String::from_utf8_lossy(&git(&["diff", "--cached", "--name-only"])?.stdout).trim().to_string();
     let diff: String = String::from_utf8_lossy(&git(&["diff", "--cached", "--no-ext-diff", "--no-color"])?.stdout)
@@ -1431,7 +1482,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 continue;
             }
             "/commit" => {
-                match commit_with_message(&s.ws, agent.provider, &agent.config.model) {
+                let session_files: Vec<PathBuf> = session.changed_files.iter().map(|r| r.path.clone()).collect();
+                match commit_with_message(&s.ws, agent.provider, &agent.config.model, &session_files) {
                     Ok(summary) => eprintln!("{summary}"),
                     Err(e) => eprintln!("commit: {e}"),
                 }
