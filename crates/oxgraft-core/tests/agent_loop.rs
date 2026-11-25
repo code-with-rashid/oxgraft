@@ -756,3 +756,33 @@ fn user_prompt_and_stop_hooks() {
         assert!(serde_json::to_string(&session.messages).unwrap().contains("run the tests first"));
     }
 }
+
+// SPEC-0003 AC14 (GRAFT-0069): "always" for bash covers the command prefix, per part.
+#[test]
+fn always_for_bash_is_scoped_to_the_command() {
+    let ws = Ws::new("alwaysbash");
+    let bash = |c: &str| json!({"tool_calls": [{"name": "bash", "input": {"command": c}}]});
+    let (_, events, _) = run(
+        &ws,
+        "ordered_rules",
+        Answer::Always,
+        json!({"turns": [
+            bash("git status"),
+            bash("git status --short"),
+            bash("git log -1"),
+            bash("git status && git log -1"),
+            bash("git status; rm -f nothing_here"),
+            bash("git status $(echo x)"),
+            {"text": "ok"}
+        ]}),
+        10,
+    );
+    let asked: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ApprovalRequested { resource, .. } => Some(resource.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, vec!["git status", "git log -1", "git status; rm -f nothing_here", "git status $(echo x)"]);
+}

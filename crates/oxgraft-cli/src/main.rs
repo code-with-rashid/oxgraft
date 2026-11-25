@@ -735,7 +735,21 @@ impl Approver for TerminalApprover {
             if risk.is_some() {
                 eprint!("  allow {tool}: {detail}? [y]es / [n]o: ");
             } else {
-                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {tool}: ");
+                let scope = match tool {
+                    "bash" => {
+                        let keys = oxgraft_core::agent::always_keys(tool, &action.resource);
+                        if keys.is_empty() {
+                            "this exact command".to_string()
+                        } else {
+                            keys.iter()
+                                .map(|k| format!("`{}`", k.trim_start_matches("bash:")))
+                                .collect::<Vec<_>>()
+                                .join(" + ")
+                        }
+                    }
+                    _ => format!("all {tool}"),
+                };
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {scope}: ");
             }
             let _ = std::io::stderr().flush();
             let mut answer = String::new();

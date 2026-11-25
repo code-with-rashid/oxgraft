@@ -126,6 +126,81 @@ pub struct Outcome {
 }
 
 const MAX_CONTINUATIONS: u32 = 3;
+/// What an "always" answer approves (GRAFT-0069, after Claude Code's per-command
+/// "don't ask again"): the whole tool, except for `bash`, where it is the command
+/// prefix of each part (`cargo test`, `npm run build`), so approving `cargo test`
+/// never approves `rm`. Lines with command substitution give no keys.
+pub fn always_keys(tool: &str, resource: &str) -> Vec<String> {
+    if tool != "bash" {
+        return vec![tool.to_string()];
+    }
+    if resource.contains("$(") || resource.contains('`') {
+        return Vec::new();
+    }
+    shell_parts(resource).iter().filter_map(|p| command_prefix(p)).map(|p| format!("bash:{p}")).collect()
+}
+
+/// Whether earlier "always" answers cover this action: for `bash`, every part.
+fn always_covers(always: &HashSet<String>, tool: &str, resource: &str) -> bool {
+    if tool != "bash" {
+        return always.contains(tool);
+    }
+    let keys = always_keys(tool, resource);
+    let parts = shell_parts(resource).len();
+    !keys.is_empty() && keys.len() == parts && keys.iter().all(|k| always.contains(k))
+}
+
+/// Split on `;`, `&`, `|` and newlines (conservative: quotes are not honoured).
+fn shell_parts(command: &str) -> Vec<&str> {
+    command.split([';', '&', '|', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect()
+}
+
+/// `cargo test --release` → `cargo test`; `ls -la` → `ls`; `FOO=1 make` → none.
+fn command_prefix(part: &str) -> Option<String> {
+    let mut words = part.split_whitespace();
+    let first = words.next()?;
+    if first.contains('=') || first.contains(['(', ')', '{', '}', '<', '>']) {
+        return None;
+    }
+    // Tools whose second word picks a subcommand: `git status` and `git push` differ.
+    const SUBCOMMANDS: &[&str] = &[
+        "git",
+        "cargo",
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "npx",
+        "go",
+        "docker",
+        "kubectl",
+        "uv",
+        "poetry",
+        "pip",
+        "pip3",
+        "dotnet",
+        "gradle",
+        "mvn",
+        "make",
+        "rustup",
+        "brew",
+        "apt",
+        "gh",
+        "terraform",
+        "helm",
+    ];
+    match words.next() {
+        Some(second)
+            if SUBCOMMANDS.contains(&first)
+                && !second.starts_with('-')
+                && second.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)) =>
+        {
+            Some(format!("{first} {second}"))
+        }
+        _ => Some(first.to_string()),
+    }
+}
+
 /// Private re-asks for malformed tool calls per turn (GRAFT-0044).
 const MAX_REQUERIES: u32 = 2;
 
@@ -832,7 +907,7 @@ impl<'a> Agent<'a> {
             // "always" answer can fast-path changes to agent config, CI or git internals.
             Decision::Allow | Decision::Ask if protected => Decision::Ask,
             // Risky commands (GRAFT-0042) are asked about every time.
-            Decision::Ask if state.always.contains(name) && fresh.is_none() => Decision::Allow,
+            Decision::Ask if fresh.is_none() && always_covers(&state.always, name, &action.resource) => Decision::Allow,
             d => d,
         };
         match decision {
@@ -859,7 +934,7 @@ impl<'a> Agent<'a> {
                         );
                     }
                     Answer::Always => {
-                        state.always.insert(name.to_string());
+                        state.always.extend(always_keys(name, &action.resource));
                     }
                     Answer::Yes => {}
                 }

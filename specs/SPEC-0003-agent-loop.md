@@ -62,3 +62,8 @@ trips. Every step is an event on the protocol stream.
 - **AC13** If the model replies without tool calls while its latest `todo` list
   has items not marked `done`, it gets one reminder per run naming them; the
   next finish is accepted.
+- **AC14** An "always" answer for `bash` approves that command prefix (first
+  word, or first two for tools with subcommands such as git, cargo, npm), per
+  part: a later command runs without asking only if every part's prefix was
+  approved, and never if it contains `$(` or backticks. For other tools
+  "always" covers the tool for the rest of the run.
