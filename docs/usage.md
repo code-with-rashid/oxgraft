@@ -181,14 +181,17 @@ still read Oxgraft's environment through `/proc` unless it runs in the
 Oxgraft reads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and
 `.github/copilot-instructions.md` (with `@file` imports), and Agent Skills from
 `.agents/skills/`, `.claude/skills/` and the same folders in your home
-directory. Existing setups for other harnesses work unchanged.
-
-## Custom commands
+directory. Existing setups for other harnesses work unchanged. Personal,
+git-ignored notes go in `AGENTS.local.md` or `CLAUDE.local.md`; they are read
+after the shared files. Instruction files that are symlinks to somewhere outside
+the workspace are skipped.
 
 Named subagents: put `<name>.md` in `.agents/agents/` or `.claude/agents/`
 (front matter `description` and optional `tools`, body = instructions). The
 `task` tool can then start it by name. Subagents are always read-only; a
 repository's agents load only in trusted workspaces.
+
+## Custom commands
 
 Put a prompt in `.agents/commands/<name>.md` (or `.claude/commands/`, the Claude
 Code format; `~/` works too) and run it as `/name` in chat or

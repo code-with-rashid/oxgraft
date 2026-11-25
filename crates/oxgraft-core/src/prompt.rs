@@ -2,8 +2,11 @@
 
 use std::path::Path;
 
-/// Files harnesses use for project instructions, in priority order.
-pub const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md"];
+/// Files harnesses use for project instructions, in priority order. The
+/// `.local.md` files are personal, usually git-ignored notes (Claude Code's
+/// `CLAUDE.local.md`, GRAFT-0107); they come last so they can refine the shared ones.
+pub const INSTRUCTION_FILES: &[&str] =
+    &["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md", "AGENTS.local.md", "CLAUDE.local.md"];
 const MAX_INSTRUCTIONS_CHARS: usize = 40_000;
 
 const BASE: &str = "You are Oxgraft, an autonomous coding agent working in a local repository through tools.
@@ -76,7 +79,16 @@ pub fn git_summary(workspace: &Path) -> Option<String> {
 pub fn project_instructions(workspace: &Path) -> String {
     let mut seen = Vec::<String>::new();
     let mut out = String::new();
+    let root = workspace.canonicalize().ok();
     for name in INSTRUCTION_FILES {
+        // A symlinked instruction file must not pull in a file from outside the workspace.
+        let inside = match (workspace.join(name).canonicalize(), &root) {
+            (Ok(file), Some(root)) => file.starts_with(root),
+            _ => false,
+        };
+        if !inside {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(workspace.join(name)) else { continue };
         let expanded = expand_imports(workspace, &text, &mut seen);
         if seen.contains(&name.to_string()) || expanded.trim().is_empty() {
@@ -184,6 +196,28 @@ mod tests {
         assert_eq!(civil_date(0), "1970-01-01");
         assert_eq!(civil_date(951_782_400), "2000-02-29");
         assert_eq!(civil_date(1_795_564_800), "2026-11-25");
+    }
+
+    // GRAFT-0107
+    #[test]
+    fn local_instruction_files_come_last_and_symlinks_out_are_ignored() {
+        let dir = std::env::temp_dir().join(format!("oxgraft-prompt-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        let ws = dir.join("ws");
+        std::fs::write(ws.join("AGENTS.md"), "Shared rule.").unwrap();
+        std::fs::write(ws.join("CLAUDE.local.md"), "My own rule.").unwrap();
+        let text = project_instructions(&ws);
+        let (shared, local) = (text.find("Shared rule.").unwrap(), text.find("My own rule.").unwrap());
+        assert!(shared < local, "{text}");
+        assert!(text.contains("<file path=\"CLAUDE.local.md\">"));
+        #[cfg(unix)]
+        {
+            std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), ws.join("AGENTS.local.md")).unwrap();
+            assert!(!project_instructions(&ws).contains("TOP SECRET"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078, GRAFT-0080, GRAFT-0090, GRAFT-0106]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078, GRAFT-0080, GRAFT-0090, GRAFT-0106, GRAFT-0107]
 ---
 
 # SPEC-0003: Agent loop
@@ -78,3 +78,5 @@ trips. Every step is an event on the protocol stream.
 - **AC18** `task` with `agent` runs that named subagent: its instructions come
   before the prompt and it sees only its listed tools within the read-only
   subagent set; an unknown name is an error listing the available agents.
+- **AC19** `AGENTS.local.md` and `CLAUDE.local.md` are read after the shared
+  instruction files; instruction files resolving outside the workspace are skipped.
