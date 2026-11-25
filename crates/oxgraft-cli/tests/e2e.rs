@@ -204,7 +204,11 @@ fn mcp_tools_work_end_to_end() {
             _ => None,
         })
         .collect();
-    assert_eq!(results[0], (true, "echo: hello".to_string()));
+    // MCP output is fenced as untrusted data (GRAFT-0055).
+    assert!(
+        results[0].0
+            && results[0].1.contains("<untrusted source=\"MCP tool mcp__fixture__echo\">\necho: hello\n</untrusted>")
+    );
     assert!(!results[1].0 && results[1].1.contains("it failed"));
 
     // Untrusted project-level .mcp.json is ignored with a warning.

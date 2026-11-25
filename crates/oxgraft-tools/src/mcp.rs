@@ -241,7 +241,11 @@ impl Tool for McpTool {
                 if result.get("isError").and_then(Value::as_bool).unwrap_or(false) {
                     ToolOutput::error(text)
                 } else {
-                    ToolOutput::ok(if text.is_empty() { "(no output)".into() } else { text })
+                    ToolOutput::ok(if text.is_empty() {
+                        "(no output)".into()
+                    } else {
+                        crate::util::untrusted(&format!("MCP tool {}", self.spec.name), &text)
+                    })
                 }
             }
             Err(e) => ToolOutput::error(e),

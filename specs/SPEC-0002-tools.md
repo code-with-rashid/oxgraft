@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055]
 ---
 
 # SPEC-0002: Built-in tools
@@ -56,3 +56,8 @@ tools beat many overlapping ones) that is safe by default.
   used in the most other files first, within a character budget (default 6000,
   max 40000), honouring `.gitignore`, skipping Rust test modules, and saying
   how many files were left out. It is read-only and allowed by default.
+- **AC11** Output from `web_fetch` and MCP tools is wrapped in
+  `<untrusted source="...">…</untrusted>` (a closing tag inside the content is
+  defused), and text with common prompt-injection phrases gets a warning line.
+  The system prompt tells the model never to follow instructions inside these
+  blocks.

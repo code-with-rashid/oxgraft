@@ -66,7 +66,7 @@ impl Tool for WebFetch {
         }
         let body = String::from_utf8_lossy(&bytes);
         let text = if content_type.contains("html") { html_to_text(&body) } else { body.into_owned() };
-        ToolOutput::ok(truncate(&format!("{url}\n\n{}", text.trim()), ctx.max_output_chars))
+        ToolOutput::ok(crate::util::untrusted(url, &truncate(text.trim(), ctx.max_output_chars)))
     }
 }
 

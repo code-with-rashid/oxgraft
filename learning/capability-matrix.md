@@ -29,7 +29,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 | opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038, 0045 |
 | gemini-cli | v0.71.1 | 0027, 0037 |
 | aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039, 0053 |
-| goose | v1.60.2 | 0019, 0022, 0033 |
+| goose | v1.60.2 | 0019, 0022, 0033, 0055 |
 | pi | v1.6.0 | 0023, 0049, 0050 |
 | cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046 |
 | openhands | v1.45.0 (sdk v1.64.0) | 0021, 0042 |
