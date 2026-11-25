@@ -45,7 +45,7 @@ impl Tool for Glob {
         ToolSpec {
             name: "glob".into(),
             description: "Find files by glob pattern (e.g. `**/*.rs`, `src/*.ts`). Respects .gitignore; \
-                skips hidden files. Returns workspace-relative paths, sorted."
+                skips hidden files. Returns workspace-relative paths, most recently modified first."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -66,15 +66,19 @@ impl Tool for Glob {
         let pattern = try_tool!(str_field(input, "pattern"));
         let base = try_tool!(resolve(ctx.workspace, try_tool!(opt_str(input, "path")).unwrap_or(".")));
         let matcher = try_tool!(glob_matcher(pattern));
-        let mut found: Vec<String> = walker(&base)
+        // Newest first (GRAFT-0096, as Claude Code's Glob): recently touched files are
+        // usually the relevant ones. Ties (and unreadable times) sort by path.
+        let mut entries: Vec<(std::time::SystemTime, String)> = walker(&base)
             .filter_map(Result::ok)
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .filter_map(|e| {
                 let rel = e.path().strip_prefix(&base).ok()?.to_string_lossy().replace('\\', "/");
-                matcher.is_match(&rel).then(|| display(ctx.workspace, e.path()))
+                let mtime = e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
+                matcher.is_match(&rel).then(|| (mtime, display(ctx.workspace, e.path())))
             })
             .collect();
-        found.sort();
+        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let mut found: Vec<String> = entries.into_iter().map(|(_, p)| p).collect();
         let total = found.len();
         if total == 0 {
             return ToolOutput::ok(format!("no files match `{pattern}`"));
@@ -212,6 +216,18 @@ mod tests {
         let out = f.run(&Glob, json!({"pattern": "src/*.rs"}));
         assert_eq!(out.content, "src/a.rs");
         assert!(f.run(&Glob, json!({"pattern": "*.py"})).content.starts_with("no files"));
+    }
+
+    // GRAFT-0096
+    #[test]
+    fn glob_lists_newest_first() {
+        let f = Fixture::new("globmtime");
+        f.file("old.rs", "");
+        f.file("new.rs", "");
+        let old = std::fs::File::options().write(true).open(f.dir.join("old.rs")).unwrap();
+        old.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+        let out = f.run(&Glob, json!({"pattern": "*.rs"}));
+        assert_eq!(out.content, "new.rs\nold.rs");
     }
 
     #[test]
