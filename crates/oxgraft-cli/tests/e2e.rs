@@ -955,3 +955,52 @@ fn output_schema_failure_is_not_success() {
     assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stderr).contains("doesn't match the output schema"));
 }
+
+// GRAFT-0103: /commit commits with a model-written message, minus attribution lines.
+#[test]
+fn chat_commit_writes_a_message() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    use std::io::Write as _;
+    let ws = Ws::new("chatcommit");
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&ws.0)
+            .output()
+            .unwrap()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(ws.0.join("README.md"), "hi\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "notes.txt", "content": "n\n"}}]},
+        {"text": "done"},
+        {"text": "feat: add notes\n\nCo-authored-by: Someone <x@y>"}
+    ]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--yes", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"add notes\n/commit\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("committed"), "{err}");
+    let log = String::from_utf8_lossy(&git(&["log", "-1", "--format=%B"]).stdout).to_string();
+    assert!(log.starts_with("feat: add notes") && !log.contains("Co-authored-by"), "{log}");
+}

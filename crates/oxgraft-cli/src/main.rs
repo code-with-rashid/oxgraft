@@ -1015,6 +1015,67 @@ fn describe_config(ws: &Path, cfg: &config::Config) -> Vec<String> {
     out
 }
 
+/// `/commit` (GRAFT-0103, after Aider's /commit): commit the staged changes, or
+/// all changes when nothing is staged, with a message the model writes from the
+/// diff. The user's git identity is used; attribution lines are never added.
+fn commit_with_message(ws: &Path, provider: &dyn oxgraft_seams::Provider, model: &str) -> Result<String, String> {
+    use oxgraft_seams::{CompletionRequest, Message};
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(oxgraft_core::checkpoint::plain_path(ws))
+            .args(args)
+            .output()
+            .map_err(|e| format!("git: {e}"))
+    };
+    if !git(&["rev-parse", "--is-inside-work-tree"])?.status.success() {
+        return Err("not a git repository".into());
+    }
+    let staged = !git(&["diff", "--cached", "--quiet"])?.status.success();
+    if !staged {
+        git(&["add", "-A"])?;
+        if git(&["diff", "--cached", "--quiet"])?.status.success() {
+            return Err("nothing to commit".into());
+        }
+    }
+    let files = String::from_utf8_lossy(&git(&["diff", "--cached", "--name-only"])?.stdout).trim().to_string();
+    let diff: String = String::from_utf8_lossy(&git(&["diff", "--cached", "--no-ext-diff", "--no-color"])?.stdout)
+        .chars()
+        .take(30_000)
+        .collect();
+    let request = CompletionRequest {
+        model: model.to_string(),
+        system: "Write a git commit message for the diff the user sends: a subject line under 72 characters in the \
+                 imperative mood (Conventional Commits style if the history suggests it), optionally a blank line and a \
+                 short body. Reply with the message only. No sign-offs, trailers or attribution lines."
+            .into(),
+        messages: vec![Message::user(diff)],
+        tools: Vec::new(),
+        max_tokens: 2048,
+    };
+    let text = provider.complete(&request).map(|c| Message::assistant(c.content).text()).map_err(|e| e.to_string())?;
+    let message: String = text
+        .trim()
+        .trim_matches('`')
+        .lines()
+        .filter(|l| {
+            let l = l.trim_start().to_ascii_lowercase();
+            !(l.starts_with("co-authored-by") || l.starts_with("signed-off-by") || l.starts_with("generated with"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    if message.is_empty() {
+        return Err("the model returned an empty message; nothing committed".into());
+    }
+    let out = git(&["commit", "-q", "-m", &message])?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(format!("committed {}:\n{message}", files.lines().collect::<Vec<_>>().join(", ")))
+}
+
 /// The patch from the session's first checkpoint to the workspace as it is now
 /// (GRAFT-0088, after Aider's /diff), including changes made by shell commands.
 fn session_diff(ws: &Path, session: &Session) -> Result<String, String> {
@@ -1338,6 +1399,13 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            "/commit" => {
+                match commit_with_message(&s.ws, agent.provider, &agent.config.model) {
+                    Ok(summary) => eprintln!("{summary}"),
+                    Err(e) => eprintln!("commit: {e}"),
+                }
+                continue;
+            }
             "/diff" => {
                 match session_diff(&s.ws, &session) {
                     Ok(patch) => {
@@ -1370,7 +1438,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/commit    commit staged changes (or all) with a message written by the model\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n/export F  write this conversation as Markdown (default oxgraft-<id>.md)\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
