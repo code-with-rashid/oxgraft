@@ -80,6 +80,10 @@ pub fn models() {
         println!("{:<12} {:<34} {:<26} {}", p.id, p.base_env, p.key_env.unwrap_or("(none, local)"), p.example);
     }
     println!("{:<12} {:<34} {:<26} mock:tests/fixtures/hello.json", "mock", "-", "-");
+    println!("\nShort names:");
+    for (alias, full) in oxgraft_providers::ALIASES {
+        println!("  {alias:<8} {full}");
+    }
     println!("\nSet a default in .oxgraft/config.toml or ~/.config/oxgraft/config.toml:  model = \"provider/model\"");
 }
 

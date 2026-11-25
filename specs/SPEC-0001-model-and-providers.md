@@ -57,3 +57,5 @@ provider-neutral conversation model and a small `Provider` trait.
   sends an error event is a classified error (overloaded = transient). An
   OpenAI-compatible server that rejects the streaming request with a 4xx gets a
   plain request instead.
+- **AC9** The model may be given as a short alias (`opus`, `sonnet`, `haiku`,
+  `fable`, any case), resolving to the current Anthropic model id.

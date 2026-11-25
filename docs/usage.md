@@ -26,6 +26,9 @@ Model strings are `provider/model`. Credentials come from environment variables.
 
 `oxgraft models` prints the full table, including base-URL override variables.
 
+Short names work for Anthropic's current models: `--model opus`, `sonnet`,
+`haiku` or `fable` (see `oxgraft models`).
+
 ### Local models (Ollama, LM Studio)
 
 - Start Ollama with a bigger context, or it silently drops the start of long

@@ -92,3 +92,4 @@ honestly: an iteration is only logged when its tests pass.
 | 84 | 2026-11-25 | claude-code | `user_prompt` hooks (add context or block) and `stop` hooks (send the model back, max 3) | adopt | GRAFT-0062 | SPEC-0005 | `user_prompt_and_stop_hooks` |
 | 85 | 2026-11-25 | swe-agent | `files_changed` event before `session_finished` (from checkpoints); JSON event reference in usage docs | adopt | GRAFT-0063 | SPEC-0004 | `json_runs_report_changed_files` |
 | 86 | 2026-11-25 | aider | Local providers: 32k compaction window by default; doctor warns about Ollama context truncation and tool support | avoid | GRAFT-0064 | SPEC-0001 | `doctor_warns_about_ollama_context` |
+| 87 | 2026-11-25 | aider, claude-code | Model aliases opus / sonnet / haiku / fable | adopt | GRAFT-0065 | SPEC-0001 | `parses_model_strings` |
