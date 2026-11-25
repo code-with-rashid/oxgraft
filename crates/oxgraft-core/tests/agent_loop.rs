@@ -668,3 +668,27 @@ fn finish_check_sends_failures_back_until_it_passes() {
     let (status, _) = run_with(check, json!([{"text": "done"}, {"text": "done"}, {"text": "done"}, {"text": "done"}]));
     assert!(matches!(status, Status::Stopped(ref r) if r.contains("still failing")), "{status:?}");
 }
+
+// SPEC-0003 AC12 (GRAFT-0056): @mentioned files are attached and count as read.
+#[test]
+fn mentioned_files_are_attached_and_editable() {
+    let ws = Ws::new("mention");
+    std::fs::write(ws.0.join("greet.txt"), "hello world\n").unwrap();
+    let edit = "<<<<<<< SEARCH\nhello world\n=======\nhello mention\n>>>>>>> REPLACE";
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [{"name": "edit", "input": {"path": "greet.txt", "edit": edit}}]},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let agent =
+        Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, AgentConfig::new("mock", ws.0.clone()));
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    agent.run(&mut session, "Change the greeting in @greet.txt.", &mut |e| events.push(e.clone()));
+    let first = serde_json::to_string(&session.messages[0]).unwrap();
+    assert!(first.contains("<file path=\\\"greet.txt\\\">") && first.contains("hello world"), "{first}");
+    assert_eq!(std::fs::read_to_string(ws.0.join("greet.txt")).unwrap(), "hello mention\n");
+}

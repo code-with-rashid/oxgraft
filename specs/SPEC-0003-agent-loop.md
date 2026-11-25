@@ -56,3 +56,6 @@ trips. Every step is an event on the protocol stream.
   output goes back to the model and the run continues, up to 3 times, after
   which the run stops with `finish check … still failing`. The check comes only
   from the command line, never from workspace config.
+- **AC12** `@path` words in a task attach that file's content (text files inside
+  the workspace only; at most 10 files, 200 KB each, 20k characters shown) after
+  the task text; attached files count as read for the read-before-edit guard.

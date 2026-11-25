@@ -218,3 +218,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 }
+
+/// Files attached through `@path` mentions in a task (GRAFT-0056, after Claude
+/// Code's and Gemini CLI's `@file`): the task text with the files' contents
+/// appended, and the attached paths (so the model may edit them without a read).
+/// Only regular text files inside the workspace are attached; anything else
+/// (emails, `@decorators`, missing or outside paths) is left as plain text.
+pub fn expand_mentions(workspace: &Path, task: &str) -> (String, Vec<std::path::PathBuf>) {
+    const MAX_FILES: usize = 10;
+    const MAX_BYTES: u64 = 200_000;
+    const MAX_CHARS: usize = 20_000;
+    let Ok(root) = workspace.canonicalize() else { return (task.to_string(), Vec::new()) };
+    let mut attached: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+    for word in task.split_whitespace() {
+        let Some(rel) = word.strip_prefix('@') else { continue };
+        let rel = rel.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '"', '\'', '`']);
+        if rel.is_empty() || attached.len() >= MAX_FILES || attached.iter().any(|(r, _, _)| r == rel) {
+            continue;
+        }
+        let Ok(full) = workspace.join(rel).canonicalize() else { continue };
+        if !full.starts_with(&root) || !full.is_file() || full.metadata().map_or(true, |m| m.len() > MAX_BYTES) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&full) else { continue };
+        if bytes.iter().take(8_000).any(|b| *b == 0) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let mut body: String = text.chars().take(MAX_CHARS).collect();
+        if text.chars().count() > MAX_CHARS {
+            body.push_str("\n[… truncated; use `read` with an offset for the rest]");
+        }
+        attached.push((rel.to_string(), full, body));
+    }
+    if attached.is_empty() {
+        return (task.to_string(), Vec::new());
+    }
+    let mut out = format!("{task}\n\n[Files mentioned with @, attached:]");
+    for (rel, _, body) in &attached {
+        out.push_str(&format!("\n<file path=\"{rel}\">\n{body}\n</file>"));
+    }
+    (out, attached.into_iter().map(|(_, p, _)| p).collect())
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::*;
+
+    // SPEC-0003 AC12
+    #[test]
+    fn mentions_attach_workspace_files_only() {
+        let base = std::env::temp_dir().join(format!("oxgraft-mention-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(ws.join("src")).unwrap();
+        std::fs::write(ws.join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+        std::fs::write(ws.join("bin.dat"), [0u8, 1, 2]).unwrap();
+        std::fs::write(base.join("secret.txt"), "TOP SECRET").unwrap();
+        let task =
+            "Fix @src/lib.rs, and @src/lib.rs again. Mail me@example.com about @missing.rs, @bin.dat, @../secret.txt";
+        let (text, paths) = expand_mentions(&ws, task);
+        assert!(text.starts_with(task));
+        assert_eq!(text.matches("<file path=\"src/lib.rs\">").count(), 1, "{text}");
+        assert!(text.contains("pub fn answer()"));
+        assert!(!text.contains("TOP SECRET") && !text.contains("bin.dat\">"), "{text}");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(expand_mentions(&ws, "no mentions here").0, "no mentions here");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

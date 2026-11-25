@@ -309,7 +309,12 @@ impl<'a> Agent<'a> {
                 message: format!("closed {repaired} unanswered tool call(s) left by an interrupted run"),
             });
         }
-        session.messages.push(Message::user(task));
+        let (task_text, attached) = if depth == 0 {
+            crate::prompt::expand_mentions(&self.config.workspace, task)
+        } else {
+            (task.to_string(), Vec::new())
+        };
+        session.messages.push(Message::user(task_text));
         self.save(session, emit);
 
         let system = self.system_prompt();
@@ -322,6 +327,11 @@ impl<'a> Agent<'a> {
             instructions: HashSet::new(),
             checkpoints: None,
         };
+        // Attached files count as read, so the model can edit them straight away.
+        for path in attached {
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            state.seen.insert(path, mtime);
+        }
         if self.config.checkpoints && depth == 0 {
             match crate::checkpoint::Checkpoints::open(&self.config.workspace) {
                 Ok(cp) => {
