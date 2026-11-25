@@ -115,3 +115,4 @@ honestly: an iteration is only logged when its tests pass.
 | 107 | 2026-11-25 | aider | `verify_command = "auto"`: detect cargo check / go vet / typecheck-or-lint script / Python compile; trusted workspaces only | adopt | GRAFT-0079 | SPEC-0005 | `verify_command_auto_detects_the_project_check` |
 | 108 | 2026-11-25 | claude-code | `turn_started` event; the terminal shows a dim "… thinking" line until output arrives (Unix terminals and Windows Terminal; not with NO_COLOR) | adopt | GRAFT-0080 | SPEC-0003 | `protocol round-trip` |
 | 109 | 2026-11-25 | claude-code | `subagent_model`: the read-only `task` subagent can use a cheaper model (e.g. `haiku`); trusted-only in workspaces | adopt | GRAFT-0081 | SPEC-0005 | `subagent_uses_its_own_model` |
+| 110 | 2026-11-25 | claude-code, aider | Chat multi-line messages: `"""` blocks and trailing-backslash continuation (pasted text no longer becomes many tasks) | adopt | GRAFT-0082 | SPEC-0004 | `multi_line_messages` |

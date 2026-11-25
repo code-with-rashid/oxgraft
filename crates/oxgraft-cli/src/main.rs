@@ -627,6 +627,37 @@ fn run(
     Ok(status_code(&outcome.status))
 }
 
+/// Read one chat message (GRAFT-0082): a line; lines ending in `\\` continue; a
+/// line that is just `"""` starts a block that runs until the next `"""`. `None`
+/// at end of input.
+fn read_message(input: &mut dyn BufRead) -> std::io::Result<Option<String>> {
+    let mut first = String::new();
+    if input.read_line(&mut first)? == 0 {
+        return Ok(None);
+    }
+    if first.trim() == "\"\"\"" {
+        let mut text = String::new();
+        loop {
+            let mut line = String::new();
+            if input.read_line(&mut line)? == 0 || line.trim() == "\"\"\"" {
+                return Ok(Some(text.trim_end().to_string()));
+            }
+            text.push_str(&line);
+        }
+    }
+    let mut text = first.trim_end_matches(['\r', '\n']).to_string();
+    while text.ends_with('\\') {
+        text.pop();
+        text.push('\n');
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            break;
+        }
+        text.push_str(line.trim_end_matches(['\r', '\n']));
+    }
+    Ok(Some(text))
+}
+
 /// Run a command the user typed with `!` in chat (GRAFT-0058): the user's own
 /// action, so no approval; same shell as the bash tool; 5-minute limit.
 fn run_user_command(ws: &Path, command: &str) -> (bool, String) {
@@ -736,11 +767,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
     loop {
         eprint!("\n> ");
         let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line).map_err(usage)? == 0 {
-            break;
-        }
-        let line = line.trim();
+        let Some(input) = read_message(&mut stdin.lock()).map_err(usage)? else { break };
+        let line = input.trim();
         match line {
             "" => continue,
             bang if bang.starts_with('!') => {
@@ -840,6 +868,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                      /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
+                     \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
                 );
                 for c in commands::discover(&s.ws) {
@@ -1159,4 +1188,19 @@ fn doctor(common: &Common, live: bool) -> CliResult {
     }
     println!("\n{}", if problems == 0 { "ready".to_string() } else { format!("{problems} problem(s) found") });
     Ok(if problems == 0 { 0 } else { EXIT_USAGE })
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::read_message;
+
+    #[test]
+    fn multi_line_messages() {
+        let mut input = std::io::Cursor::new("one line\nfirst \\\nsecond\n\"\"\"\nblock a\n\nblock b\n\"\"\"\nlast");
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("one line"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("first \nsecond"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("block a\n\nblock b"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("last"));
+        assert_eq!(read_message(&mut input).unwrap(), None);
+    }
 }
