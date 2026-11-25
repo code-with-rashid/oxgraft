@@ -102,6 +102,7 @@ max_tokens = 16000             # per response
 max_session_tokens = 2000000   # stop a run above this many tokens
 context_window = 200000        # compaction at 80%; 0 disables
 instructions = "Use British English. Prefer small commits."   # added to the system prompt (also --append-system-prompt)
+verify_command = "auto"       # or a command; after edits, failures go back to the model (trusted workspaces)
 stream = true                  # show replies as they are written (OXGRAFT_STREAM=0 to turn off)
 checkpoints = true             # snapshot the workspace after changing turns (private git repo in your data dir; OXGRAFT_DATA_DIR overrides)
 

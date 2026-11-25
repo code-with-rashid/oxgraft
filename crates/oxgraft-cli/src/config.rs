@@ -342,10 +342,55 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             cfg.sources.push(source);
         }
     }
+    // `verify_command = "auto"` (GRAFT-0079): detect the project's own check. These
+    // commands run repository code (build scripts, npm scripts), so only in trusted
+    // workspaces.
+    if cfg.verify_command.as_deref().is_some_and(|v| v.trim() == "auto") {
+        cfg.verify_command = if is_trusted { detect_verify_command(workspace) } else { None };
+        if !is_trusted {
+            cfg.warnings.push(
+                "`verify_command = \"auto\"` is off here: it runs the project's own build scripts, so the workspace must be trusted"
+                    .into(),
+            );
+        }
+    }
     if cfg.model.is_none() && env("ANTHROPIC_API_KEY").or_else(|| env("ANTHROPIC_AUTH_TOKEN")).is_some() {
         cfg.model = Some(format!("anthropic/{}", oxgraft_providers::anthropic::DEFAULT_MODEL));
     }
     Ok(cfg)
+}
+
+/// The project's own quick check, by marker file: Rust, Go, a package.json
+/// `typecheck` or `lint` script (with the lockfile's package manager), or Python.
+pub fn detect_verify_command(workspace: &Path) -> Option<String> {
+    let has = |f: &str| workspace.join(f).is_file();
+    if has("Cargo.toml") {
+        return Some("cargo check --quiet --all-targets".into());
+    }
+    if has("go.mod") {
+        return Some("go vet ./...".into());
+    }
+    if has("package.json") {
+        let pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(workspace.join("package.json")).ok()?).ok()?;
+        let runner = if has("pnpm-lock.yaml") {
+            "pnpm run --silent"
+        } else if has("yarn.lock") {
+            "yarn run --silent"
+        } else if has("bun.lockb") || has("bun.lock") {
+            "bun run"
+        } else {
+            "npm run --silent"
+        };
+        return ["typecheck", "check", "lint"]
+            .iter()
+            .find(|s| pkg.pointer(&format!("/scripts/{s}")).is_some())
+            .map(|s| format!("{runner} {s}"));
+    }
+    if has("pyproject.toml") || has("setup.py") || has("requirements.txt") {
+        return Some("python -m compileall -q -x \"(^|/)(\\.|venv|node_modules)\" .".into());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -437,6 +482,35 @@ mod tests {
             approval_mode: None,
         };
         assert_eq!(resolve(&ws, &flags).unwrap().profile, "ci");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    // GRAFT-0079
+    #[test]
+    fn verify_command_auto_detects_the_project_check() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-cfg-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        assert_eq!(detect_verify_command(&ws), None);
+        std::fs::write(ws.join("package.json"), r#"{"scripts": {"lint": "eslint .", "typecheck": "tsc"}}"#).unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("npm run --silent typecheck"));
+        std::fs::write(ws.join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("pnpm run --silent typecheck"));
+        std::fs::write(ws.join("Cargo.toml"), "[package]").unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("cargo check --quiet --all-targets"));
+        // From an untrusted workspace's own config it is ignored; from a flag-less user
+        // layer it needs trust too.
+        std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
+        std::fs::write(ws.join(".oxgraft/config.toml"), "verify_command = \"auto\"\n").unwrap();
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
+        assert_eq!(resolve(&ws, &flags).unwrap().verify_command, None);
         let _ = std::fs::remove_dir_all(&ws);
     }
 

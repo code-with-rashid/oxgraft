@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072, GRAFT-0079]
 ---
 
 # SPEC-0005: Extensions
@@ -47,3 +47,7 @@ scripts) without letting a cloned repository run code unasked.
   `Mcp-Session-Id` from the server is sent back on later requests, `headers`
   are added (with `${VAR}` from the environment). Setting both or neither of
   `command` and `url` is an error for that server.
+- **AC10** `verify_command = "auto"` resolves, in trusted workspaces only, to
+  the project's own quick check by marker file (Cargo.toml, go.mod, a
+  package.json typecheck/check/lint script, Python project files); otherwise no
+  verify command runs and a warning says why.
