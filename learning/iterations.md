@@ -121,3 +121,4 @@ honestly: an iteration is only logged when its tests pass.
 | 113 | 2026-11-25 | claude-code | Terminal bell when a chat turn or run of 30 s or more finishes (`bell = false` to turn off) | adopt | GRAFT-0085 | SPEC-0004 | — |
 | 114 | 2026-11-25 | claude-code | Chat `/init` writes or improves AGENTS.md (same task as `oxgraft init`) | adopt | GRAFT-0032 | SPEC-0004 | — |
 | 115 | 2026-11-25 | opencode | old_string falls back to a unique whole-line match ignoring trailing whitespace and a uniform extra indentation (re-indents new_string) | adopt | GRAFT-0086 | SPEC-0002 | `old_string_tolerates_trailing_space_and_indentation` |
+| 116 | 2026-11-25 | claude-code, opencode | `oxgraft stats [--json]`: sessions and tokens per model in this workspace | adopt | GRAFT-0087 | SPEC-0004 | `stats_sum_usage_per_model` |

@@ -53,6 +53,7 @@ oxgraft run --until "cargo test" "fix the failing test"  # not done until the ch
 oxgraft sessions                          # list saved sessions
 oxgraft export -o run.md                  # the latest session as a Markdown transcript
 oxgraft prune --keep 20                   # delete older sessions and their undo backups
+oxgraft stats                             # sessions and tokens per model in this workspace
 oxgraft undo                              # restore files changed by the latest session
 oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn
 oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)

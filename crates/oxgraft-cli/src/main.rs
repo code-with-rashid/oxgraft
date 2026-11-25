@@ -103,6 +103,11 @@ enum Command {
     },
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Token use per model across this workspace's sessions.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
     /// Delete old sessions in this workspace, keeping the newest ones.
     Prune {
         /// How many sessions to keep.
@@ -304,6 +309,27 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             for line in session.undo() {
                 println!("{line}");
+            }
+            Ok(0)
+        }
+        Some(Command::Stats { json }) => {
+            let ws = workspace(&common)?;
+            let rows = usage_by_model(&Session::list(&ws));
+            if json {
+                for (model, (sessions, input, output)) in &rows {
+                    println!(
+                        "{}",
+                        serde_json::json!({"model": model, "sessions": sessions, "input_tokens": input, "output_tokens": output})
+                    );
+                }
+                return Ok(0);
+            }
+            if rows.is_empty() {
+                println!("no sessions in {}", ws.display());
+            }
+            println!("{:<36} {:>8} {:>14} {:>14}", "MODEL", "SESSIONS", "INPUT TOKENS", "OUTPUT TOKENS");
+            for (model, (sessions, input, output)) in &rows {
+                println!("{model:<36} {sessions:>8} {input:>14} {output:>14}");
             }
             Ok(0)
         }
@@ -717,6 +743,20 @@ fn ring_if_long(started: std::time::Instant, enabled: bool) {
         eprint!("\x07");
         let _ = std::io::stderr().flush();
     }
+}
+
+/// Sessions, input and output tokens per model (GRAFT-0087), most input first.
+fn usage_by_model(sessions: &[Session]) -> Vec<(String, (usize, u64, u64))> {
+    let mut map: std::collections::BTreeMap<String, (usize, u64, u64)> = std::collections::BTreeMap::new();
+    for s in sessions {
+        let e = map.entry(s.model.clone()).or_default();
+        e.0 += 1;
+        e.1 += s.usage.input_tokens;
+        e.2 += s.usage.output_tokens;
+    }
+    let mut rows: Vec<_> = map.into_iter().collect();
+    rows.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
+    rows
 }
 
 /// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.

@@ -747,3 +747,19 @@ fn chat_model_switches_provider() {
     assert!(stdout.contains("from the first model") && stdout.contains("from the second model"), "{stdout}\n{stderr}");
     assert!(stderr.contains("cannot switch to `nope/x`"), "{stderr}");
 }
+
+// GRAFT-0087: token use per model across sessions.
+#[test]
+fn stats_sum_usage_per_model() {
+    let ws = Ws::new("stats");
+    let model = ws.script(json!([{"text": "a"}]));
+    for _ in 0..2 {
+        assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "x"]).status.code(), Some(0));
+    }
+    let out = ws.oxgraft(&["stats", "--json"]);
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or_default().to_string();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["sessions"], 2);
+    assert!(v["input_tokens"].as_u64().unwrap() > 0);
+    assert!(String::from_utf8_lossy(&ws.oxgraft(&["stats"]).stdout).contains("SESSIONS"));
+}
