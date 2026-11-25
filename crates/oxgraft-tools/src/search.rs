@@ -215,7 +215,10 @@ mod tests {
         f.file("target/c.rs", "");
         f.file(".gitignore", "target/\n");
         let out = f.run(&Glob, json!({"pattern": "*.rs"}));
-        assert_eq!(out.content, "src/a.rs\nsrc/deep/b.rs");
+        // Order is newest first (GRAFT-0096); compare as a set here.
+        let mut found: Vec<&str> = out.content.lines().collect();
+        found.sort();
+        assert_eq!(found, vec!["src/a.rs", "src/deep/b.rs"]);
         let out = f.run(&Glob, json!({"pattern": "src/*.rs"}));
         assert_eq!(out.content, "src/a.rs");
         assert!(f.run(&Glob, json!({"pattern": "*.py"})).content.starts_with("no files"));
