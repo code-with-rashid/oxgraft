@@ -191,6 +191,36 @@ fn always_answer_is_remembered_for_the_tool() {
     assert!(ws.0.join("b.txt").exists());
 }
 
+// SPEC-0006 AC6: risky shell commands are asked about every time, even after "always".
+#[test]
+fn risky_commands_ignore_always_answers() {
+    let ws = Ws::new("rails");
+    let (_, events, _) = run(
+        &ws,
+        "ordered_rules",
+        Answer::Always,
+        json!({"turns": [
+            {"tool_calls": [{"name": "bash", "input": {"command": "echo hi"}}]},
+            {"tool_calls": [{"name": "bash", "input": {"command": "echo again"}}]},
+            {"tool_calls": [{"name": "bash", "input": {"command": "rm -rf not_there"}}]},
+            {"tool_calls": [{"name": "bash", "input": {"command": "rm -rf not_there"}}]},
+            {"text": "ok"}
+        ]}),
+        8,
+    );
+    let asks: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ApprovalRequested { risk, .. } => Some(risk.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asks.len(), 3, "{asks:?}");
+    assert!(asks[0].is_none());
+    assert!(asks[1].as_deref().is_some_and(|r| r.contains("recursively")));
+    assert!(asks[2].is_some());
+}
+
 // SPEC-0003 AC5 and the truncated-tool-call guard.
 #[test]
 fn handles_max_tokens() {

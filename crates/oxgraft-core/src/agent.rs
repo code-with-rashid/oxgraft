@@ -552,11 +552,13 @@ impl<'a> Agent<'a> {
 
         let action = tool.action(input);
         let protected = file.as_ref().is_some_and(|p| matches!(name, "edit" | "write") && self.is_protected(p));
+        let fresh = self.toolkit.approval.needs_fresh_yes(&action);
         let decision = match self.toolkit.approval.decide(&action) {
             // Protected paths (GRAFT-0040) always need an explicit yes: no rule or
             // "always" answer can fast-path changes to agent config, CI or git internals.
             Decision::Allow | Decision::Ask if protected => Decision::Ask,
-            Decision::Ask if state.always.contains(name) => Decision::Allow,
+            // Risky commands (GRAFT-0042) are asked about every time.
+            Decision::Ask if state.always.contains(name) && fresh.is_none() => Decision::Allow,
             d => d,
         };
         match decision {
@@ -569,7 +571,12 @@ impl<'a> Agent<'a> {
                 ));
             }
             Decision::Ask => {
-                emit(&Event::ApprovalRequested { id: id.into(), tool: name.into(), resource: action.resource.clone() });
+                emit(&Event::ApprovalRequested {
+                    id: id.into(),
+                    tool: name.into(),
+                    resource: action.resource.clone(),
+                    risk: fresh.clone(),
+                });
                 match self.approver.approve(name, &action, input) {
                     Answer::No => {
                         emit(&Event::ApprovalResolved { id: id.into(), decision: "ask_declined".into() });

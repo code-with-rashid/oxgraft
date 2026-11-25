@@ -54,6 +54,9 @@ pub enum Event {
         id: String,
         tool: String,
         resource: String,
+        /// Set when the action is risky and is asked about every time (GRAFT-0042).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        risk: Option<String>,
     },
     /// The approval decision for a tool call: `allow`, `deny`, or `ask_declined`.
     ApprovalResolved {
@@ -116,7 +119,12 @@ mod tests {
             Event::Message { role: Role::Assistant, text: "hello".into() },
             Event::ToolCall { id: "1".into(), tool: "read".into(), input: serde_json::json!({"path": "a.rs"}) },
             Event::ToolResult { id: "1".into(), ok: true, output: "fn main() {}".into() },
-            Event::ApprovalRequested { id: "2".into(), tool: "bash".into(), resource: "rm -rf target".into() },
+            Event::ApprovalRequested {
+                id: "2".into(),
+                tool: "bash".into(),
+                resource: "rm -rf target".into(),
+                risk: Some("r".into()),
+            },
             Event::ApprovalResolved { id: "2".into(), decision: "deny".into() },
             Event::Retrying { attempt: 1, wait_ms: 1000, message: "429".into() },
             Event::Warning { message: "w".into() },

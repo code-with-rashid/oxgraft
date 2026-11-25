@@ -2,7 +2,7 @@
 id: SPEC-0006
 title: Sandbox, interrupts, budgets, compaction
 status: implemented
-grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025]
+grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025, GRAFT-0042]
 ---
 
 # SPEC-0006: Safety and long sessions
@@ -21,3 +21,8 @@ grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025]
 - **AC5** When a turn's context exceeds 80% of `context_window`, the model writes
   a handover summary and the session continues from task + summary; history is
   never edited in place.
+- **AC6** Under `ordered_rules`, shell commands that download and execute code,
+  delete recursively with force, write to raw disks, format filesystems, or use
+  sudo are never auto-allowed by a rule or by an earlier "always" answer; each
+  one is asked about with its reason (`ApprovalRequested.risk`). A deny rule
+  still wins.

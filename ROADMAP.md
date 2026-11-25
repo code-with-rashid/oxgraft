@@ -39,7 +39,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 1. Git-ref checkpoints per turn with a private index, outside the user's history (cline, kilocode)
 2. Sandbox network egress via a proxy with an allowlist, empty by default (claude-code, codex)
 3. Self-testing approval rules: `match`/`not_match` examples validated at load (codex)
-4. Deterministic risk rails for shell: fetch-to-exec, raw disk, recursive force delete → always ask (openhands)
+4. ~~Deterministic risk rails for shell~~ (done: GRAFT-0042)
 5. Auto-allow read-only shell commands only when the whole command parses as inert (crush, clean-room)
 6. Re-query on malformed tool calls without polluting history (swe-agent)
 7. Review-on-submit: show the session diff and a checklist before finishing (swe-agent)

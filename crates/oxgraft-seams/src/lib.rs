@@ -162,6 +162,13 @@ pub trait ApprovalPolicy: Strategy {
     fn explain(&self, _action: &Action) -> Option<String> {
         None
     }
+
+    /// `Some(reason)` when this action must be confirmed every time: an earlier
+    /// "always" answer does not cover it (ADR 0006). Only applies when `decide`
+    /// returns `Ask`; a policy that allows outright (e.g. inside a sandbox) wins.
+    fn needs_fresh_yes(&self, _action: &Action) -> Option<String> {
+        None
+    }
 }
 
 // -------------------------------------------------------------------- sandbox

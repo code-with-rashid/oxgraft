@@ -442,8 +442,17 @@ impl Approver for TerminalApprover {
                 eprintln!("    │ … {} more lines", lines.len() - 40);
             }
         }
+        // Risk rails (GRAFT-0042): say why, and don't offer "always".
+        let risk = if tool == "bash" { oxgraft_strategies::approval::shell_risk(&action.resource) } else { None };
+        if let Some(why) = risk {
+            eprintln!("  ! risky: {why}. This is asked every time.");
+        }
         loop {
-            eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {tool}: ");
+            if risk.is_some() {
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o: ");
+            } else {
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {tool}: ");
+            }
             let _ = std::io::stderr().flush();
             let mut answer = String::new();
             if std::io::stdin().lock().read_line(&mut answer).unwrap_or(0) == 0 {
