@@ -71,6 +71,8 @@ pub fn known_providers() -> Vec<&'static str> {
 pub struct Options {
     /// Anthropic `output_config.effort` (low, medium, high, xhigh, max).
     pub effort: Option<String>,
+    /// Don't request adaptive thinking from Anthropic models (GRAFT-0071).
+    pub no_thinking: bool,
 }
 
 /// Build the provider for a model reference.
@@ -79,7 +81,9 @@ pub fn build(model: &ModelRef, options: &Options) -> Result<Box<dyn Provider>, P
         return Ok(Box::new(mock::Mock::from_file(&model.model)?));
     }
     if model.provider == anthropic::ID {
-        return Ok(Box::new(anthropic::Anthropic::from_env(options.effort.clone())?));
+        return Ok(Box::new(
+            anthropic::Anthropic::from_env(options.effort.clone())?.with_thinking(!options.no_thinking),
+        ));
     }
     let preset = openai::PRESETS.iter().find(|p| p.id == model.provider).copied().ok_or_else(|| {
         ProviderError::new("oxgraft", ErrorKind::Config, format!("unknown provider {}", model.provider))

@@ -361,8 +361,11 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         )
     })?;
     let model_ref = oxgraft_providers::parse_model(&model_spec).map_err(usage)?;
-    let provider = oxgraft_providers::build(&model_ref, &oxgraft_providers::Options { effort: cfg.effort.clone() })
-        .map_err(usage)?;
+    let provider = oxgraft_providers::build(
+        &model_ref,
+        &oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking },
+    )
+    .map_err(usage)?;
     let (_, profile_text) =
         profiles::load(&ws, &profiles::resolve_auto(&cfg.profile, &model_ref.model), cfg.trusted).map_err(usage)?;
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
@@ -901,7 +904,8 @@ fn doctor(common: &Common, live: bool) -> CliResult {
                         );
                     }
                     if live {
-                        let options = oxgraft_providers::Options { effort: cfg.effort.clone() };
+                        let options =
+                            oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
                         match oxgraft_providers::build(&m, &options) {
                             Ok(provider) => {
                                 for (ok, what, detail) in live_checks(provider.as_ref(), &m.model) {

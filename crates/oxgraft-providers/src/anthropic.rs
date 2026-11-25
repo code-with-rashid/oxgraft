@@ -25,6 +25,8 @@ pub struct Anthropic {
     base_url: String,
     effort: Option<String>,
     fallbacks: bool,
+    /// Send `thinking: {type: adaptive}` to models that support it (GRAFT-0071).
+    thinking: bool,
 }
 
 impl std::fmt::Debug for Anthropic {
@@ -54,7 +56,7 @@ impl Anthropic {
         // Server-side fallbacks are only accepted by the first-party API.
         let fallbacks =
             base_url == "https://api.anthropic.com" && env("OXGRAFT_ANTHROPIC_FALLBACKS").as_deref() != Some("0");
-        Ok(Self { credential, base_url, effort, fallbacks })
+        Ok(Self { credential, base_url, effort, fallbacks, thinking: true })
     }
 
     /// Explicit construction (tests, embedding). `fallbacks` enables server-side refusal fallbacks.
@@ -64,7 +66,14 @@ impl Anthropic {
             base_url: base_url.trim_end_matches('/').into(),
             effort,
             fallbacks,
+            thinking: true,
         }
+    }
+
+    /// Turn adaptive thinking on or off (on by default for supporting models).
+    pub fn with_thinking(mut self, on: bool) -> Self {
+        self.thinking = on;
+        self
     }
 
     pub fn request_body(&self, req: &CompletionRequest) -> Value {
@@ -89,10 +98,34 @@ impl Anthropic {
         if let Some(effort) = &self.effort {
             body["output_config"] = json!({ "effort": effort });
         }
+        if self.thinking && supports_adaptive_thinking(&req.model) {
+            // The model decides how much to think per step; thinking blocks come back
+            // as opaque blocks and are resent unchanged (append-only history).
+            body["thinking"] = json!({"type": "adaptive"});
+        }
         if self.fallbacks && supports_fallbacks(&req.model) {
             body["fallbacks"] = json!("default");
         }
         body
+    }
+}
+
+/// Opus and Sonnet 4.6 and later, and every Fable model, take adaptive thinking.
+/// Unknown or older models get no `thinking` field (the API's default applies).
+pub fn supports_adaptive_thinking(model: &str) -> bool {
+    let Some(rest) = model.strip_prefix("claude-") else { return false };
+    if rest.starts_with("fable-") {
+        return true;
+    }
+    let Some((family, version)) = rest.split_once('-') else { return false };
+    if !matches!(family, "opus" | "sonnet") {
+        return false;
+    }
+    let mut parts = version.split(['-', '.']).map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), _) if major >= 5 => true,
+        (Some(4), Some(minor)) => (6..100).contains(&minor),
+        _ => false,
     }
 }
 
@@ -330,6 +363,7 @@ mod tests {
 
     fn provider() -> Anthropic {
         Anthropic {
+            thinking: true,
             credential: Credential::ApiKey("k".into()),
             base_url: "https://api.anthropic.com".into(),
             effort: Some("high".into()),
@@ -410,6 +444,35 @@ mod tests {
         assert!(provider().request_body(&req).get("fallbacks").is_none());
         req.model = DEFAULT_MODEL.into();
         assert!(provider().request_body(&req).get("fallbacks").is_some());
+    }
+
+    // SPEC-0001 AC10 (GRAFT-0071): adaptive thinking for models that support it.
+    #[test]
+    fn adaptive_thinking_for_supported_models() {
+        for m in [
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-fable-5-2",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+        ] {
+            assert!(supports_adaptive_thinking(m), "{m}");
+        }
+        for m in ["claude-haiku-5-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-3-7-sonnet", "gpt-x"] {
+            assert!(!supports_adaptive_thinking(m), "{m}");
+        }
+        let mut req = CompletionRequest {
+            model: DEFAULT_MODEL.into(),
+            system: String::new(),
+            messages: vec![Message::user("x")],
+            tools: vec![],
+            max_tokens: 10,
+        };
+        assert_eq!(provider().request_body(&req)["thinking"]["type"], "adaptive");
+        assert!(provider().with_thinking(false).request_body(&req).get("thinking").is_none());
+        req.model = "claude-haiku-5-5".into();
+        assert!(provider().request_body(&req).get("thinking").is_none());
     }
 
     // SPEC-0001 AC8: unparseable tool input (kept as a string) is sent as an object.

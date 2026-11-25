@@ -59,3 +59,6 @@ provider-neutral conversation model and a small `Provider` trait.
   plain request instead.
 - **AC9** The model may be given as a short alias (`opus`, `sonnet`, `haiku`,
   `fable`, any case), resolving to the current Anthropic model id.
+- **AC10** Requests to Anthropic Opus/Sonnet 4.6+ and Fable models include
+  `thinking: {type: "adaptive"}` unless `thinking = false`; other models get no
+  `thinking` field.

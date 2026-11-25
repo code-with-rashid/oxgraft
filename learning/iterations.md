@@ -98,3 +98,4 @@ honestly: an iteration is only logged when its tests pass.
 | 90 | 2026-11-25 | — | One-line hints after provider failures: no tool support, bad key, unknown model, local server down, context overflow, rate limits | fix | — | SPEC-0004 | `hints_for_common_provider_failures` |
 | 91 | 2026-11-25 | claude-code | "Always" for bash scoped to the command prefix per part (approving `cargo test` no longer approves `rm`) | adopt | GRAFT-0069 | SPEC-0003 | `always_for_bash_is_scoped_to_the_command` |
 | 92 | 2026-11-25 | claude-code, codex | `--plan`: read-only research ending in a numbered plan; continue with --resume | adopt | GRAFT-0070 | SPEC-0004 | `plan_mode_changes_nothing` |
+| 93 | 2026-11-25 | claude-code | Adaptive thinking for Anthropic Opus/Sonnet 4.6+ and Fable (`thinking = false` to disable); not yet tried on the live API | adopt | GRAFT-0071 | SPEC-0001 | `adaptive_thinking_for_supported_models` |

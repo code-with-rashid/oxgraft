@@ -24,6 +24,8 @@ pub struct FileConfig {
     pub context_window: Option<u64>,
     /// Stream model output as it is written (default true).
     pub stream: Option<bool>,
+    /// Adaptive thinking for Anthropic models that support it (default true).
+    pub thinking: Option<bool>,
     /// How much runs without asking: read-only, suggest (default), auto-edit, full-auto.
     pub approval_mode: Option<String>,
     /// Extra standing instructions appended to the system prompt.
@@ -56,6 +58,7 @@ pub struct Config {
     /// No layer set `context_window` (so a provider-specific default may apply).
     pub context_window_default: bool,
     pub stream: bool,
+    pub thinking: bool,
     pub approval_mode: String,
     /// Instructions from every config layer, in order (user, workspace, flags).
     pub instructions: Vec<String>,
@@ -118,6 +121,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         context_window: Some(200_000),
         context_window_default: true,
         stream: true,
+        thinking: true,
         approval_mode: "suggest".into(),
         instructions: Vec::new(),
         checkpoints: true,
@@ -314,6 +318,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.checkpoints {
             cfg.checkpoints = v;
+            used = true;
+        }
+        if let Some(v) = layer.thinking {
+            cfg.thinking = v;
             used = true;
         }
         if let Some(v) = layer.stream {
