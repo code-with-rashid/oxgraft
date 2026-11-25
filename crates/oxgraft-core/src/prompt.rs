@@ -167,7 +167,9 @@ pub fn nested_instructions(
     while dir.starts_with(&root) && dir != root {
         for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] {
             let candidate = dir.join(name);
-            if candidate.is_file() && shown.insert(candidate.clone()) {
+            // Symlinks out of the workspace are skipped, as for the root files (review fix).
+            let inside = candidate.canonicalize().is_ok_and(|real| real.starts_with(&root) && real.is_file());
+            if inside && shown.insert(candidate.clone()) {
                 found.push(candidate);
             }
         }
@@ -216,6 +218,14 @@ mod tests {
             std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
             std::os::unix::fs::symlink(dir.join("secret.txt"), ws.join("AGENTS.local.md")).unwrap();
             assert!(!project_instructions(&ws).contains("TOP SECRET"));
+            // Nested instruction files get the same check.
+            std::fs::create_dir_all(ws.join("docs")).unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), ws.join("docs/AGENTS.md")).unwrap();
+            std::fs::write(ws.join("docs/readme.txt"), "x").unwrap();
+            let mut shown = std::collections::HashSet::new();
+            let ws = ws.canonicalize().unwrap();
+            let nested = nested_instructions(&ws, &ws.join("docs/readme.txt"), &mut shown);
+            assert!(nested.is_none_or(|t| !t.contains("TOP SECRET")));
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
