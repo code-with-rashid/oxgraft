@@ -37,3 +37,14 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+The first version kept the repository in `<workspace>/.oxgraft/checkpoints.git`
+and reused it if a `HEAD` file existed. A cloned repository could ship that
+directory with its own config (`core.fsmonitor`) or hooks and run code at the
+start of every session, before any approval. Now the repository lives in the
+user data dir (never inside the workspace; `open_at` refuses one that is), git
+runs with system and global config disabled, `core.hooksPath` pointing at an
+empty directory and fsmonitor off, and diffs never run external tools.
+Test: `checkpoint_repo_is_never_inside_the_workspace`.

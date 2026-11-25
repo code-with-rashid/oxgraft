@@ -3,7 +3,7 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–68._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–76._
 
 ## Current milestone
 
@@ -37,12 +37,17 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
 - **CLI**: chat, run (`--json`, `--resume`, `--fork ID@N`, `--until`), init,
   doctor, sessions, checkpoints, restore, undo, models, strategies, profile.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 55 graft records; 68 logged iterations; specs SPEC-0001..0006;
+  archived); 55 graft records; 76 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
 
-- **CI has not run on iterations 53–68.** GitHub was unreachable from the build
+- **An independent review of iterations 53–72 found 9 problems; all are fixed**
+  (iterations 73–76), including two security holes: a checkpoint repo planted
+  by a cloned repository could run code, and the risk rails missed commands
+  that weren't first in their part (`xargs rm -rf`, `if …; then rm -rf ~`).
+  The Windows `\?\` path fix for git is untested on Windows.
+- **CI has not run on iterations 53–76.** GitHub was unreachable from the build
   machine for the whole session (other sites worked), so these commits are
   local only. Push, then check the Windows and macOS jobs first: new tests use
   git (checkpoints), Git Bash/PowerShell (`cat`, `echo`), and a Unix-only
