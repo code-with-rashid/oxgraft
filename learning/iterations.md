@@ -87,3 +87,4 @@ honestly: an iteration is only logged when its tests pass.
 | 79 | 2026-11-25 | claude-code, gemini-cli | Custom commands: `.agents/commands/<name>.md` (or `.claude/commands`) as `/name` in chat and `run`, with `$ARGUMENTS` | adopt | GRAFT-0057 | SPEC-0004 | `custom_commands_expand_in_run` |
 | 80 | 2026-11-25 | gemini-cli, aider | Chat `!command`: run a command yourself; output goes to the model with the next message | adopt | GRAFT-0058 | SPEC-0004 | `chat_bang_runs_a_command_and_passes_its_output_on` |
 | 81 | 2026-11-25 | opencode, claude-code | One reminder per run when the model finishes with todo items not done | adopt | GRAFT-0059 | SPEC-0003 | `unfinished_todo_items_get_one_reminder` |
+| 82 | 2026-11-25 | opencode | Truncated bash output saved in full to .oxgraft/outputs/ with the path in the result | adopt | GRAFT-0060 | SPEC-0002 | `long_output_is_saved_in_full` |

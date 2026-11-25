@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060]
 ---
 
 # SPEC-0002: Built-in tools
@@ -66,3 +66,6 @@ tools beat many overlapping ones) that is safe by default.
   dropped), `<pre>` fenced with whitespace kept, table cells separated by `|`,
   named and numeric entities decoded; script, style, head, nav, footer, forms
   and comments removed. Arbitrary input never panics.
+- **AC13** When `bash` output is longer than the output limit, the full output
+  is written to `.oxgraft/outputs/` (the 20 newest are kept) and the truncated
+  result names that file.

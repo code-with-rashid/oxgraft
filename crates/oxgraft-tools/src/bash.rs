@@ -194,9 +194,41 @@ impl Tool for Bash {
         {
             out.push_str(hint);
         }
-        let out = truncate(&out, ctx.max_output_chars);
+        let out = if out.chars().count() > ctx.max_output_chars {
+            // Keep the whole output where the model can read or grep it (GRAFT-0060).
+            let saved = save_full_output(ctx.workspace, &out);
+            let mut short = truncate(&out, ctx.max_output_chars);
+            if let Some(rel) = saved {
+                short.push_str(&format!("\n[full output saved to {rel}; use `read` or `grep` on it]\n"));
+            }
+            short
+        } else {
+            out
+        };
         if status.is_none() { ToolOutput::error(out) } else { ToolOutput::ok(out) }
     }
+}
+
+/// Write `text` to `.oxgraft/outputs/<n>.log` in the workspace, keeping the 20
+/// newest files. Returns the workspace-relative path.
+fn save_full_output(workspace: &std::path::Path, text: &str) -> Option<String> {
+    const KEEP: usize = 20;
+    let dir = workspace.join(".oxgraft").join("outputs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let name = format!("bash-{stamp}.log");
+    std::fs::write(dir.join(&name), text).ok()?;
+    let mut logs: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "log"))
+        .collect();
+    logs.sort();
+    for old in logs.iter().take(logs.len().saturating_sub(KEEP)) {
+        let _ = std::fs::remove_file(old);
+    }
+    Some(format!(".oxgraft/outputs/{name}"))
 }
 
 /// When a sandboxed command fails in a way the sandbox causes, say so, so the
@@ -234,6 +266,27 @@ pub fn sandbox_hint(stderr: &str, network: bool) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::testing::Fixture;
+
+    // SPEC-0002 AC13 (GRAFT-0060): long output is cut, and saved in full.
+    #[test]
+    fn long_output_is_saved_in_full() {
+        if !matches!(shell_kind(), ShellKind::Posix(_)) {
+            return; // the loop below is POSIX sh
+        }
+        let f = Fixture::new("longout");
+        let cmd = "i=0; while [ $i -lt 1500 ]; do echo line$i; i=$((i+1)); done";
+        let out = f.run(&Bash, json!({"command": cmd}));
+        assert!(
+            out.content.contains("truncated") && out.content.contains("full output saved to .oxgraft/outputs/"),
+            "{}",
+            out.content
+        );
+        let rel = out.content.split("saved to ").nth(1).unwrap().split(';').next().unwrap();
+        let full = f.read(rel);
+        assert!(full.contains("line0") && full.contains("line777") && full.contains("line1499"));
+        let short = f.run(&Bash, json!({"command": "echo short"}));
+        assert!(!short.content.contains("saved to"));
+    }
 
     // SPEC-0006 AC7
     #[test]
