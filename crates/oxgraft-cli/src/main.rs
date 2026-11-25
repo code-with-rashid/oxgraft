@@ -425,6 +425,10 @@ struct Setup {
     tools: Vec<Box<dyn oxgraft_seams::Tool>>,
     /// Ring the terminal bell after long tasks.
     bell: bool,
+    /// The configured compaction window, and whether it was left at the default
+    /// (so `/model` can apply the local-model default).
+    context_window: Option<u64>,
+    context_window_default: bool,
     /// Provider options (effort, thinking), for switching models in chat.
     effort: Option<String>,
     thinking: bool,
@@ -529,6 +533,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         effort: cfg.effort.clone(),
         thinking: cfg.thinking,
         bell: cfg.bell,
+        context_window: cfg.context_window,
+        context_window_default: cfg.context_window_default,
         subagent,
         toolkit,
         profile_text,
@@ -585,6 +591,10 @@ fn run(
     until: Option<String>,
 ) -> CliResult {
     let json = output.json;
+    if let Some(path) = &output.last_message {
+        // Cleared first, so a run that fails early never leaves an old answer behind.
+        std::fs::write(path, "").map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
+    }
     let mut task = task.join(" ");
     if task.trim().is_empty() {
         if std::io::stdin().is_terminal() {
@@ -661,6 +671,35 @@ fn run(
             .map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
     Ok(status_code(&outcome.status))
+}
+
+/// Read a free-text approval answer (GRAFT-0078, review fix): yes/always phrasings
+/// approve, "no, …" declines with the rest as guidance, other text of a few words
+/// is guidance. `None` = ask again.
+fn classify_answer(lower: &str, original: &str) -> Option<Answer> {
+    let first = lower.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
+    const YES: &[&str] =
+        &["y", "yes", "yeah", "yep", "ok", "okay", "sure", "allow", "approve", "approved", "go", "proceed", "fine"];
+    if first == "always" {
+        return Some(Answer::Always);
+    }
+    if YES.contains(&first) {
+        return Some(Answer::Yes);
+    }
+    if matches!(first, "n" | "no" | "nope" | "don" | "dont" | "stop") {
+        let rest = original
+            .trim_start_matches(|c: char| c.is_alphanumeric() || c == '\'')
+            .trim_start_matches([',', ':', ';', '-', '.', ' '])
+            .trim();
+        return Some(if rest.is_empty() { Answer::No } else { Answer::NoWith(rest.to_string()) });
+    }
+    (lower.chars().count() > 3).then(|| Answer::NoWith(original.to_string()))
+}
+
+/// Model-supplied text shown in a prompt: control characters (escape sequences,
+/// carriage returns) are made visible so they can't repaint the screen.
+fn printable(line: &str) -> String {
+    line.chars().map(|c| if c.is_control() && c != '\t' { '?' } else { c }).collect()
 }
 
 /// Preview of an edit or write for the approval prompt: SEARCH/REPLACE or patch
@@ -749,10 +788,19 @@ fn ring_if_long(started: std::time::Instant, enabled: bool) {
 fn usage_by_model(sessions: &[Session]) -> Vec<(String, (usize, u64, u64))> {
     let mut map: std::collections::BTreeMap<String, (usize, u64, u64)> = std::collections::BTreeMap::new();
     for s in sessions {
-        let e = map.entry(s.model.clone()).or_default();
-        e.0 += 1;
-        e.1 += s.usage.input_tokens;
-        e.2 += s.usage.output_tokens;
+        if s.usage_by_model.is_empty() {
+            // Sessions saved before per-model accounting.
+            let e = map.entry(s.model.clone()).or_default();
+            e.0 += 1;
+            e.1 += s.usage.input_tokens;
+            e.2 += s.usage.output_tokens;
+        }
+        for (model, u) in &s.usage_by_model {
+            let e = map.entry(model.clone()).or_default();
+            e.0 += 1;
+            e.1 += u.input_tokens;
+            e.2 += u.output_tokens;
+        }
     }
     let mut rows: Vec<_> = map.into_iter().collect();
     rows.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
@@ -846,6 +894,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         })
         .collect::<Result<_, _>>()?;
     let (effort, thinking, bell) = (s.effort.clone(), s.thinking, s.bell);
+    let (context_window, context_window_default) = (s.context_window, s.context_window_default);
+    let mut current_spec = s.model.clone();
     let mut mode = s.mode.clone();
     let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
@@ -951,11 +1001,28 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 });
                 match built {
                     Ok((r, provider)) => {
+                        // Thinking blocks are bound to the model that wrote them, and tool
+                        // ids differ between APIs: hand over through a summary written by
+                        // the current model, so the new one gets plain text (review fix).
+                        let foreign = session.messages.iter().flat_map(|m| &m.content).any(|b| {
+                            matches!(b, oxgraft_seams::Block::Opaque { .. } | oxgraft_seams::Block::ToolUse { .. })
+                        });
+                        if foreign {
+                            let mut renderer = render::Human::default();
+                            agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e));
+                        }
                         // The agent borrows its provider for the whole chat; a switched-to
                         // provider lives until exit (a few bytes per switch).
                         agent.provider = Box::leak(provider);
                         agent.config.model = r.model.clone();
-                        session.model = wanted.to_string();
+                        agent.config.context_window =
+                            if context_window_default && LOCAL_PROVIDERS.contains(&r.provider.as_str()) {
+                                Some(LOCAL_CONTEXT_WINDOW)
+                            } else {
+                                context_window
+                            };
+                        current_spec = format!("{}/{}", r.provider, r.model);
+                        session.model = current_spec.clone();
                         eprintln!("model: {} via {} (the edit format chosen at startup stays)", r.model, r.provider);
                     }
                     Err(e) => eprintln!("cannot switch to `{wanted}`: {}", e.message),
@@ -985,7 +1052,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 continue;
             }
             "/clear" | "/new" => {
-                session = Session::new(&s.model, &s.toolkit.profile.name, &s.ws);
+                session = Session::new(&current_spec, &s.toolkit.profile.name, &s.ws);
                 eprintln!("started a new session {}", session.id);
                 continue;
             }
@@ -1036,7 +1103,7 @@ impl Approver for TerminalApprover {
         };
         // Show what will change before asking (GRAFT-0029, as Cline and Claude Code do).
         for line in preview_lines(tool, input, 40) {
-            eprintln!("    │ {line}");
+            eprintln!("    │ {}", printable(&line));
         }
         // Risk rails (GRAFT-0042): say why, and don't offer "always".
         let risk = if tool == "bash" { oxgraft_strategies::approval::shell_risk(&action.resource) } else { None };
@@ -1075,9 +1142,10 @@ impl Approver for TerminalApprover {
                 "y" | "yes" => return Answer::Yes,
                 "n" | "no" | "" => return Answer::No,
                 "a" | "always" => return Answer::Always,
-                // Anything longer is guidance for the model (GRAFT-0078).
-                text if text.chars().count() > 3 => return Answer::NoWith(answer.trim().to_string()),
-                _ => continue,
+                text => match classify_answer(text, answer.trim()) {
+                    Some(a) => return a,
+                    None => continue,
+                },
             }
         }
     }
@@ -1311,6 +1379,22 @@ fn doctor(common: &Common, live: bool) -> CliResult {
 #[cfg(test)]
 mod input_tests {
     use super::read_message;
+
+    #[test]
+    fn approval_answers_are_read_generously() {
+        use oxgraft_core::Answer;
+        let a = |t: &str| super::classify_answer(&t.to_ascii_lowercase(), t);
+        for yes in ["yes please", "okay", "Sure!", "allow", "ok go"] {
+            assert_eq!(a(yes), Some(Answer::Yes), "{yes}");
+        }
+        assert_eq!(a("always please"), Some(Answer::Always));
+        assert_eq!(a("no thanks"), Some(Answer::NoWith("thanks".into())));
+        assert_eq!(a("no, use cargo check instead"), Some(Answer::NoWith("use cargo check instead".into())));
+        assert_eq!(a("nope"), Some(Answer::No));
+        assert_eq!(a("use the read tool"), Some(Answer::NoWith("use the read tool".into())));
+        assert_eq!(a("xy"), None);
+        assert_eq!(super::printable("a\x1b[2Jb\rc"), "a?[2Jb?c");
+    }
 
     #[test]
     fn edit_previews_show_old_and_new() {

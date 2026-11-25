@@ -425,7 +425,10 @@ impl<'a> Agent<'a> {
              specific report (file paths, line numbers, findings). Do not ask questions."
         );
         let outcome = self.run_at(&mut sub, &task, &mut |_| {}, 1);
-        session.usage.add(outcome.usage);
+        // Book the subagent's tokens to the model(s) it actually used.
+        for (model, usage) in &sub.usage_by_model {
+            session.add_usage(model, *usage);
+        }
         match outcome.status {
             Status::Done if !outcome.final_text.trim().is_empty() => ToolOutput::ok(outcome.final_text),
             Status::Done => ToolOutput::error("the subagent finished without a report"),
@@ -600,7 +603,7 @@ impl<'a> Agent<'a> {
                 Err(e) => return self.finish(session, emit, Status::Failed(e.to_string()), turn, usage, final_text),
             };
             usage.add(completion.usage);
-            session.usage.add(completion.usage);
+            session.add_usage(self.backend(depth).1, completion.usage);
 
             // Re-query malformed tool calls (GRAFT-0044, after SWE-agent's format-error
             // requery): the bad attempt and its error stay out of the history, so later
@@ -644,7 +647,7 @@ impl<'a> Agent<'a> {
                 ) {
                     Ok(c) => {
                         usage.add(c.usage);
-                        session.usage.add(c.usage);
+                        session.add_usage(self.backend(depth).1, c.usage);
                         completion = c;
                     }
                     Err(_) => {
@@ -841,7 +844,7 @@ impl<'a> Agent<'a> {
             if let Some(window) = self.config.context_window
                 && context_used > window * 8 / 10
             {
-                self.compact(session, task, &system, &mut usage, emit);
+                self.compact(session, task, &system, &mut usage, emit, depth);
             }
         }
         let turns = self.config.max_turns;
@@ -874,7 +877,7 @@ impl<'a> Agent<'a> {
         let task = session.messages.iter().find(|m| m.role == Role::User).map(Message::text).unwrap_or_default();
         let before = session.compactions;
         let mut usage = Usage::default();
-        self.compact(session, &task, &self.system_prompt(), &mut usage, emit);
+        self.compact(session, &task, &self.system_prompt(), &mut usage, emit, 0);
         session.compactions > before
     }
 
@@ -888,7 +891,10 @@ impl<'a> Agent<'a> {
         system: &str,
         usage: &mut Usage,
         emit: &mut dyn FnMut(&Event),
+        depth: u32,
     ) {
+        // Summarise with the model that produced this history (review fix).
+        let (provider, model) = self.backend(depth);
         let mut messages = session.messages.clone();
         messages.push(Message::user(
             "Context is nearly full. Write a handover summary for yourself so you can continue in a fresh context: \
@@ -896,19 +902,20 @@ impl<'a> Agent<'a> {
              problems, and the exact next steps. Do not call tools.",
         ));
         let request = CompletionRequest {
-            model: self.config.model.clone(),
+            model: model.to_string(),
             system: system.to_string(),
             messages,
             tools: Vec::new(),
             max_tokens: self.config.max_tokens,
         };
         let summary =
-            complete_with_retries(self.provider, &request, &self.config.retry, &|d| (self.sleep)(d), &mut |_, _, _| {})
-                .map(|c| {
+            complete_with_retries(provider, &request, &self.config.retry, &|d| (self.sleep)(d), &mut |_, _, _| {}).map(
+                |c| {
                     usage.add(c.usage);
-                    session.usage.add(c.usage);
+                    session.add_usage(model, c.usage);
                     Message::assistant(c.content).text()
-                });
+                },
+            );
         let summary = match summary {
             Ok(s) if !s.trim().is_empty() => s,
             Ok(_) | Err(_) => {

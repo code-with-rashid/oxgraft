@@ -37,3 +37,7 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+See iterations 117-118 in learning/iterations.md: fixed after an independent review of iterations 103-116.

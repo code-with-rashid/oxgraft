@@ -381,7 +381,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
 }
 
 /// The project's own quick check, by marker file: Rust, Go, a package.json
-/// `typecheck` or `lint` script (with the lockfile's package manager), or Python.
+/// `typecheck` or `lint` script (with the lockfile's package manager).
 pub fn detect_verify_command(workspace: &Path) -> Option<String> {
     let has = |f: &str| workspace.join(f).is_file();
     if has("Cargo.toml") {
@@ -406,9 +406,6 @@ pub fn detect_verify_command(workspace: &Path) -> Option<String> {
             .iter()
             .find(|s| pkg.pointer(&format!("/scripts/{s}")).is_some())
             .map(|s| format!("{runner} {s}"));
-    }
-    if has("pyproject.toml") || has("setup.py") || has("requirements.txt") {
-        return Some("python -m compileall -q -x \"(^|/)(\\.|venv|node_modules)\" .".into());
     }
     None
 }

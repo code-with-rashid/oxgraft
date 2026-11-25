@@ -902,6 +902,12 @@ fn subagent_uses_its_own_model() {
     assert_eq!(outcome.status, Status::Done);
     let results = tool_results(&events);
     assert!(results[0].0 && results[0].1.contains("report from the small model"), "{results:?}");
+    // Tokens are booked to the model that used them (review fix).
+    assert!(
+        session.usage_by_model.contains_key("small") && session.usage_by_model.contains_key("big"),
+        "{:?}",
+        session.usage_by_model
+    );
     let sub_session = Session::list(&ws.0);
     assert!(sub_session.iter().all(|s| s.model == "big"), "subagent sessions are hidden from the list");
 }

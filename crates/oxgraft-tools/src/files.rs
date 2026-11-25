@@ -268,7 +268,8 @@ fn whitespace_tolerant_replace(base: &str, old: &str, new: &str) -> Option<Strin
         return None;
     }
     let lines: Vec<&str> = base.split_inclusive('\n').collect();
-    let indent = |l: &str| l.len() - l.trim_start().len();
+    // Only spaces and tabs count, so byte offsets stay on character boundaries.
+    let indent = |l: &str| l.len() - l.trim_start_matches([' ', '\t']).len();
     let mut found: Option<(usize, String)> = None;
     for start in 0..lines.len().saturating_sub(old_lines.len() - 1) {
         let window = &lines[start..start + old_lines.len()];
@@ -527,6 +528,10 @@ mod tests {
         // Different text still fails.
         let out = f.run(&Edit, json!({"path": "a.py", "old_string": "def h(self):", "new_string": "x"}));
         assert!(out.is_error && out.content.contains("not found"));
+        // Non-ASCII whitespace never splits a character (review finding).
+        f.file("c.txt", "\u{a0}x\n");
+        let out = f.run(&Edit, json!({"path": "c.txt", "old_string": " x", "new_string": "y"}));
+        assert!(out.is_error && !out.content.contains("panicked"), "{}", out.content);
     }
 
     #[test]

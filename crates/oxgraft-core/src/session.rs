@@ -25,6 +25,9 @@ pub struct Session {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub usage: Usage,
+    /// The same tokens split by model (subagents and `/model` switches use others).
+    #[serde(default)]
+    pub usage_by_model: std::collections::BTreeMap<String, Usage>,
     #[serde(default)]
     pub changed_files: Vec<UndoRecord>,
     /// How many times the context was compacted, and how many messages were summarised away.
@@ -71,6 +74,7 @@ impl Session {
             title: String::new(),
             messages: Vec::new(),
             usage: Usage::default(),
+            usage_by_model: Default::default(),
             changed_files: Vec::new(),
             compactions: 0,
             archived_messages: 0,
@@ -161,6 +165,12 @@ impl Session {
             .collect();
         sessions.sort_by(|a, b| b.id.cmp(&a.id));
         sessions
+    }
+
+    /// Count tokens used by `model` in this session.
+    pub fn add_usage(&mut self, model: &str, usage: Usage) {
+        self.usage.add(usage);
+        self.usage_by_model.entry(model.to_string()).or_default().add(usage);
     }
 
     /// A readable Markdown transcript (GRAFT-0066): task, replies, tool calls and
