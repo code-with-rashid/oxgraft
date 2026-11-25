@@ -29,6 +29,7 @@ Model strings are `provider/model`. Credentials come from environment variables.
 ## Run
 
 ```sh
+oxgraft doctor --live                     # check setup, then send two tiny requests (reply + tool call)
 oxgraft                                   # interactive chat (prompts before edits and commands)
 oxgraft run "fix the failing test"        # one task, then exit
 oxgraft run --json --yes "…"              # headless: JSONL events on stdout, approve `ask` actions

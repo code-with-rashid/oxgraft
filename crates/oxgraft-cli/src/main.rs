@@ -94,7 +94,12 @@ enum Command {
         session: String,
     },
     /// Check the setup: model and credentials, shell, sandbox, git, skills, MCP, config.
-    Doctor,
+    Doctor {
+        /// Also send two tiny requests to the model: a plain reply (credentials,
+        /// streaming) and a tool call (whether the model can use tools at all).
+        #[arg(long)]
+        live: bool,
+    },
     /// Have the agent study this repository and write (or improve) AGENTS.md.
     Init {
         #[arg(long)]
@@ -251,7 +256,7 @@ fn dispatch(cli: Cli) -> CliResult {
             oxgraft_tools::mcp::serve_fixture();
             Ok(0)
         }
-        Some(Command::Doctor) => doctor(&common),
+        Some(Command::Doctor { live }) => doctor(&common, live),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
         Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None, None),
         Some(Command::Models) => {
@@ -655,9 +660,78 @@ impl Approver for TerminalApprover {
     }
 }
 
+/// `doctor --live`: one plain streamed reply, then one forced tool call. Returns
+/// (ok, check, detail) lines. Costs a few hundred tokens.
+fn live_checks(provider: &dyn oxgraft_seams::Provider, model: &str) -> Vec<(bool, &'static str, String)> {
+    use oxgraft_seams::{Block, CompletionRequest, Message, ToolSpec};
+    let mut out = Vec::new();
+    let plain = CompletionRequest {
+        model: model.to_string(),
+        system: "You are a connectivity check. Answer with exactly one word.".into(),
+        messages: vec![Message::user("Reply with the word: ready")],
+        tools: Vec::new(),
+        max_tokens: 1024,
+    };
+    let start = std::time::Instant::now();
+    let mut deltas = 0usize;
+    match provider.stream(&plain, &mut |_| deltas += 1) {
+        Ok(c) => {
+            let text = Message::assistant(c.content).text();
+            let shown: String = text.trim().chars().take(60).collect();
+            out.push((
+                true,
+                "live reply",
+                format!(
+                    "{:.1}s, {deltas} streamed chunk(s), {} in / {} out tokens: {shown:?}",
+                    start.elapsed().as_secs_f64(),
+                    c.usage.input_tokens,
+                    c.usage.output_tokens
+                ),
+            ));
+        }
+        Err(e) => {
+            out.push((false, "live reply", format!("{} (try OXGRAFT_STREAM=0 if only streaming fails)", e)));
+            return out;
+        }
+    }
+    let tools = CompletionRequest {
+        model: model.to_string(),
+        system: "You are a connectivity check. Use the tool you are given.".into(),
+        messages: vec![Message::user("Call the `echo` tool with text \"ping\". Do not answer in prose.")],
+        tools: vec![ToolSpec {
+            name: "echo".into(),
+            description: "Echo text back.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
+        }],
+        max_tokens: 1024,
+    };
+    match provider.complete(&tools) {
+        Ok(c) => {
+            let call = c.content.iter().find_map(|b| match b {
+                Block::ToolUse { name, input, .. } => Some((name.clone(), input.clone())),
+                _ => None,
+            });
+            match call {
+                Some((name, input)) if name == "echo" && input.is_object() => {
+                    out.push((true, "live tools", format!("tool call works: echo {input}")))
+                }
+                Some((name, input)) => out.push((false, "live tools", format!("malformed tool call: {name} {input}"))),
+                None => out.push((
+                    false,
+                    "live tools",
+                    "the model answered without calling the tool; it may not support tool calling, which Oxgraft needs"
+                        .into(),
+                )),
+            }
+        }
+        Err(e) => out.push((false, "live tools", e.to_string())),
+    }
+    out
+}
+
 /// `oxgraft doctor` (GRAFT-0031, after Claude Code's /doctor): check everything a
 /// session depends on and say what to fix. Exit 0 if a session can start.
-fn doctor(common: &Common) -> CliResult {
+fn doctor(common: &Common, live: bool) -> CliResult {
     let ws = workspace(common)?;
     let mut problems = 0;
     let mut line = |ok: bool, what: &str, detail: String| {
@@ -696,7 +770,20 @@ fn doctor(common: &Common) -> CliResult {
             Some(spec) => match oxgraft_providers::parse_model(spec)
                 .and_then(|m| oxgraft_providers::build(&m, &oxgraft_providers::Options::default()).map(|_| m))
             {
-                Ok(m) => line(true, "model", format!("{spec} (credentials found for `{}`)", m.provider)),
+                Ok(m) => {
+                    line(true, "model", format!("{spec} (credentials found for `{}`)", m.provider));
+                    if live {
+                        let options = oxgraft_providers::Options { effort: cfg.effort.clone() };
+                        match oxgraft_providers::build(&m, &options) {
+                            Ok(provider) => {
+                                for (ok, what, detail) in live_checks(provider.as_ref(), &m.model) {
+                                    line(ok, what, detail);
+                                }
+                            }
+                            Err(e) => line(false, "live", e.message),
+                        }
+                    }
+                }
                 Err(e) => line(false, "model", format!("{spec}: {}", e.message)),
             },
         }
