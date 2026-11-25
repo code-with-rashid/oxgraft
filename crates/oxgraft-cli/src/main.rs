@@ -61,6 +61,10 @@ enum Command {
         /// Continue a saved session (id from `oxgraft sessions`, or `last`).
         #[arg(long)]
         resume: Option<String>,
+        /// Don't accept "done" until this command passes (e.g. "cargo test"); its
+        /// failures go back to the model, up to 3 times.
+        #[arg(long)]
+        until: Option<String>,
         /// Start a new session from a copy of another's history: `ID`, or `ID@N` to
         /// keep its first N messages (N must follow a finished reply).
         #[arg(long, conflicts_with = "resume")]
@@ -198,7 +202,7 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork }) => run(&common, task, json, resume, fork),
+        Some(Command::Run { task, json, resume, fork, until }) => run(&common, task, json, resume, fork, until),
         Some(Command::Sessions) => {
             let ws = workspace(&common)?;
             let sessions = Session::list(&ws);
@@ -285,7 +289,7 @@ fn dispatch(cli: Cli) -> CliResult {
         }
         Some(Command::Doctor) => doctor(&common),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
-        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None),
+        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None, None),
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -418,7 +422,14 @@ fn open_session(s: &Setup, resume: Option<String>, fork: Option<String>) -> Resu
     }
 }
 
-fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>, fork: Option<String>) -> CliResult {
+fn run(
+    common: &Common,
+    task: Vec<String>,
+    json: bool,
+    resume: Option<String>,
+    fork: Option<String>,
+    until: Option<String>,
+) -> CliResult {
     let mut task = task.join(" ");
     if task.trim().is_empty() {
         if std::io::stdin().is_terminal() {
@@ -434,7 +445,8 @@ fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>, f
     if task.trim().is_empty() {
         return Err(usage("the task is empty"));
     }
-    let s = setup(common)?;
+    let mut s = setup(common)?;
+    s.config.finish_check = until;
     let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> = if common.yes || json || !std::io::stdin().is_terminal() {
         Box::new(Fixed(if common.yes { Answer::Yes } else { Answer::No }))

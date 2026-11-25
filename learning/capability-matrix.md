@@ -35,7 +35,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 | openhands | v1.45.0 (sdk v1.64.0) | 0021, 0042 |
 | swe-agent | v1.1.0 | 0004, 0044, 0048 |
 | mini-swe-agent | v2.4.6 | 0007 |
-| qwen-code | v0.28.4 | 0040 |
+| qwen-code | v0.28.4 | 0040, 0054 |
 | kilocode | v7.8.32 | — |
 | continue | v2.0.0-vscode (archived) | — |
 | deepseek-harness | dsh-v0.2.3-alpha.2 | — |

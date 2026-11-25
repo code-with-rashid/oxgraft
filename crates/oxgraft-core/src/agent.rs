@@ -72,6 +72,8 @@ pub struct AgentConfig {
     pub checkpoints: bool,
     /// Shell for hooks and `verify_command`.
     pub shell: crate::hooks::Shell,
+    /// Command that must pass before the run may finish (`oxgraft run --until`).
+    pub finish_check: Option<String>,
 }
 
 impl AgentConfig {
@@ -93,6 +95,7 @@ impl AgentConfig {
             stream: true,
             checkpoints: false,
             shell: crate::hooks::Shell::default(),
+            finish_check: None,
         }
     }
 
@@ -161,6 +164,8 @@ const LOOP_LIMIT: usize = 3;
 const MAX_CALLS_PER_TURN: usize = 32;
 /// Consecutive failing verify rounds before automatic checks pause (Aider uses 3).
 const MAX_VERIFY_ROUNDS: u32 = 3;
+/// Times a failing finish check is sent back before the run stops (GRAFT-0054).
+const MAX_FINISH_ROUNDS: u32 = 3;
 const MISTAKE_NUDGE: u32 = 6;
 const MISTAKE_STOP: u32 = 12;
 
@@ -330,6 +335,7 @@ impl<'a> Agent<'a> {
         let mut continuations = 0;
         let mut changed_files = false;
         let mut verify_failures = 0;
+        let mut finish_failures = 0;
         let mut consecutive_errors = 0u32;
         let mut final_text = String::new();
 
@@ -478,6 +484,28 @@ impl<'a> Agent<'a> {
                         "Your reply was cut off by the output limit. Continue exactly where you stopped.",
                     ));
                     continue;
+                }
+                // Finish check (GRAFT-0054, after Qwen Code's /goal verifier): "done" only
+                // counts once an independent check passes; failures go back to the model.
+                if let Some(check) = &self.config.finish_check
+                    && depth == 0
+                {
+                    let (ok, out) = crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600);
+                    if !ok {
+                        if finish_failures >= MAX_FINISH_ROUNDS {
+                            let reason =
+                                format!("finish check `{check}` still failing after {MAX_FINISH_ROUNDS} rounds");
+                            return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
+                        }
+                        finish_failures += 1;
+                        emit(&Event::Warning { message: format!("finish check `{check}` failed; continuing") });
+                        session.messages.push(Message::user(format!(
+                            "[The task is not done: the check `{check}` failed. Fix the problems below, then finish \
+                             again.]\n{out}"
+                        )));
+                        self.save(session, emit);
+                        continue;
+                    }
                 }
                 return self.finish(session, emit, Status::Done, turn, usage, final_text);
             }

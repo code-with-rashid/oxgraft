@@ -34,6 +34,7 @@ oxgraft run "fix the failing test"        # one task, then exit
 oxgraft run --json --yes "…"              # headless: JSONL events on stdout, approve `ask` actions
 oxgraft run --resume last "now add docs"  # continue the latest session
 oxgraft run --fork last@4 "try it another way"  # new session from the first 4 messages of another
+oxgraft run --until "cargo test" "fix the failing test"  # not done until the check passes
 oxgraft sessions                          # list saved sessions
 oxgraft undo                              # restore files changed by the latest session
 oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn

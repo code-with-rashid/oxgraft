@@ -425,3 +425,18 @@ fn approval_modes_change_what_runs_without_asking() {
 
     assert_eq!(ws.oxgraft(&["run", "--mode", "yolo", "--model", "mock:x.json", "x"]).status.code(), Some(2));
 }
+
+// SPEC-0003 AC11 via the CLI: `run --until` keeps going until the check passes.
+#[test]
+fn run_until_a_check_passes() {
+    let ws = Ws::new("until");
+    let model = ws.script(json!([
+        {"text": "done already?"},
+        {"tool_calls": [{"name": "write", "input": {"path": "ok.txt", "content": "ok\n"}}]},
+        {"text": "now done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--until", "cat ok.txt", "--model", &model, "make ok.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(events(&out).iter().any(|e| matches!(e, Event::Warning { message } if message.contains("finish check"))));
+    assert!(ws.0.join("ok.txt").exists());
+}

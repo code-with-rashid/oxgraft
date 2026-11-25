@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054]
 ---
 
 # SPEC-0003: Agent loop
@@ -51,3 +51,8 @@ trips. Every step is an event on the protocol stream.
 - **AC10** `@path` imports in instruction files resolve only to files inside the
   workspace (after following symlinks); absolute paths, `..` and links out are
   left as plain text, so a repository can't pull private files into the prompt.
+- **AC11** With a finish check (`oxgraft run --until "<command>"`), a reply
+  without tool calls ends the run only if the command passes; otherwise its
+  output goes back to the model and the run continues, up to 3 times, after
+  which the run stops with `finish check … still failing`. The check comes only
+  from the command line, never from workspace config.

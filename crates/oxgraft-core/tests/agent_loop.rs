@@ -631,3 +631,40 @@ fn replies_stream_as_text_deltas_then_full_messages() {
     assert!(!events.iter().any(|e| matches!(e, Event::TextDelta { .. })));
     assert!(events.iter().any(|e| matches!(e, Event::Message { .. })));
 }
+
+// SPEC-0003 AC11 (GRAFT-0054): a run finishes only once the finish check passes.
+#[test]
+fn finish_check_sends_failures_back_until_it_passes() {
+    let ws = Ws::new("finish");
+    let run_with = |check: &str, turns: serde_json::Value| {
+        let script: Script = serde_json::from_value(json!({ "turns": turns })).unwrap();
+        let provider = Mock::new(script);
+        let toolkit = toolkit("allow_all");
+        let approver = Fixed(Answer::Yes);
+        let mut config = AgentConfig::new("mock", ws.0.clone());
+        config.finish_check = Some(check.to_string());
+        let mut agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+        agent.sleep = |_| {};
+        let mut session = Session::new("mock", "test", &ws.0);
+        let mut events = Vec::new();
+        let outcome = agent.run(&mut session, "make done.txt", &mut |e| events.push(e.clone()));
+        (outcome.status, session)
+    };
+    // The default shell is `sh` (Unix) or `cmd` (Windows); both fail on a missing file.
+    let check = if cfg!(windows) { "type done.txt" } else { "cat done.txt" };
+    let (status, session) = run_with(
+        check,
+        json!([
+            {"text": "I am done."},
+            {"tool_calls": [{"name": "write", "input": {"path": "done.txt", "content": "yes\n"}}]},
+            {"text": "Now it is done."}
+        ]),
+    );
+    assert_eq!(status, Status::Done);
+    let history = serde_json::to_string(&session.messages).unwrap();
+    assert!(history.contains("The task is not done"), "{history}");
+
+    std::fs::remove_file(ws.0.join("done.txt")).unwrap();
+    let (status, _) = run_with(check, json!([{"text": "done"}, {"text": "done"}, {"text": "done"}, {"text": "done"}]));
+    assert!(matches!(status, Status::Stopped(ref r) if r.contains("still failing")), "{status:?}");
+}

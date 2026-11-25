@@ -43,7 +43,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 5. ~~Auto-allow inert read-only shell commands~~ (trial: GRAFT-0047, profile `fewer-prompts`)
 6. ~~Re-query on malformed tool calls~~ (done: GRAFT-0044)
 7. ~~Review-on-submit~~ (change summary after each run: GRAFT-0048; a pre-finish checklist is still open)
-8. Goal mode with an independent verifier and a visible budget (qwen-code)
+8. ~~Goal mode~~ (`run --until <check>`: GRAFT-0054; a model-based verifier is still open)
 9. ~~Fork a session~~ (`--fork ID@N`: GRAFT-0049; a browsable session tree is still open)
 10. ~~Batched multi-edits matched against the original file~~ (done: GRAFT-0050)
 11. ~~Repo map under a budget~~ (`map` tool: GRAFT-0053); LSP diagnostics after edits (opencode, claude-code) still open

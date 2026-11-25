@@ -72,3 +72,4 @@ honestly: an iteration is only logged when its tests pass.
 | 64 | 2026-11-25 | — | Security fix from self-review: `@import` in AGENTS.md/CLAUDE.md could read absolute paths or symlinks outside the workspace into the prompt; now confined | fix | — | SPEC-0003 | `imports_stay_inside_the_workspace` |
 | 65 | 2026-11-25 | codex, claude-code | `--mode` read-only / suggest / auto-edit / full-auto; rails and protected paths still ask; workspace can't set it | adopt | GRAFT-0052 | SPEC-0004 | `approval_modes_change_what_runs_without_asking` |
 | 66 | 2026-11-25 | aider | `map` tool: definitions per file ranked by cross-file use, under a size budget | adopt | GRAFT-0053 | SPEC-0002 | `maps_definitions_ranked_by_use` |
+| 67 | 2026-11-25 | qwen-code | `run --until <check>`: done only when the check passes; failures fed back up to 3 rounds | adopt | GRAFT-0054 | SPEC-0003 | `finish_check_sends_failures_back_until_it_passes` |
