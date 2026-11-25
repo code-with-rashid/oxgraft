@@ -89,7 +89,11 @@ enum Command {
         fork: Option<String>,
     },
     /// List saved sessions in this workspace.
-    Sessions,
+    Sessions {
+        /// One JSON object per session (id, created, title, model, profile, counts).
+        #[arg(long)]
+        json: bool,
+    },
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
     /// Delete old sessions in this workspace, keeping the newest ones.
@@ -242,9 +246,28 @@ fn dispatch(cli: Cli) -> CliResult {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
         Some(Command::Run { task, json, resume, fork, until }) => run(&common, task, json, resume, fork, until),
-        Some(Command::Sessions) => {
+        Some(Command::Sessions { json }) => {
             let ws = workspace(&common)?;
             let sessions = Session::list(&ws);
+            if json {
+                for s in &sessions {
+                    let line = serde_json::json!({
+                        "id": s.id,
+                        "created": s.created,
+                        "title": s.title,
+                        "model": s.model,
+                        "profile": s.profile,
+                        "messages": s.messages.len(),
+                        "files_changed": s.changed_files.len(),
+                        "checkpoints": s.checkpoints.len(),
+                        "input_tokens": s.usage.input_tokens,
+                        "output_tokens": s.usage.output_tokens,
+                        "forked_from": s.forked_from,
+                    });
+                    println!("{line}");
+                }
+                return Ok(0);
+            }
             if sessions.is_empty() {
                 println!("no sessions in {}", ws.display());
             }

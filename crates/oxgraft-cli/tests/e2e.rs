@@ -658,3 +658,16 @@ fn absolute_path_tasks_are_not_commands() {
     let out = ws.oxgraft(&["run", "--model", &model, "/tmp/notes.txt"]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
 }
+
+// `sessions --json`: one object per session, for scripts.
+#[test]
+fn sessions_list_as_json() {
+    let ws = Ws::new("sessionsjson");
+    let model = ws.script(json!([{"text": "hi"}]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "say hi"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["sessions", "--json"]);
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or_default().to_string();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["title"], "say hi");
+    assert_eq!(v["messages"], 2);
+}
