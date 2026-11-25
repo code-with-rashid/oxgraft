@@ -3,7 +3,7 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–97._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–101._
 
 **Branches:** `main` has iterations 1–77 (being tried against a real model by the
 maintainer). Iterations 78 onward are on `next`, in draft PR #1, until that
@@ -51,11 +51,17 @@ feedback is in. Items below marked (next) are only on that branch.
   and `instructions`, `export` (Markdown), `prune`, `user_prompt`/`stop` hooks,
   `files_changed` event, todo reminder, failure hints.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 73 graft records; 97 logged iterations; specs SPEC-0001..0006;
+  archived); 73 graft records; 101 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
 
+- **A second independent review (iterations 77–97, on `next`) found 12 problems;
+  all are fixed** (iterations 98–101). The serious ones: URL hosts were parsed
+  differently from the HTTP client (`https://evil.com\@docs.rs/`), which could
+  bypass the metadata guard and per-host "always"; "always" for a harmless bash
+  command also covered redirections and `<(…)`; custom commands and saved output
+  followed planted symlinks; `@.env` ignored the deny rule.
 - **An independent review of iterations 53–72 found 9 problems; all are fixed**
   (iterations 73–76), including two security holes: a checkpoint repo planted
   by a cloned repository could run code, and the risk rails missed commands
