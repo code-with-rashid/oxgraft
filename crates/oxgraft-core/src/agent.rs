@@ -465,6 +465,7 @@ impl<'a> Agent<'a> {
             },
         };
         let mut sub = Session::new(self.backend(1).1, "subagent", &self.config.workspace);
+        sub.ephemeral = session.ephemeral;
         let label = input.get("description").and_then(Value::as_str).unwrap_or("subagent");
         sub.title = format!("[subagent] {label}");
         let role = kind.map(|t| format!("{}\n\nTask:\n", t.instructions.trim())).unwrap_or_default();

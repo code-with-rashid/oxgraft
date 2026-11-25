@@ -693,17 +693,38 @@ fn quiet_runs_print_only_the_answer() {
 #[test]
 fn ephemeral_runs_save_no_session() {
     let ws = Ws::new("ephemeral");
+    std::fs::write(ws.0.join("a.txt"), "secret original\n").unwrap();
     let model = ws.script(json!([
+        {"tool_calls": [{"name": "task", "input": {"prompt": "look around"}}]},
         {"tool_calls": [{"name": "ls", "input": {}}]},
+        {"text": "REPORT: one file"},
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"tool_calls": [{"name": "write", "input": {"path": "a.txt", "content": "changed\n"}}]},
         {"text": "listed"}
     ]));
-    let out = ws.oxgraft(&["run", "--ephemeral", "--model", &model, "x"]);
+    let out = ws.oxgraft(&["run", "--ephemeral", "--yes", "--model", &model, "x"]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stderr).contains("session not saved"));
     let dir = ws.0.join(".oxgraft/sessions");
     let saved = std::fs::read_dir(&dir)
         .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count());
     assert_eq!(saved.unwrap_or(0), 0, "no session file is written");
+    assert_eq!(ws.read("a.txt"), "changed\n");
+    let leftovers: Vec<_> = walk(&dir);
+    assert!(leftovers.is_empty(), "nothing under .oxgraft/sessions: {leftovers:?}");
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else if p.file_name().is_none_or(|n| n != ".gitignore") {
+            out.push(p);
+        }
+    }
+    out
 }
 
 // GRAFT-0077: /mode switches approval mode inside chat.

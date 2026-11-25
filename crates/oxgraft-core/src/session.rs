@@ -313,7 +313,9 @@ impl Session {
 
     /// Record a file's original content before its first change in this session.
     pub fn record_original(&mut self, path: &Path, original: Option<&[u8]>) -> std::io::Result<()> {
-        if self.changed_files.iter().any(|r| r.path == path) {
+        // An ephemeral session leaves nothing on disk, so it keeps no undo backups
+        // (copies of edited files could hold secrets; review fix).
+        if self.ephemeral || self.changed_files.iter().any(|r| r.path == path) {
             return Ok(());
         }
         let backup = match original {
