@@ -60,9 +60,55 @@ impl Human {
                 let status =
                     if *ok { "done".to_string() } else { format!("stopped: {}", reason.as_deref().unwrap_or("?")) };
                 eprintln!("\n[{status} · {turns} turns · {input_tokens} in / {output_tokens} out tokens]");
+                if let Some(hint) = reason.as_deref().and_then(failure_hint) {
+                    eprintln!("hint: {hint}");
+                }
             }
             _ => {}
         }
+    }
+}
+
+/// A likely fix for a provider failure, from its message.
+pub fn failure_hint(reason: &str) -> Option<&'static str> {
+    let r = reason.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| r.contains(n));
+    if has(&[
+        "does not support tools",
+        "tool use is not supported",
+        "tools are not supported",
+        "function calling is not",
+    ]) {
+        Some(
+            "this model can't call tools, which Oxgraft needs; pick a tool-calling model (`oxgraft doctor --live` checks)",
+        )
+    } else if has(&[
+        "http 401",
+        "http 403",
+        "invalid x-api-key",
+        "invalid api key",
+        "incorrect api key",
+        "unauthorized",
+    ]) {
+        Some("the API key was rejected; check the key env var for this provider (`oxgraft models` lists them)")
+    } else if has(&["http 404", "model not found", "not_found_error", "no such model", "does not exist"]) {
+        Some(
+            "the model name wasn't found; check it with the provider (`oxgraft models` shows the format; `ollama list` for Ollama)",
+        )
+    } else if has(&[
+        "connection refused",
+        "network error calling http://localhost",
+        "network error calling http://127.0.0.1",
+    ]) {
+        Some("nothing answered on the local server; is it running (`ollama serve`, LM Studio's server)?")
+    } else if has(&["context length", "context window", "maximum context", "prompt is too long", "too many tokens"]) {
+        Some(
+            "the conversation is larger than the model's window; set `context_window` lower so Oxgraft compacts earlier",
+        )
+    } else if has(&["http 429", "rate limit", "overloaded"]) {
+        Some("the provider is rate-limiting or overloaded; wait, then `oxgraft run --resume last \"continue\"`")
+    } else {
+        None
     }
 }
 
@@ -106,4 +152,28 @@ pub fn strategies(json: bool) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::failure_hint;
+
+    #[test]
+    fn hints_for_common_provider_failures() {
+        let cases = [
+            ("ollama: HTTP 400: registry.ollama.ai/library/gemma does not support tools", "can't call tools"),
+            ("anthropic: HTTP 401: invalid x-api-key", "API key"),
+            ("openai: HTTP 404: The model `gpt-x` does not exist", "model name"),
+            (
+                "ollama: network error calling http://localhost:11434/v1/chat/completions: Connection refused",
+                "local server",
+            ),
+            ("anthropic: HTTP 400: prompt is too long: 210000 tokens", "context_window"),
+            ("anthropic: HTTP 529: Overloaded", "rate-limiting"),
+        ];
+        for (reason, expect) in cases {
+            assert!(failure_hint(reason).is_some_and(|h| h.contains(expect)), "{reason}");
+        }
+        assert!(failure_hint("reached max turns (50)").is_none());
+    }
 }
