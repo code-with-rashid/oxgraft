@@ -939,3 +939,14 @@ fn worktree_runs_leave_the_checkout_alone() {
     let status = String::from_utf8_lossy(&status.stdout);
     assert!(!status.contains(".oxgraft"), "the worktree is ignored in the user's repo: {status}");
 }
+
+// Review fix: an answer that never matches the schema is a failure (exit 3), not success.
+#[test]
+fn output_schema_failure_is_not_success() {
+    let ws = Ws::new("schemafail");
+    std::fs::write(ws.0.join("schema.json"), r#"{"type": "object", "required": ["summary"]}"#).unwrap();
+    let model = ws.script(json!([{"text": "prose"}, {"text": "prose"}, {"text": "prose"}, {"text": "still prose"}]));
+    let out = ws.oxgraft(&["run", "-q", "--output-schema", "schema.json", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("doesn't match the output schema"));
+}

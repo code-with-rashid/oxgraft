@@ -37,3 +37,7 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+An answer that still did not match after the retries ended the run as success. Now it stops the run (exit 3) with the problems; schema retries have their own budget instead of sharing --until's; subagents no longer get the JSON-only instruction; fences tagged JSON in any case are accepted.

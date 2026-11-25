@@ -450,8 +450,14 @@ impl<'a> Agent<'a> {
     }
 
     pub fn system_prompt(&self) -> String {
+        self.system_prompt_at(0)
+    }
+
+    /// The system prompt for a run at `depth`: the output-schema instruction is for
+    /// the final answer only, so subagents don't get it.
+    fn system_prompt_at(&self, depth: u32) -> String {
         let mut p = crate::prompt::system_prompt(&self.config.workspace, &crate::prompt::today());
-        if let Some(schema) = &self.config.output_schema {
+        if let Some(schema) = self.config.output_schema.as_ref().filter(|_| depth == 0) {
             p.push_str(&format!(
                 "\n\nOUTPUT FORMAT: when you finish, reply with only a JSON object (no prose, no code fence) matching \
                  this JSON schema:\n{}",
@@ -523,7 +529,7 @@ impl<'a> Agent<'a> {
         session.messages.push(Message::user(task_text));
         self.save(session, emit);
 
-        let system = self.system_prompt();
+        let system = self.system_prompt_at(depth);
         let specs = self.specs(depth);
         let mut state = RunState {
             always: HashSet::new(),
@@ -555,6 +561,7 @@ impl<'a> Agent<'a> {
         let mut changed_files = false;
         let mut verify_failures = 0;
         let mut finish_failures = 0;
+        let mut schema_failures = 0;
         let mut stop_rounds = 0;
         let mut consecutive_errors = 0u32;
         let mut final_text = String::new();
@@ -752,8 +759,13 @@ impl<'a> Agent<'a> {
                     && depth == 0
                 {
                     let problems = crate::schema::check_answer(&final_text, schema);
-                    if !problems.is_empty() && !last_turn && finish_failures < MAX_FINISH_ROUNDS {
-                        finish_failures += 1;
+                    if !problems.is_empty() && (last_turn || schema_failures >= MAX_FINISH_ROUNDS) {
+                        // Never report success with output a script can't use (review fix).
+                        let reason = format!("final answer doesn't match the output schema: {}", problems.join("; "));
+                        return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
+                    }
+                    if !problems.is_empty() {
+                        schema_failures += 1;
                         emit(&Event::Warning {
                             message: "final answer doesn't match the output schema; asking again".into(),
                         });

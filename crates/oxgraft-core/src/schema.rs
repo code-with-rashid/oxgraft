@@ -7,12 +7,7 @@ use serde_json::Value;
 /// Parse the answer (a bare JSON object, optionally inside a ```json fence) and
 /// list what doesn't match `schema`. Empty = valid.
 pub fn check_answer(answer: &str, schema: &Value) -> Vec<String> {
-    let text = answer.trim();
-    let text = text
-        .strip_prefix("```json")
-        .or_else(|| text.strip_prefix("```"))
-        .and_then(|t| t.strip_suffix("```"))
-        .map_or(text, str::trim);
+    let text = unfence(answer);
     match serde_json::from_str::<Value>(text) {
         Ok(v) => {
             let mut problems = Vec::new();
@@ -25,13 +20,16 @@ pub fn check_answer(answer: &str, schema: &Value) -> Vec<String> {
 
 /// The answer as compact JSON, if it parses (fences removed).
 pub fn normalise(answer: &str) -> Option<String> {
-    let text = answer.trim();
-    let text = text
-        .strip_prefix("```json")
-        .or_else(|| text.strip_prefix("```"))
-        .and_then(|t| t.strip_suffix("```"))
-        .map_or(text, str::trim);
+    let text = unfence(answer);
     serde_json::from_str::<Value>(text).ok().map(|v| v.to_string())
+}
+
+/// Strip a ``` or ```json fence (any case) around the answer.
+fn unfence(answer: &str) -> &str {
+    let text = answer.trim();
+    let Some(inner) = text.strip_prefix("```").and_then(|t| t.strip_suffix("```")) else { return text };
+    let inner = if inner.get(..4).is_some_and(|tag| tag.eq_ignore_ascii_case("json")) { &inner[4..] } else { inner };
+    inner.trim()
 }
 
 fn check(v: &Value, schema: &Value, at: &str, problems: &mut Vec<String>) {
@@ -100,5 +98,6 @@ mod tests {
         assert!(p.iter().any(|x| x.contains("$.risk must be one of")), "{p:?}");
         assert!(check_answer("Here you go: {}", &schema)[0].contains("not valid JSON"));
         assert_eq!(normalise("```json\n{\"a\": 1}\n```").as_deref(), Some(r#"{"a":1}"#));
+        assert_eq!(normalise("```JSON\n{\"a\": 1}\n```").as_deref(), Some(r#"{"a":1}"#));
     }
 }
