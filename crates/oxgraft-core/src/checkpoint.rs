@@ -20,8 +20,16 @@ pub struct Checkpoints {
 }
 
 impl Checkpoints {
-    /// Open (creating if needed) the checkpoint repository for `workspace`.
-    pub fn open(workspace: &Path) -> Result<Self, String> {
+    /// Whether checkpoints can work in `workspace`, without creating anything.
+    pub fn check(workspace: &Path) -> Result<(), String> {
+        Self::refuse_dangerous(workspace)?;
+        match Command::new("git").arg("--version").output() {
+            Ok(o) if o.status.success() => Ok(()),
+            _ => Err("git is not installed".into()),
+        }
+    }
+
+    fn refuse_dangerous(workspace: &Path) -> Result<(), String> {
         if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             && same(workspace, Path::new(&home))
         {
@@ -30,6 +38,12 @@ impl Checkpoints {
         if workspace.parent().is_none() {
             return Err("checkpoints are off when the workspace is a filesystem root".into());
         }
+        Ok(())
+    }
+
+    /// Open (creating if needed) the checkpoint repository for `workspace`.
+    pub fn open(workspace: &Path) -> Result<Self, String> {
+        Self::refuse_dangerous(workspace)?;
         let cp =
             Self { git_dir: workspace.join(".oxgraft").join("checkpoints.git"), workspace: workspace.to_path_buf() };
         if !cp.git_dir.join("HEAD").is_file() {

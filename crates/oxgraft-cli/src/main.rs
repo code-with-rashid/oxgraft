@@ -718,6 +718,31 @@ fn doctor(common: &Common) -> CliResult {
     );
     let skills = oxgraft_tools::discover_skills(&ws);
     line(true, "skills", format!("{} found", skills.len()));
+    if let Some(cfg) = &cfg {
+        line(
+            true,
+            "trust",
+            if cfg.trusted {
+                "trusted: this repo's hooks, MCP servers, rules, model and profile apply".into()
+            } else {
+                "not trusted: this repo's hooks, MCP servers, rules, model and profile are ignored".into()
+            },
+        );
+        match mode_rules(&cfg.approval_mode) {
+            Ok(_) => line(true, "approvals", format!("mode `{}` (risky commands always ask)", cfg.approval_mode)),
+            Err(e) => line(false, "approvals", e),
+        }
+        let checkpoints = if !cfg.checkpoints {
+            "off (`checkpoints = false`)".to_string()
+        } else {
+            match oxgraft_core::checkpoint::Checkpoints::check(&ws) {
+                Ok(()) => "on: snapshots in .oxgraft/checkpoints.git after changing turns".into(),
+                Err(e) => format!("unavailable: {e} (`oxgraft undo` still works)"),
+            }
+        };
+        line(true, "checkpoints", checkpoints);
+        line(true, "streaming", if cfg.stream { "on".into() } else { "off".into() });
+    }
     println!("\n{}", if problems == 0 { "ready".to_string() } else { format!("{problems} problem(s) found") });
     Ok(if problems == 0 { 0 } else { EXIT_USAGE })
 }

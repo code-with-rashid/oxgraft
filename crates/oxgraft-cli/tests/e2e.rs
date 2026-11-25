@@ -239,6 +239,12 @@ fn doctor_reports_problems_and_readiness() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("ready"));
+    for expect in ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming"] {
+        assert!(text.contains(expect), "missing {expect}:\n{text}");
+    }
+    assert!(!ws.0.join(".oxgraft/checkpoints.git").exists(), "doctor creates nothing");
+    let out = ws.oxgraft(&["doctor", "--model", &model, "--mode", "nope"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("FAIL approvals"));
 }
 
 #[test]
