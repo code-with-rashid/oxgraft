@@ -273,11 +273,12 @@ fn apply_batch(base: &str, edits: &Value) -> Result<String, String> {
         if old.is_empty() {
             return Err(format!("edit {n}: `old_string` is empty"));
         }
-        let mut found = base.match_indices(old.as_str());
-        let Some((start, _)) = found.next() else {
+        let Some(start) = base.find(old.as_str()) else {
             return Err(format!("edit {n}: `old_string` not found: {:?}", truncate(&old, 200)));
         };
-        if found.next().is_some() {
+        // Look again from the next character, so overlapping repeats (`aa` in `aaa`) count.
+        let next = start + base[start..].chars().next().map_or(1, char::len_utf8);
+        if base[next..].contains(old.as_str()) {
             return Err(format!("edit {n}: `old_string` matches more than once; add context to make it unique"));
         }
         spans.push((start, start + old.len(), new.replace("\r\n", "\n"), n));
@@ -451,6 +452,10 @@ mod tests {
             assert!(out.is_error && out.content.contains(expect), "{expect}: {}", out.content);
             assert_eq!(f.read("a.rs"), before, "a failed batch changes nothing");
         }
+        // Overlapping repeats count as more than one match (`aa` occurs twice in `aaa`).
+        f.file("b.txt", "aaa\n");
+        let out = f.run(&Edit, json!({"path": "b.txt", "edits": [{"old_string": "aa", "new_string": "x"}]}));
+        assert!(out.is_error && out.content.contains("matches more than once"), "{}", out.content);
     }
 
     #[test]

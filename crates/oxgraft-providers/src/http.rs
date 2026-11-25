@@ -5,6 +5,9 @@ use std::time::Duration;
 use oxgraft_seams::{ErrorKind, ProviderError};
 use serde_json::Value;
 
+/// A stream with no bytes for this long is treated as dropped (transient).
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
+
 pub(crate) fn post_json(
     provider: &str,
     url: &str,
@@ -12,7 +15,7 @@ pub(crate) fn post_json(
     body: &Value,
     timeout: Duration,
 ) -> Result<Value, ProviderError> {
-    send(provider, url, headers, body, timeout)?
+    send(provider, url, headers, body, timeout, false)?
         .into_json::<Value>()
         .map_err(|e| ProviderError::new(provider, ErrorKind::Protocol, format!("response was not valid JSON: {e}")))
 }
@@ -27,7 +30,7 @@ pub(crate) fn post_sse(
     timeout: Duration,
     on_event: &mut dyn FnMut(&str, &str) -> Result<(), ProviderError>,
 ) -> Result<(), ProviderError> {
-    let response = send(provider, url, headers, body, timeout)?;
+    let response = send(provider, url, headers, body, timeout, true)?;
     read_sse(provider, std::io::BufReader::new(response.into_reader()), on_event)
 }
 
@@ -70,8 +73,16 @@ fn send(
     headers: &[(&str, String)],
     body: &Value,
     timeout: Duration,
+    streaming: bool,
 ) -> Result<ureq::Response, ProviderError> {
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(30)).timeout(timeout).build();
+    let builder = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(30));
+    // A stream may legitimately run longer than `timeout`; what matters is that bytes
+    // keep arriving, so streams get an idle (per-read) timeout instead of a total one.
+    let agent = if streaming {
+        builder.timeout_read(STREAM_IDLE_TIMEOUT).timeout_write(Duration::from_secs(60)).build()
+    } else {
+        builder.timeout(timeout).build()
+    };
     let mut request = agent.post(url);
     for (name, value) in headers {
         request = request.set(name, value);
