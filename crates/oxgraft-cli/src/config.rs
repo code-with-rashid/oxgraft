@@ -26,6 +26,8 @@ pub struct FileConfig {
     pub stream: Option<bool>,
     /// Adaptive thinking for Anthropic models that support it (default true).
     pub thinking: Option<bool>,
+    /// Ring the terminal bell when a task that took 30 s or more finishes (default true).
+    pub bell: Option<bool>,
     /// How much runs without asking: read-only, suggest (default), auto-edit, full-auto.
     pub approval_mode: Option<String>,
     /// Extra standing instructions appended to the system prompt.
@@ -61,6 +63,7 @@ pub struct Config {
     pub context_window_default: bool,
     pub stream: bool,
     pub thinking: bool,
+    pub bell: bool,
     pub approval_mode: String,
     /// Instructions from every config layer, in order (user, workspace, flags).
     pub instructions: Vec<String>,
@@ -125,6 +128,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         context_window_default: true,
         stream: true,
         thinking: true,
+        bell: true,
         approval_mode: "suggest".into(),
         instructions: Vec::new(),
         subagent_model: None,
@@ -336,6 +340,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.checkpoints {
             cfg.checkpoints = v;
+            used = true;
+        }
+        if let Some(v) = layer.bell {
+            cfg.bell = v;
             used = true;
         }
         if let Some(v) = layer.thinking {

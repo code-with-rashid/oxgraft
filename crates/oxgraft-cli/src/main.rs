@@ -397,6 +397,8 @@ struct Setup {
     model: String,
     config: AgentConfig,
     tools: Vec<Box<dyn oxgraft_seams::Tool>>,
+    /// Ring the terminal bell after long tasks.
+    bell: bool,
     /// Provider options (effort, thinking), for switching models in chat.
     effort: Option<String>,
     thinking: bool,
@@ -500,6 +502,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         ws,
         effort: cfg.effort.clone(),
         thinking: cfg.thinking,
+        bell: cfg.bell,
         subagent,
         toolkit,
         profile_text,
@@ -601,6 +604,7 @@ fn run(
     let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
     let mut renderer = render::Human::default();
+    let started = std::time::Instant::now();
     let before = session.checkpoints.len();
     let outcome = agent.run(&mut session, task.trim(), &mut |e: &Event| {
         if json {
@@ -623,6 +627,7 @@ fn run(
         }
     } else if !json {
         change_summary(&s.ws, &session, before);
+        ring_if_long(started, s.bell);
         eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
     }
     if let Some(path) = &output.last_message {
@@ -703,6 +708,15 @@ fn read_message(input: &mut dyn BufRead) -> std::io::Result<Option<String>> {
 fn run_user_command(ws: &Path, command: &str) -> (bool, String) {
     let (program, args) = oxgraft_tools::shell_program();
     oxgraft_core::hooks::run_check(&oxgraft_core::hooks::Shell { program, args }, command, ws, 300)
+}
+
+/// Ring the terminal bell when a task took long enough that the user may have
+/// looked away (GRAFT-0085). Only on a terminal; `bell = false` turns it off.
+fn ring_if_long(started: std::time::Instant, enabled: bool) {
+    if enabled && started.elapsed() >= std::time::Duration::from_secs(30) && std::io::stderr().is_terminal() {
+        eprint!("\x07");
+        let _ = std::io::stderr().flush();
+    }
 }
 
 /// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.
@@ -791,7 +805,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             Toolkit::assemble(profile, available_with(rules)).map_err(usage)
         })
         .collect::<Result<_, _>>()?;
-    let (effort, thinking) = (s.effort.clone(), s.thinking);
+    let (effort, thinking, bell) = (s.effort.clone(), s.thinking, s.bell);
     let mut mode = s.mode.clone();
     let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
@@ -955,12 +969,14 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         }
         agent.config.cancel.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut renderer = render::Human::default();
+        let started = std::time::Instant::now();
         let before = session.checkpoints.len();
         // Custom commands (GRAFT-0057): `/name args` expands to the command's prompt.
         let task = commands::expand(&s.ws, line).unwrap_or_else(|| line.to_string());
         let task = format!("{}{task}", std::mem::take(&mut shell_context));
         let outcome = agent.run(&mut session, &task, &mut |e: &Event| renderer.event(e));
         change_summary(&s.ws, &session, before);
+        ring_if_long(started, bell);
         last = status_code(&outcome.status);
     }
     eprintln!("session {} saved", session.id);
