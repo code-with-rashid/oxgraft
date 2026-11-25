@@ -195,6 +195,9 @@ struct RunState {
     instructions: HashSet<PathBuf>,
     /// Checkpoint repo, when enabled and working.
     checkpoints: Option<crate::checkpoint::Checkpoints>,
+    /// The model's latest `todo` list, for the unfinished-plan reminder (GRAFT-0059).
+    todo: Vec<(String, String)>,
+    todo_reminded: bool,
 }
 
 /// Tools that can't change the workspace, so a turn using only these needs no checkpoint.
@@ -326,6 +329,8 @@ impl<'a> Agent<'a> {
             seen: HashMap::new(),
             instructions: HashSet::new(),
             checkpoints: None,
+            todo: Vec::new(),
+            todo_reminded: false,
         };
         // Attached files count as read, so the model can edit them straight away.
         for path in attached {
@@ -495,6 +500,24 @@ impl<'a> Agent<'a> {
                     ));
                     continue;
                 }
+                // Unfinished plan (GRAFT-0059, after OpenCode's and Claude Code's todo
+                // reminders): once per run, point out items not marked done.
+                let open: Vec<&str> =
+                    state.todo.iter().filter(|(_, st)| st != "done").map(|(t, _)| t.as_str()).collect();
+                if !open.is_empty() && !state.todo_reminded {
+                    state.todo_reminded = true;
+                    emit(&Event::Warning {
+                        message: format!("{} todo item(s) not done; reminding the model", open.len()),
+                    });
+                    session.messages.push(Message::user(format!(
+                        "[Your todo list still has {} item(s) not marked done: {}. Finish them, or update the list \
+                         (mark them done, or remove ones that no longer apply) and say why, then finish.]",
+                        open.len(),
+                        open.join("; ")
+                    )));
+                    self.save(session, emit);
+                    continue;
+                }
                 // Finish check (GRAFT-0054, after Qwen Code's /goal verifier): "done" only
                 // counts once an independent check passes; failures go back to the model.
                 if let Some(check) = &self.config.finish_check
@@ -525,6 +548,17 @@ impl<'a> Agent<'a> {
             let mut results = Vec::with_capacity(calls.len());
             for (index, (id, name, input)) in calls.into_iter().enumerate() {
                 emit(&Event::ToolCall { id: id.clone(), tool: name.clone(), input: input.clone() });
+                if name == "todo"
+                    && let Some(items) = input["items"].as_array()
+                {
+                    state.todo = items
+                        .iter()
+                        .map(|i| {
+                            let text = i["text"].as_str().unwrap_or("").to_string();
+                            (text, i["status"].as_str().unwrap_or("pending").to_string())
+                        })
+                        .collect();
+                }
                 let output = if index >= MAX_CALLS_PER_TURN {
                     ToolOutput::error(format!(
                         "Not executed: at most {MAX_CALLS_PER_TURN} tool calls run per turn. Repeat the remaining calls in your next turn."

@@ -692,3 +692,30 @@ fn mentioned_files_are_attached_and_editable() {
     assert!(first.contains("<file path=\\\"greet.txt\\\">") && first.contains("hello world"), "{first}");
     assert_eq!(std::fs::read_to_string(ws.0.join("greet.txt")).unwrap(), "hello mention\n");
 }
+
+// SPEC-0003 AC13 (GRAFT-0059): finishing with open todo items gets one reminder.
+#[test]
+fn unfinished_todo_items_get_one_reminder() {
+    let ws = Ws::new("todo");
+    let (status, events, session) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "todo", "input": {"items": [
+                {"text": "write code", "status": "done"},
+                {"text": "write tests", "status": "pending"}
+            ]}}]},
+            {"text": "all done"},
+            {"text": "tests not needed after all"}
+        ]}),
+        6,
+    );
+    assert_eq!(status, Status::Done);
+    assert_eq!(
+        events.iter().filter(|e| matches!(e, Event::Warning { message } if message.contains("todo item"))).count(),
+        1
+    );
+    let history = serde_json::to_string(&session.messages).unwrap();
+    assert!(history.contains("write tests") && history.contains("not marked done"), "{history}");
+}

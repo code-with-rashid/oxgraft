@@ -86,3 +86,4 @@ honestly: an iteration is only logged when its tests pass.
 | 78 | 2026-11-25 | claude-code, gemini-cli | `@path` mentions in a task attach workspace files (and count as read) | adopt | GRAFT-0056 | SPEC-0003 | `mentioned_files_are_attached_and_editable` |
 | 79 | 2026-11-25 | claude-code, gemini-cli | Custom commands: `.agents/commands/<name>.md` (or `.claude/commands`) as `/name` in chat and `run`, with `$ARGUMENTS` | adopt | GRAFT-0057 | SPEC-0004 | `custom_commands_expand_in_run` |
 | 80 | 2026-11-25 | gemini-cli, aider | Chat `!command`: run a command yourself; output goes to the model with the next message | adopt | GRAFT-0058 | SPEC-0004 | `chat_bang_runs_a_command_and_passes_its_output_on` |
+| 81 | 2026-11-25 | opencode, claude-code | One reminder per run when the model finishes with todo items not done | adopt | GRAFT-0059 | SPEC-0003 | `unfinished_todo_items_get_one_reminder` |

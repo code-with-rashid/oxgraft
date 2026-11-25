@@ -59,3 +59,6 @@ trips. Every step is an event on the protocol stream.
 - **AC12** `@path` words in a task attach that file's content (text files inside
   the workspace only; at most 10 files, 200 KB each, 20k characters shown) after
   the task text; attached files count as read for the read-before-edit guard.
+- **AC13** If the model replies without tool calls while its latest `todo` list
+  has items not marked `done`, it gets one reminder per run naming them; the
+  next finish is accepted.
