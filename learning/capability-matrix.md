@@ -10,7 +10,7 @@ updates a harness profile or adds or promotes a strategy.
 |---|---|---|---|
 | edit_format | **search_replace** (GRAFT-0001) | whole_file, search_replace_tolerant (GRAFT-0015), apply_patch (GRAFT-0024) | fuzzy diff (cline) |
 | context | **pinned_then_in_order** + compaction (GRAFT-0023) | — | repo map (aider), retrieval |
-| approval | **ordered_rules** (GRAFT-0002) | allow_all | approval modes per session (codex) |
+| approval | **ordered_rules** (GRAFT-0002) + risk rails (0042) | inert_reads (0047), allow_all | approval modes per session (codex) |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
 | provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
 | tools | read, write, edit, ls, glob, grep, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
@@ -39,5 +39,5 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 | kilocode | v7.8.32 | — |
 | continue | v2.0.0-vscode (archived) | — |
 | deepseek-harness | dsh-v0.2.3-alpha.2 | — |
-| crush | v0.102.0 (FSL, clean-room) | — |
+| crush | v0.102.0 (FSL, clean-room) | 0047 |
 | roo-code | not reviewed (archived) | — |

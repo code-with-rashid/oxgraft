@@ -40,7 +40,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 2. Sandbox network egress via a proxy with an allowlist, empty by default (claude-code, codex)
 3. ~~Self-testing approval rules~~ (done: GRAFT-0043)
 4. ~~Deterministic risk rails for shell~~ (done: GRAFT-0042)
-5. Auto-allow read-only shell commands only when the whole command parses as inert (crush, clean-room)
+5. ~~Auto-allow inert read-only shell commands~~ (trial: GRAFT-0047, profile `fewer-prompts`)
 6. ~~Re-query on malformed tool calls~~ (done: GRAFT-0044)
 7. Review-on-submit: show the session diff and a checklist before finishing (swe-agent)
 8. Goal mode with an independent verifier and a visible budget (qwen-code)
