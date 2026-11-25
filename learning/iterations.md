@@ -85,3 +85,4 @@ honestly: an iteration is only logged when its tests pass.
 | 77 | 2026-11-25 | claude-code | `doctor --live`: real round trip (streamed reply, latency, tokens) and a forced tool call to check the model can use tools | adopt | GRAFT-0031 | SPEC-0004 | `doctor_live_checks_reply_and_tool_calling` |
 | 78 | 2026-11-25 | claude-code, gemini-cli | `@path` mentions in a task attach workspace files (and count as read) | adopt | GRAFT-0056 | SPEC-0003 | `mentioned_files_are_attached_and_editable` |
 | 79 | 2026-11-25 | claude-code, gemini-cli | Custom commands: `.agents/commands/<name>.md` (or `.claude/commands`) as `/name` in chat and `run`, with `$ARGUMENTS` | adopt | GRAFT-0057 | SPEC-0004 | `custom_commands_expand_in_run` |
+| 80 | 2026-11-25 | gemini-cli, aider | Chat `!command`: run a command yourself; output goes to the model with the next message | adopt | GRAFT-0058 | SPEC-0004 | `chat_bang_runs_a_command_and_passes_its_output_on` |

@@ -456,6 +456,13 @@ fn run(
     Ok(status_code(&outcome.status))
 }
 
+/// Run a command the user typed with `!` in chat (GRAFT-0058): the user's own
+/// action, so no approval; same shell as the bash tool; 5-minute limit.
+fn run_user_command(ws: &Path, command: &str) -> (bool, String) {
+    let (program, args) = oxgraft_tools::shell_program();
+    oxgraft_core::hooks::run_check(&oxgraft_core::hooks::Shell { program, args }, command, ws, 300)
+}
+
 /// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.
 fn checkpoint_lines(ws: &Path, session: &Session) -> Result<Vec<String>, String> {
     if session.checkpoints.is_empty() {
@@ -541,6 +548,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
     );
     let stdin = std::io::stdin();
     let mut last = 0;
+    // Output of `!command` lines, passed to the model with the next message.
+    let mut shell_context = String::new();
     loop {
         eprint!("\n> ");
         let _ = std::io::stderr().flush();
@@ -551,6 +560,26 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         let line = line.trim();
         match line {
             "" => continue,
+            bang if bang.starts_with('!') => {
+                let command = bang[1..].trim();
+                if command.is_empty() {
+                    eprintln!(
+                        "usage: !<command> (runs it in the workspace; the output goes to the model with your next message)"
+                    );
+                    continue;
+                }
+                let (ok, output) = run_user_command(&s.ws, command);
+                eprintln!("{output}");
+                if !ok {
+                    eprintln!("(command failed)");
+                }
+                let tail: String = {
+                    let chars: Vec<char> = output.chars().collect();
+                    chars[chars.len().saturating_sub(8_000)..].iter().collect()
+                };
+                shell_context.push_str(&format!("[I ran `{command}` myself; its output:]\n{tail}\n\n"));
+                continue;
+            }
             "/exit" | "/quit" => break,
             "/undo" => {
                 for l in session.undo() {
@@ -605,6 +634,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
                      /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
+                     !cmd       run a shell command yourself; output goes with your next message\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
                 );
                 for c in commands::discover(&s.ws) {
@@ -623,6 +653,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         let before = session.checkpoints.len();
         // Custom commands (GRAFT-0057): `/name args` expands to the command's prompt.
         let task = commands::expand(&s.ws, line).unwrap_or_else(|| line.to_string());
+        let task = format!("{}{task}", std::mem::take(&mut shell_context));
         let outcome = agent.run(&mut session, &task, &mut |e: &Event| renderer.event(e));
         change_summary(&s.ws, &session, before);
         last = status_code(&outcome.status);

@@ -540,3 +540,31 @@ fn custom_commands_expand_in_run() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("available: /explain"));
 }
+
+// Chat `!command` (GRAFT-0058): runs without the model; output goes with the next message.
+#[test]
+fn chat_bang_runs_a_command_and_passes_its_output_on() {
+    use std::io::Write as _;
+    let ws = Ws::new("bang");
+    let model = ws.script(json!([{"text": "noted"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"!echo bang-output\nwhat did it print?\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("bang-output"), "{err}");
+    let sessions = std::fs::read_dir(ws.0.join(".oxgraft/sessions")).unwrap();
+    let file = sessions.flatten().find(|e| e.path().extension().is_some_and(|x| x == "json")).unwrap();
+    let saved = std::fs::read_to_string(file.path()).unwrap();
+    assert!(saved.contains("I ran `echo bang-output` myself") && saved.contains("what did it print?"), "{saved}");
+}
