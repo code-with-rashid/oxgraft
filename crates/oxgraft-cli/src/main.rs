@@ -103,6 +103,8 @@ enum Command {
     },
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// What a session changed since it started, as a patch (default: the latest).
+    Diff { id: Option<String> },
     /// Token use per model across this workspace's sessions.
     Stats {
         #[arg(long)]
@@ -310,6 +312,12 @@ fn dispatch(cli: Cli) -> CliResult {
             for line in session.undo() {
                 println!("{line}");
             }
+            Ok(0)
+        }
+        Some(Command::Diff { id }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
+            print!("{}", session_diff(&ws, &session).map_err(|e| (EXIT_ERROR, e))?);
             Ok(0)
         }
         Some(Command::Stats { json }) => {
@@ -784,6 +792,18 @@ fn ring_if_long(started: std::time::Instant, enabled: bool) {
     }
 }
 
+/// The patch from the session's first checkpoint to the workspace as it is now
+/// (GRAFT-0088, after Aider's /diff), including changes made by shell commands.
+fn session_diff(ws: &Path, session: &Session) -> Result<String, String> {
+    let Some(first) = session.checkpoints.first() else {
+        return Ok(format!("session {} has no checkpoints, so there is nothing to diff\n", session.id));
+    };
+    let cp = oxgraft_core::checkpoint::Checkpoints::open(ws)?;
+    let now = cp.snapshot("diff")?;
+    let patch = cp.diff_patch(&first.commit, &now)?;
+    Ok(if patch.trim().is_empty() { "no changes since the session started\n".into() } else { format!("{patch}\n") })
+}
+
 /// Sessions, input and output tokens per model (GRAFT-0087), most input first.
 fn usage_by_model(sessions: &[Session]) -> Vec<(String, (usize, u64, u64))> {
     let mut map: std::collections::BTreeMap<String, (usize, u64, u64)> = std::collections::BTreeMap::new();
@@ -1042,6 +1062,21 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            "/diff" => {
+                match session_diff(&s.ws, &session) {
+                    Ok(patch) => {
+                        let lines: Vec<&str> = patch.lines().collect();
+                        for l in lines.iter().take(400) {
+                            eprintln!("{}", printable(l));
+                        }
+                        if lines.len() > 400 {
+                            eprintln!("… {} more lines (oxgraft diff {} for all)", lines.len() - 400, session.id);
+                        }
+                    }
+                    Err(e) => eprintln!("diff: {e}"),
+                }
+                continue;
+            }
             "/compact" => {
                 let mut renderer = render::Human::default();
                 if agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e)) {
@@ -1059,7 +1094,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\

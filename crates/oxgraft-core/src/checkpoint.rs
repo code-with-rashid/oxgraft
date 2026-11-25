@@ -206,6 +206,11 @@ impl Checkpoints {
         Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
     }
 
+    /// The patch between two checkpoints (GRAFT-0088).
+    pub fn diff_patch(&self, from: &str, to: &str) -> Result<String, String> {
+        self.git(&["diff", "--no-ext-diff", "--no-textconv", "--no-color", from, to])
+    }
+
     /// `git diff --stat` between two checkpoints.
     pub fn diff_stat(&self, from: &str, to: &str) -> Result<String, String> {
         self.git(&["diff", "--no-ext-diff", "--no-textconv", "--stat", from, to])

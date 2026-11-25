@@ -776,3 +776,24 @@ fn doctor_checks_the_subagent_model() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("FAIL subagent"), "{text}");
 }
+
+// GRAFT-0088: `oxgraft diff` shows what a session changed, shell changes included.
+#[test]
+fn diff_shows_session_changes() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("diff");
+    std::fs::write(ws.0.join("a.txt"), "one\n").unwrap();
+    let edit = "<<<<<<< SEARCH\none\n=======\ntwo\n>>>>>>> REPLACE";
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"tool_calls": [{"name": "edit", "input": {"path": "a.txt", "edit": edit}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo made > b.txt"}}]},
+        {"text": "done"}
+    ]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "x"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["diff"]);
+    let patch = String::from_utf8_lossy(&out.stdout);
+    assert!(patch.contains("-one") && patch.contains("+two") && patch.contains("+made"), "{patch}");
+}

@@ -57,6 +57,7 @@ oxgraft stats                             # sessions and tokens per model in thi
 oxgraft undo                              # restore files changed by the latest session
 oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn
 oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)
+oxgraft diff                              # everything the latest session changed, as a patch
 oxgraft --profile sandboxed run "…"       # shell commands confined to the workspace, offline
 oxgraft --mode read-only run "explain the auth flow"   # no edits or commands at all
 oxgraft run --plan "migrate to the new API"     # read-only; ends with a plan. Then: oxgraft run --resume last "go ahead"
@@ -64,7 +65,7 @@ oxgraft --mode auto-edit                  # edits without asking; commands still
 oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
 ```
 
-In chat: `"""` starts and ends a multi-line message; `!command` (run it yourself; the output goes with your next message), `/compact`, `/init`, `/mode X`, `/model M`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
+In chat: `"""` starts and ends a multi-line message; `!command` (run it yourself; the output goes with your next message), `/compact`, `/diff`, `/init`, `/mode X`, `/model M`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
 `/help`, `/exit`. Ctrl-C interrupts the current run (and any running command);
 press it again to quit.
 
