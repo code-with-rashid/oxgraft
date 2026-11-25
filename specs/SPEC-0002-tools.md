@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092]
 ---
 
 # SPEC-0002: Built-in tools
@@ -80,3 +80,5 @@ tools beat many overlapping ones) that is safe by default.
   whole lines that matches after ignoring trailing whitespace and a uniform
   extra indentation, indenting `new_string` the same way; ambiguous matches
   fail.
+- **AC17** `read`, `edit` and `write` refuse paths that are not regular files
+  (named pipes, sockets, devices) with an error instead of blocking.

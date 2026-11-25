@@ -9,6 +9,14 @@ const DEFAULT_READ_LINES: u64 = 2_000;
 const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Named pipes, sockets and devices can block a read or write forever (GRAFT-0092,
+/// after Claude Code 2.1.332's fix for reads hanging on a named pipe): refuse them.
+fn special_file(path: &std::path::Path, shown: &str) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    (!meta.is_file() && !meta.is_dir())
+        .then(|| format!("`{shown}` is not a regular file (a pipe, socket or device); it can't be read or edited"))
+}
+
 fn too_large(path: &std::path::Path, limit: u64, shown: &str) -> Option<String> {
     let len = std::fs::metadata(path).ok()?.len();
     (len > limit).then(|| {
@@ -68,6 +76,9 @@ impl Tool for Read {
         let full = try_tool!(resolve(ctx.workspace, path));
         if full.is_dir() {
             return ToolOutput::error(format!("`{path}` is a directory; use `ls` to list it"));
+        }
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
         }
         if let Some(msg) = too_large(&full, MAX_READ_BYTES, path) {
             return ToolOutput::error(msg);
@@ -142,6 +153,9 @@ impl Tool for Write {
         if full.is_dir() {
             return ToolOutput::error(format!("`{path}` is a directory"));
         }
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
+        }
         ctx.snapshot(&full);
         if let Some(parent) = full.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
@@ -201,6 +215,9 @@ impl Tool for Edit {
         let legacy = legacy && !batch;
         let edit = if legacy || batch { "" } else { try_tool!(str_field(input, "edit")) };
         let full = try_tool!(resolve(ctx.workspace, path));
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
+        }
         if let Some(msg) = too_large(&full, MAX_EDIT_BYTES, path) {
             return ToolOutput::error(msg);
         }
@@ -532,6 +549,22 @@ mod tests {
         f.file("c.txt", "\u{a0}x\n");
         let out = f.run(&Edit, json!({"path": "c.txt", "old_string": " x", "new_string": "y"}));
         assert!(out.is_error && !out.content.contains("panicked"), "{}", out.content);
+    }
+
+    // GRAFT-0092: pipes and devices are refused instead of blocking.
+    #[cfg(unix)]
+    #[test]
+    fn special_files_are_refused() {
+        let f = Fixture::new("fifo");
+        let pipe = f.dir.join("pipe");
+        assert!(std::process::Command::new("mkfifo").arg(&pipe).status().is_ok_and(|s| s.success()));
+        for out in [
+            f.run(&Read, json!({"path": "pipe"})),
+            f.run(&Edit, json!({"path": "pipe", "old_string": "a", "new_string": "b"})),
+            f.run(&Write, json!({"path": "pipe", "content": "x"})),
+        ] {
+            assert!(out.is_error && out.content.contains("not a regular file"), "{}", out.content);
+        }
     }
 
     #[test]
