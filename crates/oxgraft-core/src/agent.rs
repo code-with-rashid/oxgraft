@@ -113,6 +113,39 @@ pub struct Outcome {
 }
 
 const MAX_CONTINUATIONS: u32 = 3;
+/// Private re-asks for malformed tool calls per turn (GRAFT-0044).
+const MAX_REQUERIES: u32 = 2;
+
+/// Tool calls in `reply` that cannot run at all: unknown tool, input that is not a
+/// JSON object (e.g. unparseable arguments), or a missing required field.
+fn malformed_calls(reply: &Message, specs: &[ToolSpec]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (id, name, input) in reply.tool_uses() {
+        let Some(spec) = specs.iter().find(|s| s.name == name) else {
+            let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+            out.push((id.to_string(), format!("unknown tool `{name}`; available tools: {}", names.join(", "))));
+            continue;
+        };
+        let Some(object) = input.as_object() else {
+            out.push((id.to_string(), format!("the input for `{name}` is not a valid JSON object")));
+            continue;
+        };
+        // `edit` also accepts old_string/new_string in place of `edit` (GRAFT-0035).
+        let alternative = name == "edit" && object.contains_key("old_string");
+        let missing: Vec<&str> = spec.input_schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|field| !object.contains_key(*field))
+            .filter(|field| !(alternative && *field == "edit"))
+            .collect();
+        if !missing.is_empty() {
+            out.push((id.to_string(), format!("`{name}` is missing required field(s): {}", missing.join(", "))));
+        }
+    }
+    out
+}
 const LOOP_LIMIT: usize = 3;
 /// Tool calls executed per model turn; extra calls get an error result (stability).
 const MAX_CALLS_PER_TURN: usize = 32;
@@ -308,12 +341,68 @@ impl<'a> Agent<'a> {
                     emit(&Event::Retrying { attempt, wait_ms: wait.as_millis() as u64, message: err.to_string() })
                 },
             );
-            let completion = match completion {
+            let mut completion = match completion {
                 Ok(c) => c,
                 Err(e) => return self.finish(session, emit, Status::Failed(e.to_string()), turn, usage, final_text),
             };
             usage.add(completion.usage);
             session.usage.add(completion.usage);
+
+            // Re-query malformed tool calls (GRAFT-0044, after SWE-agent's format-error
+            // requery): the bad attempt and its error stay out of the history, so later
+            // turns don't learn from it. If the corrected reply carries provider-signed
+            // blocks (thinking), they were produced after the bad attempt, so the whole
+            // trail is kept instead: history stays truthful and append-only.
+            let mut trail: Vec<Message> = Vec::new();
+            let mut requeries = 0;
+            while requeries < MAX_REQUERIES && completion.stop != StopReason::MaxTokens {
+                let bad = Message::assistant(completion.content.clone());
+                let errors = malformed_calls(&bad, &specs);
+                if errors.is_empty() {
+                    break;
+                }
+                requeries += 1;
+                emit(&Event::Warning {
+                    message: format!("malformed tool call ({}); asking the model again", errors[0].1),
+                });
+                let results: Vec<Block> = bad
+                    .tool_uses()
+                    .into_iter()
+                    .map(|(id, _, _)| {
+                        let why = errors.iter().find(|(e, _)| e == id).map_or(
+                            "Not executed: another call in this reply was malformed. Send all calls again.".to_string(),
+                            |(_, w)| format!("Not executed: {w}. Send a corrected call."),
+                        );
+                        Block::ToolResult { tool_use_id: id.to_string(), content: why, is_error: true }
+                    })
+                    .collect();
+                trail.push(bad);
+                trail.push(Message { role: Role::User, content: results });
+                let mut messages = session.messages.clone();
+                messages.extend(trail.iter().cloned());
+                let retry = CompletionRequest { messages, ..request.clone() };
+                match complete_with_retries(
+                    self.provider,
+                    &retry,
+                    &self.config.retry,
+                    &|d| (self.sleep)(d),
+                    &mut |_, _, _| {},
+                ) {
+                    Ok(c) => {
+                        usage.add(c.usage);
+                        session.usage.add(c.usage);
+                        completion = c;
+                    }
+                    Err(_) => {
+                        // Keep the last malformed reply; its calls fail normally below.
+                        trail.truncate(trail.len() - 2);
+                        break;
+                    }
+                }
+            }
+            if completion.content.iter().any(|b| matches!(b, Block::Opaque { .. })) {
+                session.messages.append(&mut trail);
+            }
 
             let assistant = Message::assistant(completion.content);
             let text = assistant.text();

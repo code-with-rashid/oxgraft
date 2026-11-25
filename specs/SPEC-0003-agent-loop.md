@@ -40,3 +40,9 @@ trips. Every step is an event on the protocol stream.
 - **AC6** Every session emits `session_started`, one `strategy_selected` per
   seam, and ends with exactly one `session_finished`.
 - **AC7** Token usage is accumulated and reported in `session_finished`.
+- **AC8** When a reply contains a tool call that cannot run at all (unknown
+  tool, input that is not a JSON object, missing required field), the model is
+  asked again with the errors, up to 2 times per turn, and the malformed
+  attempts are not added to the history. If the corrected reply carries
+  provider-signed blocks (thinking), the attempts are kept so history stays
+  truthful. After 2 re-asks the reply is processed normally (calls fail).

@@ -136,7 +136,10 @@ fn unknown_tools_and_bad_input_become_errors() {
         &ws,
         "allow_all",
         Answer::Yes,
+        // Malformed replies are re-asked twice (GRAFT-0044); the third runs and fails normally.
         json!({"turns": [
+            {"tool_calls": [{"name": "teleport", "input": {}}, {"name": "read", "input": "{broken"}]},
+            {"tool_calls": [{"name": "teleport", "input": {}}, {"name": "read", "input": "{broken"}]},
             {"tool_calls": [{"name": "teleport", "input": {}}, {"name": "read", "input": "{broken"}]},
             {"text": "giving up"}
         ]}),
@@ -189,6 +192,55 @@ fn always_answer_is_remembered_for_the_tool() {
     let asks = events.iter().filter(|e| matches!(e, Event::ApprovalRequested { .. })).count();
     assert_eq!(asks, 1);
     assert!(ws.0.join("b.txt").exists());
+}
+
+// SPEC-0003 AC8: malformed tool calls are re-asked privately and kept out of history.
+#[test]
+fn malformed_tool_calls_are_requeried_out_of_history() {
+    let ws = Ws::new("requery");
+    std::fs::write(ws.0.join("a.txt"), "alpha\n").unwrap();
+    let (status, events, session) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "reed", "input": {"path": "a.txt"}}]},
+            {"tool_calls": [{"name": "read", "input": "{\"path\": \"a.txt\""}]},
+            {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+            {"text": "done"}
+        ]}),
+        5,
+    );
+    assert_eq!(status, Status::Done);
+    let warnings =
+        events.iter().filter(|e| matches!(e, Event::Warning { message } if message.contains("malformed"))).count();
+    assert_eq!(warnings, 2);
+    let results = tool_results(&events);
+    assert_eq!(results.len(), 1, "only the corrected call runs: {results:?}");
+    assert!(results[0].0 && results[0].1.contains("alpha"));
+    let history = serde_json::to_string(&session.messages).unwrap();
+    assert!(!history.contains("reed") && !history.contains("not a valid JSON"), "{history}");
+    // task, assistant(read), results, assistant(done)
+    assert_eq!(session.messages.len(), 4);
+
+    // After two re-asks the third malformed reply fails normally and is recorded.
+    let ws = Ws::new("requery2");
+    let (_, events, session) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "bash", "input": {}}]},
+            {"tool_calls": [{"name": "bash", "input": {}}]},
+            {"tool_calls": [{"name": "bash", "input": {}}]},
+            {"text": "gave up"}
+        ]}),
+        5,
+    );
+    let results = tool_results(&events);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].0);
+    assert_eq!(session.messages.len(), 4);
 }
 
 // SPEC-0006 AC6: risky shell commands are asked about every time, even after "always".
