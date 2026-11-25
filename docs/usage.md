@@ -35,6 +35,7 @@ Short names work for Anthropic's current models: `--model opus`, `sonnet`,
   prompts (Oxgraft's instructions and tool list come first):
   `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.
 - Use a model that supports tool calling; `oxgraft doctor --live` checks.
+oxgraft config                            # settings in effect here, after every layer, and why
 - For local providers Oxgraft assumes a 32k window and compacts the context
   before it fills up; set `context_window` if your server uses another size.
 

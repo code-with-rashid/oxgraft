@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -100,3 +100,5 @@ otherwise an error explaining how to choose one.
   keeping the conversation; an invalid model is reported and changes nothing.
 - **AC21** `oxgraft diff [ID]` (and `/diff` in chat) prints the patch from the
   session's first checkpoint to the current workspace.
+- **AC22** `oxgraft config` prints the resolved settings, their sources, the
+  trust state and all config warnings, using the same layering as a run.

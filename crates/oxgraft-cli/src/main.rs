@@ -103,6 +103,8 @@ enum Command {
     },
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Show the settings in effect here, after every config layer, and where they came from.
+    Config,
     /// What a session changed since it started, as a patch (default: the latest).
     Diff { id: Option<String> },
     /// Token use per model across this workspace's sessions.
@@ -310,6 +312,22 @@ fn dispatch(cli: Cli) -> CliResult {
                 println!("session {} changed no files", session.id);
             }
             for line in session.undo() {
+                println!("{line}");
+            }
+            Ok(0)
+        }
+        Some(Command::Config) => {
+            let ws = workspace(&common)?;
+            let flags = config::Flags {
+                model: common.model.as_deref(),
+                profile: common.profile.as_deref(),
+                effort: common.effort.as_deref(),
+                max_turns: common.max_turns,
+                approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
+                instructions: common.append_system_prompt.as_deref(),
+            };
+            let cfg = config::resolve(&ws, &flags).map_err(usage)?;
+            for line in describe_config(&ws, &cfg) {
                 println!("{line}");
             }
             Ok(0)
@@ -790,6 +808,67 @@ fn ring_if_long(started: std::time::Instant, enabled: bool) {
         eprint!("\x07");
         let _ = std::io::stderr().flush();
     }
+}
+
+/// The resolved configuration as `key  value` lines (GRAFT-0089).
+fn describe_config(ws: &Path, cfg: &config::Config) -> Vec<String> {
+    let or = |v: Option<String>, d: &str| v.unwrap_or_else(|| d.to_string());
+    let mut out = vec![
+        format!("{:<20} {}", "workspace", ws.display()),
+        format!(
+            "{:<20} {}",
+            "trusted",
+            if cfg.trusted { "yes" } else { "no (repo hooks, MCP, rules, model, profile ignored)" }
+        ),
+        format!("{:<20} {}", "model", or(cfg.model.clone(), "(none)")),
+        format!("{:<20} {}", "subagent_model", or(cfg.subagent_model.clone(), "(same as model)")),
+        format!("{:<20} {}", "profile", cfg.profile),
+        format!("{:<20} {}", "approval_mode", cfg.approval_mode),
+        format!("{:<20} {}", "effort", or(cfg.effort.clone(), "(provider default)")),
+        format!("{:<20} {}", "thinking", cfg.thinking),
+        format!("{:<20} {}", "stream", cfg.stream),
+        format!("{:<20} {}", "checkpoints", cfg.checkpoints),
+        format!("{:<20} {}", "bell", cfg.bell),
+        format!("{:<20} {}", "max_turns", cfg.max_turns),
+        format!("{:<20} {}", "max_tokens", cfg.max_tokens),
+        format!("{:<20} {}", "max_session_tokens", cfg.max_session_tokens.map_or("(none)".into(), |v| v.to_string())),
+        format!(
+            "{:<20} {}{}",
+            "context_window",
+            cfg.context_window.map_or("off".into(), |v| v.to_string()),
+            if cfg.context_window_default { " (default; 32768 for local models)" } else { "" }
+        ),
+        format!("{:<20} {}", "verify_command", or(cfg.verify_command.clone(), "(none)")),
+        format!("{:<20} {}", "instructions", cfg.instructions.len()),
+        format!("{:<20} {}", "hooks", cfg.hooks.len()),
+        format!(
+            "{:<20} {}",
+            "mcp_servers",
+            if cfg.mcp_servers.is_empty() {
+                "(none)".into()
+            } else {
+                cfg.mcp_servers.keys().cloned().collect::<Vec<_>>().join(", ")
+            }
+        ),
+        format!("{:<20} {}", "rules", cfg.rules.len()),
+        format!(
+            "{:<20} {}",
+            "sources",
+            if cfg.sources.is_empty() { "defaults only".into() } else { cfg.sources.join(", ") }
+        ),
+        format!(
+            "{:<20} {}",
+            "user config",
+            config::user_config_path().map_or("(none)".into(), |p| p.display().to_string())
+        ),
+        format!(
+            "{:<20} {}",
+            "data dir",
+            oxgraft_core::checkpoint::data_dir().map_or("(none)".into(), |p| p.display().to_string())
+        ),
+    ];
+    out.extend(cfg.warnings.iter().map(|w| format!("{:<20} {w}", "warning")));
+    out
 }
 
 /// The patch from the session's first checkpoint to the workspace as it is now

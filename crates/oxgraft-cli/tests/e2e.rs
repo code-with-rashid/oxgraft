@@ -797,3 +797,23 @@ fn diff_shows_session_changes() {
     let patch = String::from_utf8_lossy(&out.stdout);
     assert!(patch.contains("-one") && patch.contains("+two") && patch.contains("+made"), "{patch}");
 }
+
+// GRAFT-0089: `oxgraft config` shows resolved settings and sources.
+#[test]
+fn config_command_shows_resolved_settings() {
+    let ws = Ws::new("configcmd");
+    std::fs::create_dir_all(ws.0.join(".oxgraft")).unwrap();
+    std::fs::write(ws.0.join(".oxgraft/config.toml"), "max_turns = 7\nprofile = \"ci\"\n").unwrap();
+    let out = ws.oxgraft(&["config", "--mode", "auto-edit"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for expect in [
+        "max_turns            7",
+        "approval_mode        auto-edit",
+        "trusted              no",
+        "profile              auto",
+        "ignoring `profile",
+    ] {
+        assert!(text.contains(expect), "missing {expect}:\n{text}");
+    }
+}
