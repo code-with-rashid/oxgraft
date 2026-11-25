@@ -16,7 +16,7 @@ updates a harness profile or adds or promotes a strategy.
 | tools | read, write, edit, ls, glob, grep, map, bash (+ background, bash_output), todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
 | session | save/resume/repair, undo (GRAFT-0005, 0020), per-turn checkpoints (0046), fork (0049) | budgets (0021) | session tree UI (pi) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
-| delegation | read-only `task` subagent (0026) | — | named subagents with policies (opencode) |
+| delegation | read-only `task` subagent (0026), named subagents from agent files (0106) | — | writing subagents in worktrees (claude-code) |
 
 ## By harness
 

@@ -727,6 +727,39 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
+// GRAFT-0106: /agents lists the user's named subagents.
+#[test]
+fn chat_lists_named_agents() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatagents");
+    let home = ws.0.join("home");
+    std::fs::create_dir_all(home.join(".agents/agents")).unwrap();
+    std::fs::write(
+        home.join(".agents/agents/reviewer.md"),
+        "---\ndescription: Reviews diffs\ntools: Read, Grep\n---\nYou review code.\n",
+    )
+    .unwrap();
+    let model = ws.script(json!([{"text": "unused"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"/agents\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("reviewer") && err.contains("Reviews diffs") && err.contains("read, grep"), "{err}");
+}
+
 // GRAFT-0077: /mode switches approval mode inside chat.
 #[test]
 fn chat_mode_switches_approvals() {

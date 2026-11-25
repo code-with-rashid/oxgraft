@@ -1518,10 +1518,25 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 eprintln!("started a new session {}", session.id);
                 continue;
             }
+            "/agents" => {
+                // Named subagents (GRAFT-0106) the model can start with `task`.
+                let types = &agent.config.subagent_types;
+                if types.is_empty() {
+                    eprintln!(
+                        "no named subagents; add .agents/agents/<name>.md (or .claude/agents/) with a description \
+                         and instructions"
+                    );
+                }
+                for t in types {
+                    let tools = if t.tools.is_empty() { "all read-only tools".to_string() } else { t.tools.join(", ") };
+                    eprintln!("{:<16} {} [{tools}]", t.name, t.description);
+                }
+                continue;
+            }
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/commit    commit staged changes (or all) with a message written by the model\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/commit    commit staged changes (or tracked + session files) with a model-written message\n/agents    list named subagents\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n/export F  write this conversation as Markdown (default oxgraft-<id>.md)\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
