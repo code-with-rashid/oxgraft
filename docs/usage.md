@@ -56,6 +56,7 @@ max_turns = 50
 max_tokens = 16000             # per response
 max_session_tokens = 2000000   # stop a run above this many tokens
 context_window = 200000        # compaction at 80%; 0 disables
+stream = true                  # show replies as they are written (OXGRAFT_STREAM=0 to turn off)
 
 # User config only: workspaces whose own hooks and MCP servers may run.
 trusted_workspaces = ["/home/me/code/my-repo"]

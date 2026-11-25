@@ -22,6 +22,8 @@ pub struct FileConfig {
     pub verify_command: Option<String>,
     /// Model context window in tokens (compaction at 80%); 0 disables compaction.
     pub context_window: Option<u64>,
+    /// Stream model output as it is written (default true).
+    pub stream: Option<bool>,
     #[serde(default)]
     pub hooks: Vec<Hook>,
     /// MCP servers to start (name -> command). Workspace entries need trust.
@@ -45,6 +47,7 @@ pub struct Config {
     pub max_session_tokens: Option<u64>,
     pub verify_command: Option<String>,
     pub context_window: Option<u64>,
+    pub stream: bool,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
     pub rules: Vec<oxgraft_strategies::approval::Rule>,
@@ -97,6 +100,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_session_tokens: None,
         verify_command: None,
         context_window: Some(200_000),
+        stream: true,
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
         rules: Vec::new(),
@@ -203,6 +207,11 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             max_tokens: env("OXGRAFT_MAX_TOKENS").and_then(|v| v.parse().ok()),
             max_session_tokens: env("OXGRAFT_MAX_SESSION_TOKENS").and_then(|v| v.parse().ok()),
             context_window: env("OXGRAFT_CONTEXT_WINDOW").and_then(|v| v.parse().ok()),
+            stream: env("OXGRAFT_STREAM").and_then(|v| match v.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }),
             ..FileConfig::default()
         },
     ));
@@ -245,6 +254,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.context_window {
             cfg.context_window = if v == 0 { None } else { Some(v) };
+            used = true;
+        }
+        if let Some(v) = layer.stream {
+            cfg.stream = v;
             used = true;
         }
         if let Some(v) = layer.max_session_tokens {

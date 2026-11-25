@@ -50,6 +50,10 @@ pub enum Event {
         ok: bool,
         output: String,
     },
+    /// Assistant text as it streams in (ADR 0007). The full text follows in `message`.
+    TextDelta {
+        text: String,
+    },
     ApprovalRequested {
         id: String,
         tool: String,
@@ -128,6 +132,7 @@ mod tests {
             Event::ApprovalResolved { id: "2".into(), decision: "deny".into() },
             Event::Retrying { attempt: 1, wait_ms: 1000, message: "429".into() },
             Event::Warning { message: "w".into() },
+            Event::TextDelta { text: "par".into() },
             Event::SessionFinished { ok: true, reason: None, turns: 2, input_tokens: 5, output_tokens: 6 },
         ];
         for event in events {

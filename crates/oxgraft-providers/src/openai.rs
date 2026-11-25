@@ -20,6 +20,8 @@ pub struct Preset {
     /// Env var that overrides the base URL.
     pub base_env: &'static str,
     pub example: &'static str,
+    /// Send `stream_options.include_usage` when streaming (servers known to accept it).
+    pub stream_usage: bool,
 }
 
 pub const PRESETS: &[Preset] = &[
@@ -28,6 +30,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://api.openai.com/v1",
         key_env: Some("OPENAI_API_KEY"),
         base_env: "OPENAI_BASE_URL",
+        stream_usage: true,
         example: "openai/<model>",
     },
     Preset {
@@ -35,6 +38,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://openrouter.ai/api/v1",
         key_env: Some("OPENROUTER_API_KEY"),
         base_env: "OPENROUTER_BASE_URL",
+        stream_usage: true,
         example: "openrouter/<vendor>/<model>",
     },
     Preset {
@@ -42,6 +46,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://api.deepseek.com/v1",
         key_env: Some("DEEPSEEK_API_KEY"),
         base_env: "DEEPSEEK_BASE_URL",
+        stream_usage: true,
         example: "deepseek/<model>",
     },
     Preset {
@@ -49,6 +54,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://api.groq.com/openai/v1",
         key_env: Some("GROQ_API_KEY"),
         base_env: "GROQ_BASE_URL",
+        stream_usage: false,
         example: "groq/<model>",
     },
     Preset {
@@ -56,6 +62,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         key_env: Some("GEMINI_API_KEY"),
         base_env: "GEMINI_BASE_URL",
+        stream_usage: false,
         example: "gemini/<model>",
     },
     Preset {
@@ -63,6 +70,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://api.x.ai/v1",
         key_env: Some("XAI_API_KEY"),
         base_env: "XAI_BASE_URL",
+        stream_usage: false,
         example: "xai/<model>",
     },
     Preset {
@@ -70,6 +78,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "https://api.mistral.ai/v1",
         key_env: Some("MISTRAL_API_KEY"),
         base_env: "MISTRAL_BASE_URL",
+        stream_usage: false,
         example: "mistral/<model>",
     },
     Preset {
@@ -77,6 +86,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "http://localhost:11434/v1",
         key_env: None,
         base_env: "OLLAMA_BASE_URL",
+        stream_usage: false,
         example: "ollama/<model>",
     },
     Preset {
@@ -84,6 +94,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "http://localhost:1234/v1",
         key_env: None,
         base_env: "LMSTUDIO_BASE_URL",
+        stream_usage: false,
         example: "lmstudio/<model>",
     },
     Preset {
@@ -91,6 +102,7 @@ pub const PRESETS: &[Preset] = &[
         base_url: "http://localhost:8000/v1",
         key_env: Some("OXGRAFT_COMPATIBLE_API_KEY"),
         base_env: "OXGRAFT_COMPATIBLE_BASE_URL",
+        stream_usage: false,
         example: "compatible/<model> (any OpenAI-compatible server)",
     },
 ];
@@ -241,19 +253,142 @@ pub fn parse_response(provider: &str, v: &Value) -> Result<Completion, ProviderE
     Ok(Completion { content, stop, usage })
 }
 
+impl OpenAiCompatible {
+    fn headers(&self) -> Vec<(&'static str, String)> {
+        let mut headers = vec![("content-type", "application/json".to_string())];
+        if let Some(key) = &self.api_key {
+            headers.push(("authorization", format!("Bearer {key}")));
+        }
+        headers
+    }
+}
+
+/// Rebuilds a chat completion from its streamed chunks (ADR 0007), ending in the
+/// same `parse_response` as the blocking path.
+#[derive(Debug, Default)]
+pub struct StreamState {
+    text: String,
+    calls: Vec<Value>,
+    finish_reason: Value,
+    usage: Value,
+    done: bool,
+}
+
+impl StreamState {
+    pub fn apply(&mut self, provider: &str, data: &str, on_text: &mut dyn FnMut(&str)) -> Result<(), ProviderError> {
+        if data.trim() == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| ProviderError::new(provider, ErrorKind::Protocol, format!("bad stream chunk: {e}")))?;
+        if let Some(err) = v.get("error") {
+            let message = err.get("message").and_then(Value::as_str).unwrap_or("stream error").to_string();
+            return Err(ProviderError::new(provider, ErrorKind::Transient, format!("stream error: {message}")));
+        }
+        if v.get("usage").is_some_and(Value::is_object) {
+            self.usage = v["usage"].clone();
+        }
+        let Some(choice) = v.pointer("/choices/0") else { return Ok(()) };
+        let delta = &choice["delta"];
+        if let Some(t) = delta.get("content").and_then(Value::as_str)
+            && !t.is_empty()
+        {
+            self.text.push_str(t);
+            on_text(t);
+        }
+        for (pos, call) in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten().enumerate() {
+            let index = call.get("index").and_then(Value::as_u64).map_or(pos, |i| i as usize);
+            while self.calls.len() <= index {
+                self.calls.push(json!({"function": {"name": "", "arguments": ""}}));
+            }
+            let slot = &mut self.calls[index];
+            if let Some(id) = call.get("id").and_then(Value::as_str) {
+                slot["id"] = json!(id);
+            }
+            for key in ["name", "arguments"] {
+                if let Some(piece) = call.pointer(&format!("/function/{key}")).and_then(Value::as_str) {
+                    let current = slot["function"][key].as_str().unwrap_or_default().to_string();
+                    slot["function"][key] = json!(current + piece);
+                }
+            }
+        }
+        if let Some(reason) = choice.get("finish_reason").filter(|r| !r.is_null()) {
+            self.finish_reason = reason.clone();
+        }
+        Ok(())
+    }
+
+    pub fn finish(self, provider: &str) -> Result<Completion, ProviderError> {
+        // Some servers close the stream without `[DONE]`; a finish reason is enough.
+        if !self.done && self.finish_reason.is_null() {
+            return Err(ProviderError::new(provider, ErrorKind::Transient, "stream ended before the reply finished"));
+        }
+        let mut message = json!({"role": "assistant", "content": self.text});
+        if !self.calls.is_empty() {
+            message["tool_calls"] = Value::Array(self.calls);
+        }
+        let mut response = json!({"choices": [{"message": message, "finish_reason": self.finish_reason}]});
+        if self.usage.is_object() {
+            response["usage"] = self.usage;
+        }
+        parse_response(provider, &response)
+    }
+}
+
 impl Provider for OpenAiCompatible {
     fn id(&self) -> &str {
         self.preset.id
     }
 
     fn complete(&self, req: &CompletionRequest) -> Result<Completion, ProviderError> {
-        let mut headers = vec![("content-type", "application/json".to_string())];
-        if let Some(key) = &self.api_key {
-            headers.push(("authorization", format!("Bearer {key}")));
+        let url = format!("{}/chat/completions", self.base_url);
+        let v = post_json(self.preset.id, &url, &self.headers(), &self.request_body(req), Duration::from_secs(600))?;
+        parse_response(self.preset.id, &v)
+    }
+
+    fn stream(&self, req: &CompletionRequest, on_text: &mut dyn FnMut(&str)) -> Result<Completion, ProviderError> {
+        let mut body = self.request_body(req);
+        body["stream"] = json!(true);
+        if self.preset.stream_usage {
+            body["stream_options"] = json!({"include_usage": true});
         }
         let url = format!("{}/chat/completions", self.base_url);
-        let v = post_json(self.preset.id, &url, &headers, &self.request_body(req), Duration::from_secs(600))?;
-        parse_response(self.preset.id, &v)
+        let mut state = StreamState::default();
+        let mut shown = false;
+        let result = crate::http::post_sse(
+            self.preset.id,
+            &url,
+            &self.headers(),
+            &body,
+            Duration::from_secs(600),
+            &mut |_, data| {
+                state.apply(self.preset.id, data, &mut |t| {
+                    shown = true;
+                    on_text(t)
+                })
+            },
+        );
+        match result {
+            // A server that rejects streaming (or its options) gets a plain request instead.
+            Err(e) if e.kind == ErrorKind::BadRequest && e.status.is_some() && !shown => {
+                let completion = self.complete(req)?;
+                let text: String = completion
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if !text.is_empty() {
+                    on_text(&text);
+                }
+                Ok(completion)
+            }
+            Err(e) => Err(e),
+            Ok(()) => state.finish(self.preset.id),
+        }
     }
 }
 
@@ -325,5 +460,38 @@ mod tests {
         let end = json!({"choices": [{"message": {"content": "done"}, "finish_reason": "length"}]});
         assert_eq!(parse_response("x", &end).unwrap().stop, StopReason::MaxTokens);
         assert!(parse_response("x", &json!({})).is_err());
+    }
+
+    // SPEC-0001 AC7
+    #[test]
+    fn stream_chunks_rebuild_the_response() {
+        let chunks = [
+            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"content":"Hi "}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"content":"there"}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read","arguments":""}}]}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":5}}"#,
+            "[DONE]",
+        ];
+        let mut state = StreamState::default();
+        let mut text = String::new();
+        for c in chunks {
+            state.apply("openai", c, &mut |t| text.push_str(t)).unwrap();
+        }
+        assert_eq!(text, "Hi there");
+        let c = state.finish("openai").unwrap();
+        assert_eq!(c.stop, StopReason::ToolUse);
+        assert_eq!(c.usage, Usage { input_tokens: 7, output_tokens: 5 });
+        assert_eq!(c.content[0], Block::Text { text: "Hi there".into() });
+        assert_eq!(c.content[1], Block::ToolUse { id: "c1".into(), name: "read".into(), input: json!({"path": "a"}) });
+
+        let mut state = StreamState::default();
+        state.apply("x", r#"{"choices":[{"delta":{"content":"cut"}}]}"#, &mut |_| {}).unwrap();
+        assert_eq!(state.finish("x").unwrap_err().kind, ErrorKind::Transient);
+        let mut state = StreamState::default();
+        assert!(state.apply("x", r#"{"error":{"message":"overloaded"}}"#, &mut |_| {}).is_err());
     }
 }

@@ -172,6 +172,21 @@ pub trait Provider: Send + Sync {
     fn id(&self) -> &str;
     /// One request/response round trip. Retries are the caller's job.
     fn complete(&self, request: &CompletionRequest) -> Result<Completion, ProviderError>;
+
+    /// Like `complete`, calling `on_text` with assistant text as it arrives (ADR 0007).
+    /// The returned completion is the same as `complete` would return. The default
+    /// does not stream: it reports the whole text once at the end.
+    fn stream(&self, request: &CompletionRequest, on_text: &mut dyn FnMut(&str)) -> Result<Completion, ProviderError> {
+        let completion = self.complete(request)?;
+        for block in &completion.content {
+            if let Block::Text { text } = block
+                && !text.is_empty()
+            {
+                on_text(text);
+            }
+        }
+        Ok(completion)
+    }
 }
 
 #[cfg(test)]

@@ -151,3 +151,46 @@ fn openai_compatible_round_trip_over_http() {
     assert_eq!(cap.body["max_completion_tokens"], 100);
     let _ = json!(null);
 }
+
+// SPEC-0001 AC7: streaming over real HTTP yields deltas and the same completion.
+#[test]
+fn anthropic_streams_over_http() {
+    let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n\
+event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n\
+event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n\
+event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n\
+event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let (url, rx) = serve_once(200, "", sse);
+    let p = Anthropic::new("k", &url, None, false);
+    let mut deltas = Vec::new();
+    let c = p.stream(&req("claude-opus-5-5"), &mut |t| deltas.push(t.to_string())).unwrap();
+    assert_eq!(deltas, vec!["hel", "lo"]);
+    assert_eq!(c.content, vec![Block::text("hello")]);
+    assert_eq!(c.stop, StopReason::EndTurn);
+    assert_eq!(rx.recv().unwrap().body["stream"], true);
+
+    // A stream cut off before message_stop is transient (retried by core).
+    let (url, _rx) = serve_once(200, "", &sse[..sse.find("event: message_delta").unwrap()]);
+    let err = Anthropic::new("k", &url, None, false).stream(&req("m"), &mut |_| {}).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Transient);
+}
+
+#[test]
+fn openai_compatible_streams_over_http() {
+    let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n";
+    let (url, rx) = serve_once(200, "", sse);
+    let preset = *PRESETS.iter().find(|p| p.id == "openai").unwrap();
+    let p = OpenAiCompatible::new(preset, &url, Some("k".into()));
+    let mut text = String::new();
+    let c = p.stream(&req("gpt-x"), &mut |t| text.push_str(t)).unwrap();
+    assert_eq!(text, "ab");
+    assert_eq!(c.content, vec![Block::text("ab")]);
+    assert_eq!(c.usage.output_tokens, 2);
+    let cap = rx.recv().unwrap();
+    assert_eq!(cap.body["stream"], true);
+    assert_eq!(cap.body["stream_options"]["include_usage"], true);
+}

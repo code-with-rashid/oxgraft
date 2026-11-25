@@ -175,12 +175,114 @@ pub fn parse_response(v: &Value) -> Result<Completion, ProviderError> {
     Ok(Completion { content, stop, usage })
 }
 
-impl Provider for Anthropic {
-    fn id(&self) -> &str {
-        ID
+/// Rebuilds a Messages API response from its stream events (ADR 0007), so the
+/// streaming path ends in the same `parse_response` as the blocking one.
+#[derive(Debug, Default)]
+pub struct StreamState {
+    message: Value,
+    blocks: Vec<Value>,
+    partial_json: Vec<String>,
+    done: bool,
+}
+
+impl StreamState {
+    /// Apply one event's `data` JSON; `on_text` gets text deltas.
+    pub fn apply(&mut self, data: &str, on_text: &mut dyn FnMut(&str)) -> Result<(), ProviderError> {
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| ProviderError::new(ID, ErrorKind::Protocol, format!("bad stream event: {e}")))?;
+        let index = v.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+        match v.get("type").and_then(Value::as_str) {
+            Some("message_start") => self.message = v["message"].clone(),
+            Some("content_block_start") => {
+                while self.blocks.len() <= index {
+                    self.blocks.push(Value::Null);
+                    self.partial_json.push(String::new());
+                }
+                self.blocks[index] = v["content_block"].clone();
+            }
+            Some("content_block_delta") => {
+                let Some(block) = self.blocks.get_mut(index) else {
+                    return Err(ProviderError::new(ID, ErrorKind::Protocol, "delta for a block that never started"));
+                };
+                let delta = &v["delta"];
+                let append = |block: &mut Value, key: &str, piece: &str| {
+                    let current = block.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+                    block[key] = json!(current + piece);
+                };
+                let piece = |key: &str| delta.get(key).and_then(Value::as_str).unwrap_or_default();
+                match delta.get("type").and_then(Value::as_str) {
+                    Some("text_delta") => {
+                        append(block, "text", piece("text"));
+                        if !piece("text").is_empty() {
+                            on_text(piece("text"));
+                        }
+                    }
+                    Some("input_json_delta") => self.partial_json[index].push_str(piece("partial_json")),
+                    Some("thinking_delta") => append(block, "thinking", piece("thinking")),
+                    Some("signature_delta") => append(block, "signature", piece("signature")),
+                    Some("citations_delta") => {
+                        if !block["citations"].is_array() {
+                            block["citations"] = json!([]);
+                        }
+                        if let Some(list) = block["citations"].as_array_mut() {
+                            list.push(delta["citation"].clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some("content_block_stop") => {
+                if let (Some(block), Some(partial)) = (self.blocks.get_mut(index), self.partial_json.get(index))
+                    && !partial.is_empty()
+                {
+                    // Unparseable input stays a string; core re-asks the model (GRAFT-0044).
+                    block["input"] = serde_json::from_str(partial).unwrap_or_else(|_| json!(partial));
+                }
+            }
+            Some("message_delta") => {
+                if let Some(delta) = v["delta"].as_object() {
+                    for (k, val) in delta {
+                        self.message[k] = val.clone();
+                    }
+                }
+                if let Some(usage) = v["usage"].as_object() {
+                    if !self.message["usage"].is_object() {
+                        self.message["usage"] = json!({});
+                    }
+                    for (k, val) in usage {
+                        if !val.is_null() {
+                            self.message["usage"][k] = val.clone();
+                        }
+                    }
+                }
+            }
+            Some("message_stop") => self.done = true,
+            Some("error") => {
+                let kind = match v.pointer("/error/type").and_then(Value::as_str) {
+                    Some("overloaded_error" | "api_error" | "rate_limit_error") => ErrorKind::Transient,
+                    Some("authentication_error" | "permission_error") => ErrorKind::Auth,
+                    _ => ErrorKind::BadRequest,
+                };
+                let message = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("stream error");
+                return Err(ProviderError::new(ID, kind, format!("stream error: {message}")));
+            }
+            _ => {} // ping and future event types
+        }
+        Ok(())
     }
 
-    fn complete(&self, req: &CompletionRequest) -> Result<Completion, ProviderError> {
+    /// The completed response, or a transient error if the stream ended early.
+    pub fn finish(mut self) -> Result<Completion, ProviderError> {
+        if !self.done {
+            return Err(ProviderError::new(ID, ErrorKind::Transient, "stream ended before message_stop"));
+        }
+        self.message["content"] = Value::Array(self.blocks.into_iter().filter(|b| !b.is_null()).collect());
+        parse_response(&self.message)
+    }
+}
+
+impl Anthropic {
+    fn headers(&self, req: &CompletionRequest) -> Vec<(&'static str, String)> {
         let mut headers =
             vec![("anthropic-version", API_VERSION.to_string()), ("content-type", "application/json".into())];
         match &self.credential {
@@ -190,8 +292,29 @@ impl Provider for Anthropic {
         if self.fallbacks && supports_fallbacks(&req.model) {
             headers.push(("anthropic-beta", FALLBACK_BETA.into()));
         }
+        headers
+    }
+}
+
+impl Provider for Anthropic {
+    fn id(&self) -> &str {
+        ID
+    }
+
+    fn stream(&self, req: &CompletionRequest, on_text: &mut dyn FnMut(&str)) -> Result<Completion, ProviderError> {
+        let mut body = self.request_body(req);
+        body["stream"] = json!(true);
         let url = format!("{}/v1/messages", self.base_url);
-        let v = post_json(ID, &url, &headers, &self.request_body(req), Duration::from_secs(600))?;
+        let mut state = StreamState::default();
+        crate::http::post_sse(ID, &url, &self.headers(req), &body, Duration::from_secs(600), &mut |_, data| {
+            state.apply(data, on_text)
+        })?;
+        state.finish()
+    }
+
+    fn complete(&self, req: &CompletionRequest) -> Result<Completion, ProviderError> {
+        let url = format!("{}/v1/messages", self.base_url);
+        let v = post_json(ID, &url, &self.headers(req), &self.request_body(req), Duration::from_secs(600))?;
         parse_response(&v)
     }
 }
@@ -283,5 +406,64 @@ mod tests {
         assert!(provider().request_body(&req).get("fallbacks").is_none());
         req.model = DEFAULT_MODEL.into();
         assert!(provider().request_body(&req).get("fallbacks").is_some());
+    }
+
+    // SPEC-0001 AC7: the stream rebuilds the same completion as the blocking response.
+    #[test]
+    fn stream_events_rebuild_the_response() {
+        let events = [
+            r#"{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":1}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan "}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"it"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"ping"}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hel"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"lo"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"t1","name":"read","input":{}}}"#,
+            r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"pa"}}"#,
+            r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"th\":\"a.rs\"}"}}"#,
+            r#"{"type":"content_block_stop","index":2}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":42}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        let mut state = StreamState::default();
+        let mut text = Vec::new();
+        for e in events {
+            state.apply(e, &mut |t| text.push(t.to_string())).unwrap();
+        }
+        assert_eq!(text, vec!["Hel", "lo"]);
+        let c = state.finish().unwrap();
+        assert_eq!(c.stop, StopReason::ToolUse);
+        assert_eq!(c.usage, Usage { input_tokens: 14, output_tokens: 42 });
+        match &c.content[0] {
+            Block::Opaque { raw, .. } => {
+                assert_eq!(raw["thinking"], "plan it");
+                assert_eq!(raw["signature"], "SIG");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(c.content[1], Block::Text { text: "Hello".into() });
+        assert_eq!(
+            c.content[2],
+            Block::ToolUse { id: "t1".into(), name: "read".into(), input: json!({"path": "a.rs"}) }
+        );
+    }
+
+    #[test]
+    fn stream_errors_and_early_ends() {
+        let mut state = StreamState::default();
+        let err = state
+            .apply(r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#, &mut |_| {})
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Transient);
+        let mut state = StreamState::default();
+        state.apply(r#"{"type":"message_start","message":{"content":[]}}"#, &mut |_| {}).unwrap();
+        assert_eq!(state.finish().unwrap_err().kind, ErrorKind::Transient);
+        let mut state = StreamState::default();
+        assert!(state.apply(r#"{"type":"content_block_delta","index":3,"delta":{}}"#, &mut |_| {}).is_err());
     }
 }

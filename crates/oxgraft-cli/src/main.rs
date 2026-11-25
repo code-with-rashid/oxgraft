@@ -263,6 +263,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.max_session_tokens = cfg.max_session_tokens;
     config.context_window = cfg.context_window;
     config.verify_command = cfg.verify_command.clone();
+    config.stream = cfg.stream;
     config.hooks = cfg.hooks.clone();
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {

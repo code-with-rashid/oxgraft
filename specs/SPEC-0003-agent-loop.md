@@ -46,3 +46,5 @@ trips. Every step is an event on the protocol stream.
   attempts are not added to the history. If the corrected reply carries
   provider-signed blocks (thinking), the attempts are kept so history stays
   truthful. After 2 re-asks the reply is processed normally (calls fail).
+- **AC9** With `stream = true` each reply's text is emitted as `text_delta`
+  events before the full `message` event; with `stream = false` only `message`.

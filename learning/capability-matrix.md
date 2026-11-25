@@ -12,7 +12,7 @@ updates a harness profile or adds or promotes a strategy.
 | context | **pinned_then_in_order** + compaction (GRAFT-0023) | — | repo map (aider), retrieval |
 | approval | **ordered_rules** (GRAFT-0002) | allow_all | approval modes per session (codex) |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
-| provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009) | mock | Bedrock/Vertex, streaming |
+| provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009) streaming (GRAFT-0045) | mock | Bedrock/Vertex |
 | tools | read, write, edit, ls, glob, grep, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
 | session | save/resume/repair, undo (GRAFT-0005, 0020) | budgets (0021) | git checkpoints per turn (cline), fork (opencode) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
@@ -26,7 +26,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 |---|---|---|
 | codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034, 0043 |
 | claude-code | v2.1.331 (docs) | 0012, 0013, 0016, 0017, 0018, 0028, 0031, 0036 |
-| opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038 |
+| opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038, 0045 |
 | gemini-cli | v0.71.1 | 0027, 0037 |
 | aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039 |
 | goose | v1.60.2 | 0019, 0022, 0033 |

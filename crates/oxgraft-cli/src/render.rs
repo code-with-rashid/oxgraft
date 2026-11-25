@@ -5,6 +5,8 @@ use oxgraft_protocol::Event;
 #[derive(Debug, Default)]
 pub struct Human {
     tools: std::collections::HashMap<String, String>,
+    /// Text deltas have been printed for the reply in progress (ADR 0007).
+    streaming: bool,
 }
 
 fn one_line(s: &str, max: usize) -> String {
@@ -18,7 +20,24 @@ fn one_line(s: &str, max: usize) -> String {
 
 impl Human {
     pub fn event(&mut self, event: &Event) {
+        use std::io::Write;
+        if self.streaming && !matches!(event, Event::TextDelta { .. }) {
+            // End the streamed line before anything else is printed.
+            println!();
+            self.streaming = false;
+            if matches!(event, Event::Message { .. }) {
+                return; // already shown as it streamed
+            }
+        }
         match event {
+            Event::TextDelta { text } => {
+                if !self.streaming {
+                    println!();
+                    self.streaming = true;
+                }
+                print!("{text}");
+                let _ = std::io::stdout().flush();
+            }
             Event::Message { text, .. } => println!("\n{}", text.trim()),
             Event::ToolCall { id, tool, input } => {
                 let arg = ["path", "command", "pattern"]

@@ -32,7 +32,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 - [x] Stability: interrupts, budgets, read-before-edit, session repair, Windows shell
 - [x] Review 16 watched harnesses upstream at pinned versions
 - [x] Deny-wins rules, compound-command checks, protected paths, mistake breaker, verify loop, JIT instructions
-- [ ] Streaming output (Anthropic SSE, OpenAI stream)
+- [x] Streaming output (Anthropic SSE, OpenAI stream)
 
 ## Backlog from reviews (ranked; each needs a graft record first)
 

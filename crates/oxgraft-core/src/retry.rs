@@ -40,10 +40,32 @@ pub fn complete_with_retries(
     sleep: &dyn Fn(Duration),
     on_retry: &mut dyn FnMut(u32, Duration, &ProviderError),
 ) -> Result<Completion, ProviderError> {
+    with_retries(policy, sleep, on_retry, &mut || provider.complete(request))
+}
+
+/// Stream from the provider (ADR 0007), retrying transient failures. Text already
+/// delivered by a failed attempt is followed by `on_retry`, so renderers can start over.
+pub fn stream_with_retries(
+    provider: &dyn Provider,
+    request: &CompletionRequest,
+    policy: &RetryPolicy,
+    sleep: &dyn Fn(Duration),
+    on_retry: &mut dyn FnMut(u32, Duration, &ProviderError),
+    on_text: &mut dyn FnMut(&str),
+) -> Result<Completion, ProviderError> {
+    with_retries(policy, sleep, on_retry, &mut || provider.stream(request, on_text))
+}
+
+fn with_retries(
+    policy: &RetryPolicy,
+    sleep: &dyn Fn(Duration),
+    on_retry: &mut dyn FnMut(u32, Duration, &ProviderError),
+    call: &mut dyn FnMut() -> Result<Completion, ProviderError>,
+) -> Result<Completion, ProviderError> {
     let mut attempt = 0;
     loop {
         attempt += 1;
-        match provider.complete(request) {
+        match call() {
             Ok(c) => return Ok(c),
             Err(e) if e.retryable() && attempt < policy.max_attempts => {
                 let wait = policy.wait(attempt, e.retry_after_ms);

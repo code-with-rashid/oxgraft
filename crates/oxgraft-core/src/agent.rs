@@ -17,7 +17,7 @@ use oxgraft_seams::{
 use serde_json::Value;
 
 use crate::Toolkit;
-use crate::retry::{RetryPolicy, complete_with_retries};
+use crate::retry::{RetryPolicy, complete_with_retries, stream_with_retries};
 use crate::session::Session;
 
 /// Answer to an approval prompt.
@@ -65,6 +65,8 @@ pub struct AgentConfig {
     pub subagents: bool,
     /// Command run after any turn that changed files; failures go back to the model.
     pub verify_command: Option<String>,
+    /// Stream model output as `text_delta` events (ADR 0007).
+    pub stream: bool,
 }
 
 impl AgentConfig {
@@ -83,6 +85,7 @@ impl AgentConfig {
             context_window: Some(200_000),
             subagents: true,
             verify_command: None,
+            stream: true,
         }
     }
 
@@ -332,15 +335,34 @@ impl<'a> Agent<'a> {
                 tools: specs.clone(),
                 max_tokens: self.config.max_tokens,
             };
-            let completion = complete_with_retries(
-                self.provider,
-                &request,
-                &self.config.retry,
-                &|d| (self.sleep)(d),
-                &mut |attempt, wait, err| {
-                    emit(&Event::Retrying { attempt, wait_ms: wait.as_millis() as u64, message: err.to_string() })
-                },
-            );
+            let completion = if self.config.stream {
+                // Both closures need `emit`; route retries through a cell (ADR 0007).
+                let emit_cell = std::cell::RefCell::new(&mut *emit);
+                stream_with_retries(
+                    self.provider,
+                    &request,
+                    &self.config.retry,
+                    &|d| (self.sleep)(d),
+                    &mut |attempt, wait, err| {
+                        (emit_cell.borrow_mut())(&Event::Retrying {
+                            attempt,
+                            wait_ms: wait.as_millis() as u64,
+                            message: err.to_string(),
+                        })
+                    },
+                    &mut |text| (emit_cell.borrow_mut())(&Event::TextDelta { text: text.to_string() }),
+                )
+            } else {
+                complete_with_retries(
+                    self.provider,
+                    &request,
+                    &self.config.retry,
+                    &|d| (self.sleep)(d),
+                    &mut |attempt, wait, err| {
+                        emit(&Event::Retrying { attempt, wait_ms: wait.as_millis() as u64, message: err.to_string() })
+                    },
+                )
+            };
             let mut completion = match completion {
                 Ok(c) => c,
                 Err(e) => return self.finish(session, emit, Status::Failed(e.to_string()), turn, usage, final_text),

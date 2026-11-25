@@ -608,3 +608,26 @@ fn protected_paths_always_ask_and_mistakes_trip_the_breaker() {
     let (status, _, _) = run_with(&ws, json!({ "turns": bad }), |_| {}, None);
     assert_eq!(status, Status::Stopped("12 consecutive tool errors".into()));
 }
+
+// SPEC-0003 AC9 (ADR 0007): replies stream as text_delta events, then the full message.
+#[test]
+fn replies_stream_as_text_deltas_then_full_messages() {
+    let ws = Ws::new("stream");
+    let (_, events, _) = run(&ws, "allow_all", Answer::Yes, json!({"turns": [{"text": "streamed reply"}]}), 2);
+    let delta = events.iter().position(|e| matches!(e, Event::TextDelta { text } if text == "streamed reply"));
+    let message = events.iter().position(|e| matches!(e, Event::Message { text, .. } if text == "streamed reply"));
+    assert!(delta.is_some() && message.is_some() && delta < message, "{events:?}");
+
+    let script: Script = serde_json::from_value(json!({"turns": [{"text": "plain"}]})).unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    config.stream = false;
+    let agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    agent.run(&mut session, "x", &mut |e| events.push(e.clone()));
+    assert!(!events.iter().any(|e| matches!(e, Event::TextDelta { .. })));
+    assert!(events.iter().any(|e| matches!(e, Event::Message { .. })));
+}

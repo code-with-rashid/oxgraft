@@ -2,7 +2,7 @@
 id: SPEC-0001
 title: Conversation model and providers
 status: implemented
-grafts: []
+grafts: [GRAFT-0045]
 ---
 
 # SPEC-0001: Conversation model and providers
@@ -51,3 +51,9 @@ provider-neutral conversation model and a small `Provider` trait.
 - **AC6** Missing API keys produce an actionable error naming the env var.
 - **AC7** The mock provider replays turns in order and errors clearly when the
   script runs out.
+- **AC7** With streaming on (default), Anthropic and OpenAI-compatible providers
+  request server-sent events and report text as it arrives; the completion they
+  return equals the non-streaming one (same parser). A stream that ends early or
+  sends an error event is a classified error (overloaded = transient). An
+  OpenAI-compatible server that rejects the streaming request with a 4xx gets a
+  plain request instead.
