@@ -397,6 +397,9 @@ struct Setup {
     model: String,
     config: AgentConfig,
     tools: Vec<Box<dyn oxgraft_seams::Tool>>,
+    /// Provider options (effort, thinking), for switching models in chat.
+    effort: Option<String>,
+    thinking: bool,
     /// Provider and model for the `task` subagent, when `subagent_model` is set.
     subagent: Option<(Box<dyn oxgraft_seams::Provider>, String)>,
 }
@@ -495,6 +498,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     };
     Ok(Setup {
         ws,
+        effort: cfg.effort.clone(),
+        thinking: cfg.thinking,
         subagent,
         toolkit,
         profile_text,
@@ -751,6 +756,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             Toolkit::assemble(profile, available_with(rules)).map_err(usage)
         })
         .collect::<Result<_, _>>()?;
+    let (effort, thinking) = (s.effort.clone(), s.thinking);
     let mut mode = s.mode.clone();
     let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
@@ -835,6 +841,36 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            m if m == "/model" || m.starts_with("/model ") => {
+                // GRAFT-0083: switch model mid-conversation; history is kept.
+                let wanted = m.trim_start_matches("/model").trim();
+                if wanted.is_empty() {
+                    eprintln!(
+                        "model: {} (switch with /model <provider/model> or an alias like sonnet)",
+                        agent.config.model
+                    );
+                    continue;
+                }
+                let built = oxgraft_providers::parse_model(wanted).and_then(|r| {
+                    oxgraft_providers::build(
+                        &r,
+                        &oxgraft_providers::Options { effort: effort.clone(), no_thinking: !thinking },
+                    )
+                    .map(|p| (r, p))
+                });
+                match built {
+                    Ok((r, provider)) => {
+                        // The agent borrows its provider for the whole chat; a switched-to
+                        // provider lives until exit (a few bytes per switch).
+                        agent.provider = Box::leak(provider);
+                        agent.config.model = r.model.clone();
+                        session.model = wanted.to_string();
+                        eprintln!("model: {} via {} (the edit format chosen at startup stays)", r.model, r.provider);
+                    }
+                    Err(e) => eprintln!("cannot switch to `{wanted}`: {}", e.message),
+                }
+                continue;
+            }
             m if m == "/mode" || m.starts_with("/mode ") => {
                 let wanted = m.trim_start_matches("/mode").trim();
                 if wanted.is_empty() {
@@ -865,7 +901,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\

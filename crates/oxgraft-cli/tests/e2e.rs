@@ -719,3 +719,31 @@ fn chat_mode_switches_approvals() {
     );
     assert!(ws.0.join("made.txt").exists(), "auto-edit allowed the write without a prompt: {err}");
 }
+
+// GRAFT-0083: /model switches the model mid-chat.
+#[test]
+fn chat_model_switches_provider() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatmodel");
+    let first = ws.script(json!([{"text": "from the first model"}]));
+    let second_path = ws.0.join("second.json");
+    std::fs::write(&second_path, json!({"turns": [{"text": "from the second model"}]}).to_string()).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &first])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = format!("hello\n/model nope/x\n/model mock:{}\nhello again\n/exit\n", second_path.display());
+    child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("from the first model") && stdout.contains("from the second model"), "{stdout}\n{stderr}");
+    assert!(stderr.contains("cannot switch to `nope/x`"), "{stderr}");
+}

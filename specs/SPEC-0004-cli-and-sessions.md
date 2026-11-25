@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -96,3 +96,5 @@ otherwise an error explaining how to choose one.
 - **AC19** In chat, a line that is just `"""` starts a multi-line message that
   ends at the next `"""`, and a line ending in a backslash continues on the next
   line.
+- **AC20** In chat, `/model M` switches the model for the following messages,
+  keeping the conversation; an invalid model is reported and changes nothing.
