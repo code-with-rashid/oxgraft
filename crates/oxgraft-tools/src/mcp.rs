@@ -185,7 +185,9 @@ impl Client {
     /// POST one JSON-RPC message; returns the response for `msg`'s id, if any.
     fn http_post(&self, msg: &Value, timeout: Duration) -> Result<Option<Value>, String> {
         let Transport::Http { url, headers, session } = &self.transport else { return Ok(None) };
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout(timeout).build();
+        // No redirects: auth headers must never be replayed to another host.
+        let agent =
+            ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout(timeout).redirects(0).build();
         let mut req = agent
             .post(url)
             .set("Content-Type", "application/json")

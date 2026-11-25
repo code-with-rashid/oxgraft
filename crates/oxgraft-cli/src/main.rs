@@ -403,6 +403,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     }
     config.verify_command = cfg.verify_command.clone();
     config.stream = cfg.stream;
+    config.todo_reminder = !common.plan;
     config.checkpoints = cfg.checkpoints;
     let (program, args) = oxgraft_tools::shell_program();
     config.shell = oxgraft_core::hooks::Shell { program, args };
@@ -490,7 +491,11 @@ fn run(
     if task.trim().is_empty() {
         return Err(usage("the task is empty"));
     }
-    if task.trim_start().starts_with('/') {
+    let looks_like_command =
+        task.trim_start().strip_prefix('/').and_then(|rest| rest.split_whitespace().next()).is_some_and(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+    if looks_like_command {
         let ws = workspace(common)?;
         match commands::expand(&ws, &task) {
             Some(expanded) => task = expanded,
@@ -814,13 +819,21 @@ fn live_checks(provider: &dyn oxgraft_seams::Provider, model: &str) -> Vec<(bool
         system: "You are a connectivity check. Answer with exactly one word.".into(),
         messages: vec![Message::user("Reply with the word: ready")],
         tools: Vec::new(),
-        max_tokens: 1024,
+        max_tokens: 4096,
     };
     let start = std::time::Instant::now();
     let mut deltas = 0usize;
     match provider.stream(&plain, &mut |_| deltas += 1) {
         Ok(c) => {
             let text = Message::assistant(c.content).text();
+            if text.trim().is_empty() {
+                out.push((
+                    false,
+                    "live reply",
+                    "the model returned no text (raise max_tokens, or set thinking = false)".into(),
+                ));
+                return out;
+            }
             let shown: String = text.trim().chars().take(60).collect();
             out.push((
                 true,
@@ -847,7 +860,7 @@ fn live_checks(provider: &dyn oxgraft_seams::Provider, model: &str) -> Vec<(bool
             description: "Echo text back.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
         }],
-        max_tokens: 1024,
+        max_tokens: 4096,
     };
     match provider.complete(&tools) {
         Ok(c) => {

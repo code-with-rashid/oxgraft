@@ -173,7 +173,7 @@ impl Tool for Grep {
                     let l: String = l.trim_end().chars().take(MAX_MATCH_LINE).collect();
                     let is_match = j == i || (j > i && re.is_match(lines[j]));
                     if is_match && j != i {
-                        continue; // a later match prints itself
+                        break; // the next match prints itself, with its own context
                     }
                     matches.push(if j == i {
                         format!("{shown}:{}: {l}", j + 1)
@@ -235,6 +235,11 @@ mod tests {
         let out = f.run(&Grep, json!({"pattern": "TARGET", "context": 1}));
         let expect = "a.txt-2- two\na.txt:3: TARGET three\na.txt-4- four\n--\na.txt-7- seven\na.txt:8: TARGET eight\na.txt:9: TARGET nine\na.txt-10- ten";
         assert_eq!(out.content, expect);
+        // Matches inside each other's windows all show (review finding).
+        f.file("b.txt", "a\nb\nHIT 3\nHIT 4\nc\nd\ne\n");
+        let out = f.run(&Grep, json!({"pattern": "HIT", "context": 2, "path": "b.txt"}));
+        assert!(out.content.contains(":3: HIT 3") && out.content.contains(":4: HIT 4"), "{}", out.content);
+        assert!(out.content.contains("-6- d") && !out.content.contains("-7-"), "{}", out.content);
         let plain = f.run(&Grep, json!({"pattern": "TARGET"}));
         assert_eq!(plain.content.lines().count(), 3);
     }

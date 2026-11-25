@@ -649,3 +649,12 @@ fn plan_mode_changes_nothing() {
     );
     assert_eq!(ws.oxgraft(&["run", "--plan", "--mode", "full-auto", "--model", &model, "x"]).status.code(), Some(2));
 }
+
+// Review finding: a task that is just an absolute path is a task, not a custom command.
+#[test]
+fn absolute_path_tasks_are_not_commands() {
+    let ws = Ws::new("abspath");
+    let model = ws.script(json!([{"text": "looked"}]));
+    let out = ws.oxgraft(&["run", "--model", &model, "/tmp/notes.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+}

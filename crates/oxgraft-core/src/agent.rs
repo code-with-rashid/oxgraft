@@ -74,6 +74,8 @@ pub struct AgentConfig {
     pub shell: crate::hooks::Shell,
     /// Command that must pass before the run may finish (`oxgraft run --until`).
     pub finish_check: Option<String>,
+    /// Remind the model of unfinished todo items before finishing (off in plan mode).
+    pub todo_reminder: bool,
 }
 
 impl AgentConfig {
@@ -96,6 +98,7 @@ impl AgentConfig {
             checkpoints: false,
             shell: crate::hooks::Shell::default(),
             finish_check: None,
+            todo_reminder: true,
         }
     }
 
@@ -674,7 +677,8 @@ impl<'a> Agent<'a> {
                 // reminders): once per run, point out items not marked done.
                 let open: Vec<&str> =
                     state.todo.iter().filter(|(_, st)| st != "done").map(|(t, _)| t.as_str()).collect();
-                if !open.is_empty() && !state.todo_reminded {
+                let last_turn = turn == self.config.max_turns;
+                if !open.is_empty() && !state.todo_reminded && self.config.todo_reminder && !last_turn {
                     state.todo_reminded = true;
                     emit(&Event::Warning {
                         message: format!("{} todo item(s) not done; reminding the model", open.len()),
@@ -695,9 +699,12 @@ impl<'a> Agent<'a> {
                 {
                     let (ok, out) = crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600);
                     if !ok {
-                        if finish_failures >= MAX_FINISH_ROUNDS {
-                            let reason =
-                                format!("finish check `{check}` still failing after {MAX_FINISH_ROUNDS} rounds");
+                        if finish_failures >= MAX_FINISH_ROUNDS || last_turn {
+                            let reason = if last_turn {
+                                format!("finish check `{check}` failed and no turns are left")
+                            } else {
+                                format!("finish check `{check}` still failing after {MAX_FINISH_ROUNDS} rounds")
+                            };
                             return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
                         }
                         finish_failures += 1;
@@ -711,7 +718,7 @@ impl<'a> Agent<'a> {
                     }
                 }
                 // stop hooks (GRAFT-0062): exit 2 sends feedback and the run goes on.
-                if depth == 0 && stop_rounds < MAX_STOP_ROUNDS {
+                if depth == 0 && stop_rounds < MAX_STOP_ROUNDS && !last_turn {
                     let mut feedback = Vec::new();
                     for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::Stop) {
                         match hook.run(

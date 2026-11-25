@@ -821,3 +821,20 @@ fn always_for_web_fetch_is_per_host() {
     assert_eq!(always_keys("bash", "cargo test --release"), vec!["bash:cargo test"]);
     assert_eq!(always_keys("bash", "ls -la && git status"), vec!["bash:ls", "bash:git status"]);
 }
+
+// Review finding: an end-of-run reminder must not turn a finished last turn into "max turns".
+#[test]
+fn reminders_never_fail_a_finished_last_turn() {
+    let ws = Ws::new("lastturn");
+    let (status, _, _) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "todo", "input": {"items": [{"text": "a", "status": "pending"}]}}]},
+            {"text": "done for now"}
+        ]}),
+        2,
+    );
+    assert_eq!(status, Status::Done);
+}
