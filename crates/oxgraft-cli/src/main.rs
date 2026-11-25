@@ -763,6 +763,15 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            "/compact" => {
+                let mut renderer = render::Human::default();
+                if agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e)) {
+                    eprintln!("context compacted: {} messages summarised so far", session.archived_messages);
+                } else {
+                    eprintln!("nothing to compact");
+                }
+                continue;
+            }
             "/clear" | "/new" => {
                 session = Session::new(&s.model, &s.toolkit.profile.name, &s.ws);
                 eprintln!("started a new session {}", session.id);
@@ -771,7 +780,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."

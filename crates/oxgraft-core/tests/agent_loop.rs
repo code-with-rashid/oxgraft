@@ -838,3 +838,26 @@ fn reminders_never_fail_a_finished_last_turn() {
     );
     assert_eq!(status, Status::Done);
 }
+
+// GRAFT-0076: compaction on request.
+#[test]
+fn sessions_compact_on_request() {
+    let ws = Ws::new("compactnow");
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"text": "first answer"},
+        {"text": "Summary: the user asked a question; it was answered."}
+    ]}))
+    .unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let agent =
+        Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, AgentConfig::new("mock", ws.0.clone()));
+    let mut session = Session::new("mock", "test", &ws.0);
+    assert!(!agent.compact_session(&mut session, &mut |_| {}), "empty session: nothing to compact");
+    agent.run(&mut session, "a question", &mut |_| {});
+    assert!(agent.compact_session(&mut session, &mut |_| {}));
+    assert_eq!(session.compactions, 1);
+    assert_eq!(session.messages.len(), 1);
+    assert!(session.messages[0].text().contains("Summary: the user asked"));
+}

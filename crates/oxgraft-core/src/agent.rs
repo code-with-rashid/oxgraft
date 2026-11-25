@@ -849,6 +849,19 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// Compact now, at the user's request (GRAFT-0076, after Claude Code's `/compact`).
+    /// Returns false if there was nothing to compact or the summary failed.
+    pub fn compact_session(&self, session: &mut Session, emit: &mut dyn FnMut(&Event)) -> bool {
+        if session.messages.len() < 2 {
+            return false;
+        }
+        let task = session.messages.iter().find(|m| m.role == Role::User).map(Message::text).unwrap_or_default();
+        let before = session.compactions;
+        let mut usage = Usage::default();
+        self.compact(session, &task, &self.system_prompt(), &mut usage, emit);
+        session.compactions > before
+    }
+
     /// Context compaction (GRAFT-0023, after Pi, OpenCode and Claude Code): ask the model
     /// for a handover summary, archive the old messages, and continue from the summary.
     /// The history is never edited in place, so provider-specific blocks stay valid.

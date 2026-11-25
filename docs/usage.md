@@ -63,7 +63,7 @@ oxgraft --mode auto-edit                  # edits without asking; commands still
 oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
 ```
 
-In chat: `!command` (run it yourself; the output goes with your next message), `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
+In chat: `!command` (run it yourself; the output goes with your next message), `/compact`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
 `/help`, `/exit`. Ctrl-C interrupts the current run (and any running command);
 press it again to quit.
 
