@@ -46,7 +46,6 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   (iterations 73–76), including two security holes: a checkpoint repo planted
   by a cloned repository could run code, and the risk rails missed commands
   that weren't first in their part (`xargs rm -rf`, `if …; then rm -rf ~`).
-  The fix for Windows `\\?\` paths passed to git is untested on Windows.
 - CI is green on Linux, macOS and Windows for iterations 53–76 (run 45551308549).
   Its first run caught a path-spelling bug in the checkpoint "never inside the
   workspace" check (macOS `/private/var`, Windows short names), now fixed.
