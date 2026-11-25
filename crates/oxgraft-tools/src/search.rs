@@ -105,7 +105,8 @@ impl Tool for Grep {
                 "properties": {
                     "pattern": {"type": "string", "description": "Regular expression"},
                     "path": {"type": "string", "description": "Directory or file (default: workspace root)"},
-                    "glob": {"type": "string", "description": "Only search files matching this glob"}
+                    "glob": {"type": "string", "description": "Only search files matching this glob"},
+                    "context": {"type": "integer", "description": "Lines of context before and after each match (0-5, default 0)"}
                 },
                 "required": ["pattern"]
             }),
@@ -124,6 +125,7 @@ impl Tool for Grep {
             Some(g) => Some(try_tool!(glob_matcher(g))),
             None => None,
         };
+        let context = input.get("context").and_then(Value::as_u64).unwrap_or(0).min(5) as usize;
         let mut matches = Vec::new();
         let mut total = 0usize;
         for entry in walker(&base).filter_map(Result::ok) {
@@ -147,13 +149,38 @@ impl Tool for Grep {
             }
             let text = String::from_utf8_lossy(&bytes);
             let shown = display(ctx.workspace, entry.path());
-            for (i, line) in text.lines().enumerate() {
-                if re.is_match(line) {
-                    total += 1;
-                    if matches.len() < MAX_MATCHES {
-                        let line: String = line.trim_end().chars().take(MAX_MATCH_LINE).collect();
-                        matches.push(format!("{shown}:{}: {line}", i + 1));
+            let lines: Vec<&str> = text.lines().collect();
+            // With context (GRAFT-0061, like `grep -C`): `path:N:` marks a match,
+            // `path-N-` a context line; `--` separates groups.
+            let mut last_shown: Option<usize> = None;
+            for (i, line) in lines.iter().enumerate() {
+                if !re.is_match(line) {
+                    continue;
+                }
+                total += 1;
+                if matches.len() >= MAX_MATCHES {
+                    continue;
+                }
+                let from = i.saturating_sub(context);
+                let to = (i + context).min(lines.len().saturating_sub(1));
+                if context > 0 && last_shown.is_some_and(|l| from > l + 1) {
+                    matches.push("--".to_string());
+                }
+                for (j, l) in lines.iter().enumerate().take(to + 1).skip(from) {
+                    if last_shown.is_some_and(|shown_to| j <= shown_to) {
+                        continue;
                     }
+                    let l: String = l.trim_end().chars().take(MAX_MATCH_LINE).collect();
+                    let is_match = j == i || (j > i && re.is_match(lines[j]));
+                    if is_match && j != i {
+                        continue; // a later match prints itself
+                    }
+                    matches.push(if j == i {
+                        format!("{shown}:{}: {l}", j + 1)
+                    } else {
+                        format!("{shown}-{}- {l}", j + 1)
+                    });
+                    last_shown = Some(j);
                 }
             }
         }
@@ -198,6 +225,18 @@ mod tests {
         let out = f.run(&Grep, json!({"pattern": "main", "glob": "*.rs"}));
         assert!(!out.content.contains("a.py"));
         assert!(f.run(&Grep, json!({"pattern": "("})).is_error);
+    }
+
+    // SPEC-0002 AC14 (GRAFT-0061)
+    #[test]
+    fn grep_shows_context_lines() {
+        let f = Fixture::new("grepctx");
+        f.file("a.txt", "one\ntwo\nTARGET three\nfour\nfive\nsix\nseven\nTARGET eight\nTARGET nine\nten\n");
+        let out = f.run(&Grep, json!({"pattern": "TARGET", "context": 1}));
+        let expect = "a.txt-2- two\na.txt:3: TARGET three\na.txt-4- four\n--\na.txt-7- seven\na.txt:8: TARGET eight\na.txt:9: TARGET nine\na.txt-10- ten";
+        assert_eq!(out.content, expect);
+        let plain = f.run(&Grep, json!({"pattern": "TARGET"}));
+        assert_eq!(plain.content.lines().count(), 3);
     }
 
     // SPEC-0002 AC2: search never follows symlinks out of the workspace.

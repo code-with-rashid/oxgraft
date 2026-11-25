@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061]
 ---
 
 # SPEC-0002: Built-in tools
@@ -69,3 +69,6 @@ tools beat many overlapping ones) that is safe by default.
 - **AC13** When `bash` output is longer than the output limit, the full output
   is written to `.oxgraft/outputs/` (the 20 newest are kept) and the truncated
   result names that file.
+- **AC14** `grep` with `context: N` (0-5) shows N lines around each match:
+  matches as `path:N: text`, context as `path-N- text`, separate groups split
+  by `--`, overlapping groups merged.
