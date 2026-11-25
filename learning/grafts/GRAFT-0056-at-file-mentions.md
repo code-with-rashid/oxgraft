@@ -6,7 +6,7 @@ status: trial
 seam: context
 donor: claude-code
 donor_version: ""
-license: NOASSERTION
+license: proprietary
 origin: clean-room
 strategy: ""
 opened: 2026-11-25
