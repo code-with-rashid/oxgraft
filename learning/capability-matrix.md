@@ -31,7 +31,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 | aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039, 0053, 0064, 0065, 0079, 0082, 0083 |
 | goose | v1.60.2 | 0019, 0022, 0033, 0055, 0072 |
 | pi | v1.6.0 | 0023, 0049, 0050 |
-| cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046 |
+| cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046, 0084 |
 | openhands | v1.45.0 (sdk v1.64.0) | 0021, 0042 |
 | swe-agent | v1.1.0 | 0004, 0044, 0048, 0063 |
 | mini-swe-agent | v2.4.6 | 0007 |

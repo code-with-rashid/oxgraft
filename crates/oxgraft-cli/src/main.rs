@@ -632,6 +632,41 @@ fn run(
     Ok(status_code(&outcome.status))
 }
 
+/// Preview of an edit or write for the approval prompt: SEARCH/REPLACE or patch
+/// text as sent; old/new_string pairs (and batched `edits`) as `- old` / `+ new`
+/// lines (GRAFT-0084); file content for writes. At most `max` lines.
+fn preview_lines(tool: &str, input: &Value, max: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let pair = |lines: &mut Vec<String>, old: &str, new: &str| {
+        lines.extend(old.lines().map(|l| format!("- {l}")));
+        lines.extend(new.lines().map(|l| format!("+ {l}")));
+    };
+    match tool {
+        "edit" if input.get("edit").is_some() => {
+            lines.extend(input["edit"].as_str().unwrap_or("").lines().map(str::to_string));
+        }
+        "edit" if input.get("edits").is_some() => {
+            for (i, e) in input["edits"].as_array().into_iter().flatten().enumerate() {
+                if i > 0 {
+                    lines.push("···".into());
+                }
+                pair(&mut lines, e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""));
+            }
+        }
+        "edit" => {
+            pair(&mut lines, input["old_string"].as_str().unwrap_or(""), input["new_string"].as_str().unwrap_or(""))
+        }
+        "write" => lines.extend(input["content"].as_str().unwrap_or("").lines().map(str::to_string)),
+        _ => {}
+    }
+    if lines.len() > max {
+        let more = lines.len() - max;
+        lines.truncate(max);
+        lines.push(format!("… {more} more lines"));
+    }
+    lines
+}
+
 /// Read one chat message (GRAFT-0082): a line; lines ending in `\\` continue; a
 /// line that is just `"""` starts a block that runs until the next `"""`. `None`
 /// at end of input.
@@ -942,19 +977,8 @@ impl Approver for TerminalApprover {
             _ => action.resource.clone(),
         };
         // Show what will change before asking (GRAFT-0029, as Cline and Claude Code do).
-        let preview = match tool {
-            "edit" => input["edit"].as_str().or(input["new_string"].as_str()),
-            "write" => input["content"].as_str(),
-            _ => None,
-        };
-        if let Some(text) = preview {
-            let lines: Vec<&str> = text.lines().collect();
-            for line in lines.iter().take(40) {
-                eprintln!("    │ {line}");
-            }
-            if lines.len() > 40 {
-                eprintln!("    │ … {} more lines", lines.len() - 40);
-            }
+        for line in preview_lines(tool, input, 40) {
+            eprintln!("    │ {line}");
         }
         // Risk rails (GRAFT-0042): say why, and don't offer "always".
         let risk = if tool == "bash" { oxgraft_strategies::approval::shell_risk(&action.resource) } else { None };
@@ -1229,6 +1253,21 @@ fn doctor(common: &Common, live: bool) -> CliResult {
 #[cfg(test)]
 mod input_tests {
     use super::read_message;
+
+    #[test]
+    fn edit_previews_show_old_and_new() {
+        let p = super::preview_lines(
+            "edit",
+            &serde_json::json!({"path": "a", "old_string": "x = 1", "new_string": "x = 2"}),
+            40,
+        );
+        assert_eq!(p, vec!["- x = 1", "+ x = 2"]);
+        let batch = serde_json::json!({"edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "d"}]});
+        assert_eq!(super::preview_lines("edit", &batch, 40), vec!["- a", "+ b", "···", "- c", "+ d"]);
+        let long = serde_json::json!({"content": "1\n2\n3\n4"});
+        assert_eq!(super::preview_lines("write", &long, 2), vec!["1", "2", "… 2 more lines"]);
+        assert!(super::preview_lines("bash", &serde_json::json!({"command": "ls"}), 40).is_empty());
+    }
 
     #[test]
     fn multi_line_messages() {
