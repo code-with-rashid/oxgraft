@@ -48,6 +48,13 @@ struct Common {
     /// Extra instructions added to the system prompt for this run.
     #[arg(long, global = true, value_name = "TEXT")]
     append_system_prompt: Option<String>,
+    /// Allow a tool without asking for this run: `TOOL` or `TOOL:PATTERN`, e.g.
+    /// `bash:cargo *` (repeatable; deny rules still win).
+    #[arg(long = "allow-tool", global = true, value_name = "TOOL[:PATTERN]")]
+    allow_tool: Vec<String>,
+    /// Deny a tool for this run: `TOOL` or `TOOL:PATTERN` (repeatable).
+    #[arg(long = "deny-tool", global = true, value_name = "TOOL[:PATTERN]")]
+    deny_tool: Vec<String>,
     /// Plan only: read-only mode, and the model returns a step-by-step plan
     /// instead of changing anything. Continue with `--resume last`.
     #[arg(long, global = true, conflicts_with = "mode")]
@@ -190,6 +197,20 @@ const EXIT_STOPPED: u8 = 3;
 
 fn available() -> Available {
     available_with(Vec::new())
+}
+
+/// Rules from `--allow-tool` / `--deny-tool` (GRAFT-0097, after Claude Code's
+/// `--allowedTools` / `--disallowedTools`): `TOOL` or `TOOL:PATTERN`. Added last,
+/// so they beat mode and config allows; any deny still wins over any allow.
+fn flag_rules(allow: &[String], deny: &[String]) -> Vec<oxgraft_strategies::approval::Rule> {
+    use oxgraft_seams::Decision;
+    use oxgraft_strategies::approval::Rule;
+    let parse = |spec: &str, d: Decision| {
+        let (tool, pattern) = spec.split_once(':').unwrap_or((spec, "*"));
+        let rule = Rule::new(tool.trim(), pattern.trim(), d);
+        if d == Decision::Deny { rule.because("denied for this run with --deny-tool") } else { rule }
+    };
+    allow.iter().map(|a| parse(a, Decision::Allow)).chain(deny.iter().map(|d| parse(d, Decision::Deny))).collect()
 }
 
 /// Approval modes, in order of autonomy.
@@ -496,6 +517,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
     let mut rules = mode_rules(&cfg.approval_mode).map_err(usage)?;
     rules.extend(cfg.rules.clone());
+    rules.extend(flag_rules(&common.allow_tool, &common.deny_tool));
     let toolkit = Toolkit::assemble(profile, available_with(rules)).map_err(usage)?;
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
@@ -564,7 +586,11 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         subagent,
         toolkit,
         profile_text,
-        user_rules: cfg.rules.clone(),
+        user_rules: {
+            let mut r = cfg.rules.clone();
+            r.extend(flag_rules(&common.allow_tool, &common.deny_tool));
+            r
+        },
         mode: cfg.approval_mode.clone(),
         provider,
         model: model_spec,

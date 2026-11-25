@@ -64,6 +64,7 @@ oxgraft --mode read-only run "explain the auth flow"   # no edits or commands at
 oxgraft run --plan "migrate to the new API"     # read-only; ends with a plan. Then: oxgraft run --resume last "go ahead"
 oxgraft --mode auto-edit                  # edits without asking; commands still ask
 oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
+oxgraft run --allow-tool 'bash:cargo *' --deny-tool web_fetch "…"   # per-run permissions
 ```
 
 In chat: `"""` starts and ends a multi-line message; `!command` (run it yourself; the output goes with your next message), `/compact`, `/diff`, `/init`, `/mode X`, `/model M`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,

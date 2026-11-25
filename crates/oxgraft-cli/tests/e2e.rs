@@ -817,3 +817,31 @@ fn config_command_shows_resolved_settings() {
         assert!(text.contains(expect), "missing {expect}:\n{text}");
     }
 }
+
+// GRAFT-0097: --allow-tool / --deny-tool for one run.
+#[test]
+fn tool_flags_allow_and_deny_for_a_run() {
+    let ws = Ws::new("toolflags");
+    let turns = json!([
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo allowed"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "ls"}}]},
+        {"text": "done"}
+    ]);
+    // No --yes: asks are declined, so `echo` passing proves the allow flag.
+    let model = ws.script(turns.clone());
+    let out = ws.oxgraft(&["run", "--json", "--allow-tool", "bash:echo *", "--model", &model, "x"]);
+    let r: Vec<(bool, String)> = events(&out)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::ToolResult { ok, output, .. } => Some((ok, output)),
+            _ => None,
+        })
+        .collect();
+    assert!(r[0].0 && r[0].1.contains("allowed") && !r[1].0, "{r:?}");
+    let model = ws.script(turns);
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--deny-tool", "bash", "--model", &model, "x"]);
+    let denied = events(&out)
+        .into_iter()
+        .any(|e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("--deny-tool")));
+    assert!(denied);
+}

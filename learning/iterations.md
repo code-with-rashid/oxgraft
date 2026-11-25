@@ -134,3 +134,4 @@ honestly: an iteration is only logged when its tests pass.
 | 126 | 2026-11-25 | codex | Model-run shell commands don't inherit secret-looking env vars (KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL); `OXGRAFT_SHELL_ENV_KEEP` passes chosen ones | adopt | GRAFT-0094 | SPEC-0006 | `secret_looking_variables_are_hidden` |
 | 127 | 2026-11-25 | codex, claude-code | Session files written owner-only (0600, folder 0700) on Unix, best effort | adopt | GRAFT-0095 | SPEC-0004 | `session_files_are_private` |
 | 128 | 2026-11-25 | claude-code | `glob` lists the most recently modified files first | adopt | GRAFT-0096 | SPEC-0002 | `glob_lists_newest_first` |
+| 129 | 2026-11-25 | claude-code | `--allow-tool TOOL[:PATTERN]` / `--deny-tool` add rules for one run (deny still wins) | adopt | GRAFT-0097 | SPEC-0004 | `tool_flags_allow_and_deny_for_a_run` |
