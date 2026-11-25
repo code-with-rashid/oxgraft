@@ -46,7 +46,7 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   (iterations 73–76), including two security holes: a checkpoint repo planted
   by a cloned repository could run code, and the risk rails missed commands
   that weren't first in their part (`xargs rm -rf`, `if …; then rm -rf ~`).
-  The Windows `\?\` path fix for git is untested on Windows.
+  The fix for Windows `\\?\` paths passed to git is untested on Windows.
 - **CI has not run on iterations 53–76.** GitHub was unreachable from the build
   machine for the whole session (other sites worked), so these commits are
   local only. Push, then check the Windows and macOS jobs first: new tests use
