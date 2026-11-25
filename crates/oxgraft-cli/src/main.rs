@@ -85,6 +85,13 @@ enum Command {
     Sessions,
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Write a session as a Markdown transcript (default: the latest session).
+    Export {
+        id: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
     /// List a session's workspace checkpoints (default: the latest session).
     Checkpoints { id: Option<String> },
     /// Put the workspace back to checkpoint N of a session (see `oxgraft checkpoints`).
@@ -240,6 +247,19 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             for line in session.undo() {
                 println!("{line}");
+            }
+            Ok(0)
+        }
+        Some(Command::Export { id, output }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
+            let text = session.to_markdown();
+            match output {
+                Some(path) => {
+                    std::fs::write(&path, text).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
+                    eprintln!("wrote {}", path.display());
+                }
+                None => print!("{text}"),
             }
             Ok(0)
         }

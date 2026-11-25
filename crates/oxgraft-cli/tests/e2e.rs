@@ -609,3 +609,24 @@ fn doctor_warns_about_ollama_context() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("OLLAMA_CONTEXT_LENGTH"), "{text}");
 }
+
+// SPEC-0004 AC13 (GRAFT-0066): export a session as Markdown.
+#[test]
+fn sessions_export_as_markdown() {
+    let ws = Ws::new("export");
+    std::fs::write(ws.0.join("a.txt"), "alpha\n").unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"text": "The file says alpha."}
+    ]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "what is in a.txt?"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["export"]);
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("# what is in a.txt?"), "{md}");
+    for expect in ["## User", "**→ read**", "alpha", "## Oxgraft", "The file says alpha."] {
+        assert!(md.contains(expect), "missing {expect}:\n{md}");
+    }
+    let file = ws.0.join("t.md");
+    assert_eq!(ws.oxgraft(&["export", "-o", file.to_str().unwrap()]).status.code(), Some(0));
+    assert!(std::fs::read_to_string(file).unwrap().contains("The file says alpha."));
+}

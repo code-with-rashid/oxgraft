@@ -77,3 +77,6 @@ otherwise an error explaining how to choose one.
 - **AC12** A run that changed the workspace emits `files_changed` with the
   changed paths (workspace-relative, from the run's checkpoints) just before
   `session_finished`; a run that changed nothing emits none.
+- **AC13** `oxgraft export [ID] [-o FILE]` writes the session as Markdown:
+  title, model and token counts, each user and assistant message, tool calls,
+  and tool results shortened to 1,500 characters; thinking blocks are omitted.

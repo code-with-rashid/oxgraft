@@ -134,6 +134,52 @@ impl Session {
         sessions
     }
 
+    /// A readable Markdown transcript (GRAFT-0066): task, replies, tool calls and
+    /// shortened results. Provider-specific blocks (thinking) are left out.
+    pub fn to_markdown(&self) -> String {
+        use oxgraft_seams::{Block, Role};
+        let short = |s: &str, n: usize| -> String {
+            let t: String = s.chars().take(n).collect();
+            if s.chars().count() > n { format!("{t}\n… ({} more characters)", s.chars().count() - n) } else { t }
+        };
+        let mut out = format!(
+            "# {}\n\nSession `{}` · {} · model `{}` · profile `{}` · {} in / {} out tokens\n",
+            if self.title.is_empty() { "Oxgraft session" } else { &self.title },
+            self.id,
+            self.created,
+            self.model,
+            self.profile,
+            self.usage.input_tokens,
+            self.usage.output_tokens
+        );
+        if let Some(from) = &self.forked_from {
+            out.push_str(&format!("\nForked from `{from}`.\n"));
+        }
+        for m in &self.messages {
+            for b in &m.content {
+                match (m.role, b) {
+                    (Role::User, Block::Text { text }) => out.push_str(&format!("\n## User\n\n{}\n", text.trim())),
+                    (Role::Assistant, Block::Text { text }) if !text.trim().is_empty() => {
+                        out.push_str(&format!("\n## Oxgraft\n\n{}\n", text.trim()))
+                    }
+                    (_, Block::ToolUse { name, input, .. }) => {
+                        let input = serde_json::to_string(input).unwrap_or_default();
+                        out.push_str(&format!("\n**→ {name}** `{}`\n", short(&input, 300).replace('`', "'")));
+                    }
+                    (_, Block::ToolResult { content, is_error, .. }) => {
+                        let mark = if *is_error { "✗" } else { "✓" };
+                        out.push_str(&format!(
+                            "\n{mark}\n\n```text\n{}\n```\n",
+                            short(content.trim(), 1_500).replace("```", "~~~")
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
     /// Message counts at which the history can be cut for a fork: right after a
     /// model reply that made no tool calls (a finished answer).
     pub fn fork_points(&self) -> Vec<usize> {

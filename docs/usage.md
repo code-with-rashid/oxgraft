@@ -50,6 +50,7 @@ oxgraft run --resume last "now add docs"  # continue the latest session
 oxgraft run --fork last@4 "try it another way"  # new session from the first 4 messages of another
 oxgraft run --until "cargo test" "fix the failing test"  # not done until the check passes
 oxgraft sessions                          # list saved sessions
+oxgraft export -o run.md                  # the latest session as a Markdown transcript
 oxgraft undo                              # restore files changed by the latest session
 oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn
 oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)
