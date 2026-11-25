@@ -49,6 +49,17 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 11. ~~Repo map under a budget~~ (`map` tool: GRAFT-0053); LSP diagnostics after edits (opencode, claude-code) still open
 12. Worktree-isolated writing subagents (claude-code); sandbox expansion on denial (gemini-cli; a denial hint is done, iteration 72)
 
+Done on `next` (iterations 78–97, draft PR #1): `@file` mentions, custom
+commands, chat `!command`, todo reminder, full output for truncated shell
+results, grep context, `user_prompt`/`stop` hooks, `files_changed` event, local
+model context defaults, model aliases, session export and prune, standing
+instructions, failure hints, per-command and per-host "always", `--plan`,
+adaptive thinking, MCP over HTTP, web_fetch metadata guard.
+
+Still open (new): parallel read-only tool calls within a turn; a live "thinking"
+indicator in the terminal; switching model or mode inside chat; Bedrock and
+Vertex; image input.
+
 ## M4: Evidence
 
 - [ ] agentic-arena adapter for oxgraft (headless JSONL)
