@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -50,6 +50,10 @@ otherwise an error explaining how to choose one.
   shell commands. `oxgraft checkpoints` lists them; `oxgraft restore N` returns
   the workspace to checkpoint N after recording a pre-restore checkpoint. The
   user's own `.git`, index and history are never read or written; `.gitignore`d
-  files and heavy directories (node_modules, target, …) are left alone. A
+  files and heavy directories (node_modules, target, â€¦) are left alone. A
   failing checkpoint repo is a warning, never a session error; checkpoints are
   off when the workspace is the home directory or a filesystem root.
+- **AC8** In human mode, a `run` (or chat turn) that changed the workspace ends
+  with a `git diff --stat` of the run's changes from its checkpoints and the
+  `oxgraft restore` command that undoes all of them; a run that changed nothing
+  prints no summary.

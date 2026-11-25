@@ -42,7 +42,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 4. ~~Deterministic risk rails for shell~~ (done: GRAFT-0042)
 5. ~~Auto-allow inert read-only shell commands~~ (trial: GRAFT-0047, profile `fewer-prompts`)
 6. ~~Re-query on malformed tool calls~~ (done: GRAFT-0044)
-7. Review-on-submit: show the session diff and a checklist before finishing (swe-agent)
+7. ~~Review-on-submit~~ (change summary after each run: GRAFT-0048; a pre-finish checklist is still open)
 8. Goal mode with an independent verifier and a visible budget (qwen-code)
 9. Session tree / fork from any message (pi, goose)
 10. Batched multi-edits matched against the original file (pi)
