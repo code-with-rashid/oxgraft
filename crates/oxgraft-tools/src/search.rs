@@ -199,4 +199,23 @@ mod tests {
         assert!(!out.content.contains("a.py"));
         assert!(f.run(&Grep, json!({"pattern": "("})).is_error);
     }
+
+    // SPEC-0002 AC2: search never follows symlinks out of the workspace.
+    #[cfg(unix)]
+    #[test]
+    fn search_skips_symlinks_out_of_the_workspace() {
+        let f = Fixture::new("symlink");
+        let outside = std::env::temp_dir().join(format!("oxgraft-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "needle outside").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), f.dir.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(&outside, f.dir.join("linkdir")).unwrap();
+        f.file("inside.txt", "needle inside");
+        let out = f.run(&Grep, json!({"pattern": "needle"}));
+        assert!(out.content.contains("inside.txt"), "{}", out.content);
+        assert!(!out.content.contains("outside"), "{}", out.content);
+        let out = f.run(&Glob, json!({"pattern": "*.txt"}));
+        assert!(!out.content.contains("secret"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
 }
