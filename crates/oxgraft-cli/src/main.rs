@@ -100,6 +100,10 @@ enum Command {
         /// it is printed as compact JSON (pair with --quiet for scripts).
         #[arg(long, value_name = "FILE")]
         output_schema: Option<PathBuf>,
+        /// Don't save the session (and take no checkpoints): nothing is written
+        /// under .oxgraft/sessions, so the run can't be resumed.
+        #[arg(long, conflicts_with = "worktree")]
+        ephemeral: bool,
     },
     /// Interactive session (the default when no command is given).
     Chat {
@@ -355,7 +359,18 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message, output_schema, worktree }) => {
+        Some(Command::Run {
+            task,
+            json,
+            resume,
+            fork,
+            until,
+            quiet,
+            output_last_message,
+            output_schema,
+            worktree,
+            ephemeral,
+        }) => {
             let schema = match output_schema {
                 Some(path) => {
                     let text = std::fs::read_to_string(&path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
@@ -363,7 +378,7 @@ fn dispatch(cli: Cli) -> CliResult {
                 }
                 None => None,
             };
-            let output = RunOutput { json, quiet, last_message: output_last_message, schema };
+            let output = RunOutput { json, quiet, last_message: output_last_message, schema, ephemeral };
             if worktree {
                 let ws = workspace(&common)?;
                 let (path, branch) = create_worktree(&ws).map_err(|e| (EXIT_ERROR, e))?;
@@ -536,7 +551,7 @@ fn dispatch(cli: Cli) -> CliResult {
         Some(Command::Doctor { live }) => doctor(&common, live),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
         Some(Command::Init { json }) => {
-            let output = RunOutput { json, quiet: false, last_message: None, schema: None };
+            let output = RunOutput { json, quiet: false, last_message: None, schema: None, ephemeral: false };
             run(&common, vec![INIT_TASK.to_string()], output, None, None, None)
         }
         Some(Command::Models) => {
@@ -746,6 +761,8 @@ struct RunOutput {
     last_message: Option<PathBuf>,
     /// `--output-schema` (GRAFT-0101).
     schema: Option<Value>,
+    /// `--ephemeral` (GRAFT-0108).
+    ephemeral: bool,
 }
 
 fn run(
@@ -798,7 +815,11 @@ fn run(
     let mut s = setup(common)?;
     s.config.finish_check = until;
     s.config.output_schema = output.schema.clone();
+    if output.ephemeral {
+        s.config.checkpoints = false;
+    }
     let mut session = open_session(&s, resume, fork)?;
+    session.ephemeral = output.ephemeral;
     let approver: Box<dyn Approver> = if common.yes || json || !std::io::stdin().is_terminal() {
         Box::new(Fixed(if common.yes { Answer::Yes } else { Answer::No }))
     } else {
@@ -837,7 +858,11 @@ fn run(
     } else if !json {
         change_summary(&s.ws, &session, before);
         ring_if_long(started, s.bell);
-        eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
+        if session.ephemeral {
+            eprintln!("ephemeral run: session not saved");
+        } else {
+            eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
+        }
     }
     if let Some(path) = &output.last_message {
         std::fs::write(path, &answer).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;

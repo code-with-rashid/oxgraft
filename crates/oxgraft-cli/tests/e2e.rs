@@ -689,6 +689,23 @@ fn quiet_runs_print_only_the_answer() {
     assert_eq!(ws.oxgraft(&["run", "-q", "--json", "--model", &model, "x"]).status.code(), Some(2));
 }
 
+// GRAFT-0108: --ephemeral runs leave no session file behind.
+#[test]
+fn ephemeral_runs_save_no_session() {
+    let ws = Ws::new("ephemeral");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "ls", "input": {}}]},
+        {"text": "listed"}
+    ]));
+    let out = ws.oxgraft(&["run", "--ephemeral", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("session not saved"));
+    let dir = ws.0.join(".oxgraft/sessions");
+    let saved = std::fs::read_dir(&dir)
+        .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count());
+    assert_eq!(saved.unwrap_or(0), 0, "no session file is written");
+}
+
 // GRAFT-0077: /mode switches approval mode inside chat.
 #[test]
 fn chat_mode_switches_approvals() {

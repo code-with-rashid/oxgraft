@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101, GRAFT-0102, GRAFT-0103]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101, GRAFT-0102, GRAFT-0103, GRAFT-0108]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -116,3 +116,4 @@ otherwise an error explaining how to choose one.
 - **AC27** In chat, `/commit` commits staged changes (or all changes if none are
   staged) with a model-written message from which attribution trailers are
   removed; outside a git repository or with nothing to commit it says so.
+- **AC28** `run --ephemeral` writes no session file and takes no checkpoints.

@@ -45,6 +45,9 @@ pub struct Session {
     /// Index in `checkpoints` of the current run's starting state (not saved).
     #[serde(skip)]
     pub run_start: Option<usize>,
+    /// Never written to disk (`run --ephemeral`, GRAFT-0108).
+    #[serde(skip)]
+    pub ephemeral: bool,
     /// The session this one was forked from (GRAFT-0049).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
@@ -103,6 +106,7 @@ impl Session {
             checkpoints: Vec::new(),
             forked_from: None,
             run_start: None,
+            ephemeral: false,
         }
     }
 
@@ -121,6 +125,9 @@ impl Session {
 
     /// Atomic save: write a temp file, then rename over the old one.
     pub fn save(&self) -> std::io::Result<()> {
+        if self.ephemeral {
+            return Ok(());
+        }
         let path = self.path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
