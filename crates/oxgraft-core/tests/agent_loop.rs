@@ -440,6 +440,69 @@ fn subagent_explores_read_only_and_reports() {
     assert_eq!(events.iter().filter(|e| matches!(e, Event::SessionFinished { .. })).count(), 1);
 }
 
+/// Records the first message and tool names of every request (GRAFT-0106 test).
+struct Recording {
+    inner: Mock,
+    seen: std::sync::Mutex<Vec<(String, Vec<String>, serde_json::Value)>>,
+}
+
+impl oxgraft_seams::Provider for Recording {
+    fn id(&self) -> &str {
+        "mock"
+    }
+
+    fn complete(
+        &self,
+        req: &oxgraft_seams::CompletionRequest,
+    ) -> Result<oxgraft_seams::Completion, oxgraft_seams::ProviderError> {
+        let task = req.tools.iter().find(|t| t.name == "task").map(|t| t.input_schema.clone()).unwrap_or_default();
+        self.seen.lock().unwrap().push((
+            req.messages.first().map(|m| m.text()).unwrap_or_default(),
+            req.tools.iter().map(|t| t.name.clone()).collect(),
+            task,
+        ));
+        self.inner.complete(req)
+    }
+}
+
+// GRAFT-0106
+#[test]
+fn named_subagents_get_their_instructions_and_tools() {
+    let ws = Ws::new("named-sub");
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [
+            {"name": "task", "input": {"prompt": "x", "agent": "nope"}},
+            {"name": "task", "input": {"prompt": "find the config", "agent": "finder"}}
+        ]},
+        {"text": "REPORT: config is in a.toml"},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let provider = Recording { inner: Mock::new(script), seen: Default::default() };
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    config.subagent_types = vec![oxgraft_core::SubagentType {
+        name: "finder".into(),
+        description: "finds files".into(),
+        instructions: "FINDER RULES: only grep.".into(),
+        tools: vec!["grep".into(), "write".into()],
+    }];
+    let mut agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    agent.sleep = |_| {};
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    let outcome = agent.run(&mut session, "task", &mut |e| events.push(e.clone()));
+    assert_eq!(outcome.status, Status::Done);
+    let results = tool_results(&events);
+    assert!(!results[0].0 && results[0].1.contains("unknown agent `nope`") && results[0].1.contains("finder"));
+    assert!(results[1].0 && results[1].1.contains("REPORT"), "{:?}", results[1]);
+    let seen = provider.seen.lock().unwrap();
+    assert_eq!(seen[0].2["properties"]["agent"]["enum"], json!(["finder"]));
+    assert!(seen[1].0.starts_with("FINDER RULES") && seen[1].0.contains("find the config"), "{}", seen[1].0);
+    assert_eq!(seen[1].1, vec!["grep".to_string()], "write is never offered to a subagent");
+}
+
 #[test]
 fn subagent_sessions_are_not_listed() {
     let ws = Ws::new("sublist");

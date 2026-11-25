@@ -185,6 +185,11 @@ directory. Existing setups for other harnesses work unchanged.
 
 ## Custom commands
 
+Named subagents: put `<name>.md` in `.agents/agents/` or `.claude/agents/`
+(front matter `description` and optional `tools`, body = instructions). The
+`task` tool can then start it by name. Subagents are always read-only; a
+repository's agents load only in trusted workspaces.
+
 Put a prompt in `.agents/commands/<name>.md` (or `.claude/commands/`, the Claude
 Code format; `~/` works too) and run it as `/name` in chat or
 `oxgraft run /name <args>`. `$ARGUMENTS` in the file is replaced by `<args>`.

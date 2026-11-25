@@ -15,7 +15,7 @@ pub struct CustomCommand {
     pub description: String,
 }
 
-fn home() -> Option<PathBuf> {
+pub(crate) fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
 
@@ -62,7 +62,7 @@ fn front_matter(text: &str) -> Option<(&str, &str)> {
     Some((&rest[..end], rest[end + 4..].trim_start_matches(['-', '\r', '\n'])))
 }
 
-fn front_matter_field(text: &str, key: &str) -> Option<String> {
+pub(crate) fn front_matter_field(text: &str, key: &str) -> Option<String> {
     let (fm, _) = front_matter(text)?;
     fm.lines().find_map(|l| {
         let (k, v) = l.split_once(':')?;
@@ -70,7 +70,7 @@ fn front_matter_field(text: &str, key: &str) -> Option<String> {
     })
 }
 
-fn body(text: &str) -> &str {
+pub(crate) fn body(text: &str) -> &str {
     front_matter(text).map_or(text, |(_, b)| b)
 }
 

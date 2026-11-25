@@ -1,5 +1,6 @@
 //! The `oxgraft` command (SPEC-0004).
 
+mod agents;
 mod commands;
 mod config;
 mod profiles;
@@ -646,6 +647,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let (program, args) = oxgraft_tools::shell_program();
     config.shell = oxgraft_core::hooks::Shell { program, args };
     config.hooks = cfg.hooks.clone();
+    config.subagent_types = agents::discover(&ws, cfg.trusted);
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {
         match oxgraft_tools::mcp::connect(name, server, &ws) {
