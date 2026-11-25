@@ -9,7 +9,7 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
 
 **M3 (grafts) done; M4 (evidence) not started.** See `ROADMAP.md`.
 
-## Works now (verified by tests locally on Linux/WSL; see "Not verified" for CI)
+## Works now (verified by tests; CI on Linux, macOS, Windows)
 
 - **Any model**: Anthropic native Messages API (raw HTTP, prompt caching, refusal
   fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets, `mock:`.
@@ -47,11 +47,9 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   by a cloned repository could run code, and the risk rails missed commands
   that weren't first in their part (`xargs rm -rf`, `if …; then rm -rf ~`).
   The fix for Windows `\\?\` paths passed to git is untested on Windows.
-- **CI has not run on iterations 53–76.** GitHub was unreachable from the build
-  machine for the whole session (other sites worked), so these commits are
-  local only. Push, then check the Windows and macOS jobs first: new tests use
-  git (checkpoints), Git Bash/PowerShell (`cat`, `echo`), and a Unix-only
-  symlink test.
+- CI is green on Linux, macOS and Windows for iterations 53–76 (run 45551308549).
+  Its first run caught a path-spelling bug in the checkpoint "never inside the
+  workspace" check (macOS `/private/var`, Windows short names), now fixed.
 - **No real model has been called.** Providers are tested against a local fake
   HTTP server (including SSE streams) and the mock. First human task:
   `oxgraft doctor`, then `oxgraft run "summarise this repo"` with a real key and
@@ -65,11 +63,10 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
 
 ## Next up
 
-1. Push and get CI green on all three OSes; fix anything platform-specific.
-2. Real-model smoke tests (Anthropic, OpenAI-compatible, Ollama), streaming on and off.
-3. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats
+1. Real-model smoke tests (Anthropic, OpenAI-compatible, Ollama), streaming on and off.
+2. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats
    (GRAFT-0001/0015/0024/0038) and `fewer-prompts` vs default.
-4. Remaining backlog (ROADMAP): egress proxy allowlist, LSP diagnostics,
+3. Remaining backlog (ROADMAP): egress proxy allowlist, LSP diagnostics,
    worktree-isolated writing subagents, sandbox expansion on denial.
 
 ## Known problems
