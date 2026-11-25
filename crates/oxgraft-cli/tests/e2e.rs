@@ -671,3 +671,20 @@ fn sessions_list_as_json() {
     assert_eq!(v["title"], "say hi");
     assert_eq!(v["messages"], 2);
 }
+
+// GRAFT-0075: --quiet prints only the final answer; --output-last-message saves it.
+#[test]
+fn quiet_runs_print_only_the_answer() {
+    let ws = Ws::new("quiet");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "ls", "input": {}}]},
+        {"text": "The answer is 42."}
+    ]));
+    let file = ws.0.join("answer.txt");
+    let out = ws.oxgraft(&["run", "-q", "--output-last-message", file.to_str().unwrap(), "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "The answer is 42.\n");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("→ ls"));
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "The answer is 42.");
+    assert_eq!(ws.oxgraft(&["run", "-q", "--json", "--model", &model, "x"]).status.code(), Some(2));
+}

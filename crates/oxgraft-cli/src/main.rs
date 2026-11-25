@@ -77,6 +77,13 @@ enum Command {
         /// keep its first N messages (N must follow a finished reply).
         #[arg(long, conflicts_with = "resume")]
         fork: Option<String>,
+        /// Print only the final answer on stdout (no streaming or tool activity);
+        /// errors still go to stderr.
+        #[arg(long, short = 'q', conflicts_with = "json")]
+        quiet: bool,
+        /// Also write the final answer to this file.
+        #[arg(long, value_name = "FILE")]
+        output_last_message: Option<PathBuf>,
     },
     /// Interactive session (the default when no command is given).
     Chat {
@@ -245,7 +252,10 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork, until }) => run(&common, task, json, resume, fork, until),
+        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message }) => {
+            let output = RunOutput { json, quiet, last_message: output_last_message };
+            run(&common, task, output, resume, fork, until)
+        }
         Some(Command::Sessions { json }) => {
             let ws = workspace(&common)?;
             let sessions = Session::list(&ws);
@@ -338,7 +348,10 @@ fn dispatch(cli: Cli) -> CliResult {
         }
         Some(Command::Doctor { live }) => doctor(&common, live),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
-        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None, None),
+        Some(Command::Init { json }) => {
+            let output = RunOutput { json, quiet: false, last_message: None };
+            run(&common, vec![INIT_TASK.to_string()], output, None, None, None)
+        }
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -491,14 +504,22 @@ fn open_session(s: &Setup, resume: Option<String>, fork: Option<String>) -> Resu
     }
 }
 
+/// How `run` reports (GRAFT-0075 for quiet and last-message).
+struct RunOutput {
+    json: bool,
+    quiet: bool,
+    last_message: Option<PathBuf>,
+}
+
 fn run(
     common: &Common,
     task: Vec<String>,
-    json: bool,
+    output: RunOutput,
     resume: Option<String>,
     fork: Option<String>,
     until: Option<String>,
 ) -> CliResult {
+    let json = output.json;
     let mut task = task.join(" ");
     if task.trim().is_empty() {
         if std::io::stdin().is_terminal() {
@@ -548,13 +569,28 @@ fn run(
         if json {
             println!("{}", e.to_jsonl());
             let _ = std::io::stdout().flush();
+        } else if output.quiet {
+            if let Event::Warning { message } = e {
+                eprintln!("oxgraft: warning: {message}");
+            }
         } else {
             renderer.event(e);
         }
     });
-    if !json {
+    if output.quiet {
+        if !outcome.final_text.trim().is_empty() {
+            println!("{}", outcome.final_text.trim());
+        }
+        if let Status::Stopped(reason) | Status::Failed(reason) = &outcome.status {
+            eprintln!("oxgraft: stopped: {reason}");
+        }
+    } else if !json {
         change_summary(&s.ws, &session, before);
         eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
+    }
+    if let Some(path) = &output.last_message {
+        std::fs::write(path, outcome.final_text.trim())
+            .map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
     Ok(status_code(&outcome.status))
 }

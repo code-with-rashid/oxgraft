@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -87,3 +87,6 @@ otherwise an error explaining how to choose one.
   `--mode`.
 - **AC16** `oxgraft prune [--keep N] [--dry-run]` deletes all but the newest N
   sessions (default 50) and their undo backups; other files are untouched.
+- **AC17** `run --quiet` prints only the final answer on stdout (warnings and the
+  stop reason on stderr); `--output-last-message FILE` also writes it to FILE;
+  `--quiet` cannot be combined with `--json`.
