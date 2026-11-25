@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -105,3 +105,5 @@ otherwise an error explaining how to choose one.
 - **AC23** `--allow-tool TOOL[:PATTERN]` and `--deny-tool TOOL[:PATTERN]`
   (repeatable) add allow/deny rules for the run, after mode and config rules;
   a deny always wins.
+- **AC24** In chat, `/resume [ID]` (default `last`) continues a saved session;
+  an unknown id is reported and changes nothing.

@@ -1090,6 +1090,35 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            r if r.starts_with("/resume") => {
+                // GRAFT-0100: switch to a saved session (the current one is already saved).
+                let id = r.trim_start_matches("/resume").trim();
+                let id = if id.is_empty() { "last" } else { id };
+                match load_session(&s.ws, id) {
+                    Ok(other) if other.id == session.id => eprintln!("already in session {}", session.id),
+                    Ok(other) => {
+                        session = other;
+                        let last = session
+                            .messages
+                            .iter()
+                            .rev()
+                            .find(|m| m.role == oxgraft_seams::Role::Assistant && !m.text().trim().is_empty())
+                            .map(|m| m.text().chars().take(200).collect::<String>())
+                            .unwrap_or_default();
+                        eprintln!(
+                            "resumed session {}: {} ({} messages)",
+                            session.id,
+                            session.title,
+                            session.messages.len()
+                        );
+                        if !last.is_empty() {
+                            eprintln!("last reply: {}", render::plain(&last));
+                        }
+                    }
+                    Err((_, e)) => eprintln!("resume: {e}"),
+                }
+                continue;
+            }
             "/cost" | "/usage" => {
                 eprintln!(
                     "session {}: {} input + {} output tokens, {} messages, {} files changed, {} compactions",
@@ -1213,7 +1242,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
                      /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
-                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
+                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."

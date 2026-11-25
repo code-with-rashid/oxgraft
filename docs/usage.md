@@ -67,7 +67,7 @@ oxgraft --mode full-auto run "…"          # edits and commands without asking 
 oxgraft run --allow-tool 'bash:cargo *' --deny-tool web_fetch "…"   # per-run permissions
 ```
 
-In chat: `"""` starts and ends a multi-line message; `!command` (run it yourself; the output goes with your next message), `/compact`, `/diff`, `/init`, `/mode X`, `/model M`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
+In chat: `"""` starts and ends a multi-line message; `!command` (run it yourself; the output goes with your next message), `/compact`, `/diff`, `/init`, `/mode X`, `/model M`, `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`, `/resume ID`,
 `/help`, `/exit`. Ctrl-C interrupts the current run (and any running command);
 press it again to quit.
 

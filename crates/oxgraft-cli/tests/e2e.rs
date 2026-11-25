@@ -845,3 +845,40 @@ fn tool_flags_allow_and_deny_for_a_run() {
         .any(|e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("--deny-tool")));
     assert!(denied);
 }
+
+// GRAFT-0100: /resume switches to a saved session inside chat.
+#[test]
+fn chat_resume_switches_session() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatresume");
+    let model = ws.script(json!([{"text": "earlier answer"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "earlier task"]);
+    let id = events(&out)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session_id, .. } => session_id,
+            _ => None,
+        })
+        .unwrap();
+    let model = ws.script(json!([{"text": "continued"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = format!("/resume {id}\n/resume nope\nnext question\n/exit\n");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("resumed session {id}")) && err.contains("last reply: earlier answer"), "{err}");
+    assert!(err.contains("resume: "), "{err}");
+    let saved = ws.read(&format!(".oxgraft/sessions/{id}.json"));
+    assert!(saved.contains("next question"), "the resumed session continued");
+}
