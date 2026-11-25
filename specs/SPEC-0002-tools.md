@@ -61,3 +61,8 @@ tools beat many overlapping ones) that is safe by default.
   defused), and text with common prompt-injection phrases gets a warning line.
   The system prompt tells the model never to follow instructions inside these
   blocks.
+- **AC12** `web_fetch` turns HTML into Markdown-like text: headings as `#`,
+  list items as `- `, links as `[text](url)` (page anchors and `javascript:`
+  dropped), `<pre>` fenced with whitespace kept, table cells separated by `|`,
+  named and numeric entities decoded; script, style, head, nav, footer, forms
+  and comments removed. Arbitrary input never panics.

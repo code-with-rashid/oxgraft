@@ -70,58 +70,102 @@ impl Tool for WebFetch {
     }
 }
 
-/// Crude but dependency-free HTML to text: drops script/style/head, keeps line
-/// structure for block elements, decodes common entities.
+/// Dependency-free HTML to Markdown-ish text: drops script/style/head/nav/footer
+/// and comments; keeps headings (`#`), list items (`- `), links (`[text](url)`),
+/// `<pre>` blocks (fenced, whitespace kept), inline code and table cells (`|`);
+/// decodes named and numeric entities.
 pub fn html_to_text(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() / 2);
+    const SKIP: &[&str] =
+        &["script", "style", "head", "noscript", "svg", "nav", "footer", "template", "iframe", "form"];
+    const BLOCK: &[&str] = &[
+        "p",
+        "div",
+        "br",
+        "tr",
+        "section",
+        "article",
+        "main",
+        "header",
+        "table",
+        "ul",
+        "ol",
+        "dl",
+        "dt",
+        "dd",
+        "blockquote",
+        "hr",
+    ];
     let lower = html.to_ascii_lowercase();
-    let mut i = 0;
     let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut links: Vec<Option<String>> = Vec::new();
+    let mut pre = 0usize;
+    let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'<' {
-            let Some(end) = lower[i..].find('>').map(|e| i + e) else { break };
-            let tag = &lower[i + 1..end];
-            let name: String = tag.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
-            if !tag.starts_with('/') && matches!(name.as_str(), "script" | "style" | "head" | "noscript" | "svg") {
-                let close = format!("</{name}");
-                i = lower[end..].find(&close).map(|c| end + c).unwrap_or(bytes.len());
-                if let Some(e) = lower[i..].find('>') {
-                    i += e + 1;
-                }
-                continue;
+        if lower[i..].starts_with("<!--") {
+            i = lower[i..].find("-->").map_or(bytes.len(), |e| i + e + 3);
+            continue;
+        }
+        if bytes[i] != b'<' {
+            let next = lower[i..].find('<').map_or(bytes.len(), |n| i + n);
+            let text = &html[i..next];
+            if pre > 0 {
+                // Protect line breaks and spaces inside <pre> from whitespace collapsing.
+                out.push_str(&text.replace('\n', "\u{1}").replace(' ', "\u{2}").replace('\t', "\u{3}"));
+            } else {
+                out.push_str(text);
             }
-            if matches!(
-                name.as_str(),
-                "p" | "div"
-                    | "br"
-                    | "li"
-                    | "tr"
-                    | "h1"
-                    | "h2"
-                    | "h3"
-                    | "h4"
-                    | "h5"
-                    | "h6"
-                    | "pre"
-                    | "section"
-                    | "article"
-            ) {
-                out.push('\n');
-            }
-            i = end + 1;
-        } else {
-            let next = lower[i..].find('<').map(|n| i + n).unwrap_or(bytes.len());
-            out.push_str(&html[i..next]);
             i = next;
+            continue;
+        }
+        let Some(end) = lower[i..].find('>').map(|e| i + e) else { break };
+        let raw = &html[i + 1..end];
+        let tag = &lower[i + 1..end];
+        let closing = tag.starts_with('/');
+        let name: String = tag.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        i = end + 1;
+        if !closing && SKIP.contains(&name.as_str()) && !tag.ends_with('/') {
+            let close = format!("</{name}");
+            i = lower[i..].find(&close).map_or(bytes.len(), |c| i + c);
+            i = lower[i..].find('>').map_or(bytes.len(), |e| i + e + 1);
+            continue;
+        }
+        match (name.as_str(), closing) {
+            (h, false) if h.len() == 2 && h.starts_with('h') && h.as_bytes()[1].is_ascii_digit() => {
+                let level = (h.as_bytes()[1] - b'0') as usize;
+                out.push_str(&format!("\n\n{} ", "#".repeat(level.clamp(1, 6))));
+            }
+            (h, true) if h.len() == 2 && h.starts_with('h') && h.as_bytes()[1].is_ascii_digit() => out.push_str("\n\n"),
+            ("li", false) => out.push_str("\n- "),
+            ("pre", false) => {
+                pre += 1;
+                out.push_str("\n```\u{1}");
+            }
+            ("pre", true) => {
+                pre = pre.saturating_sub(1);
+                out.push_str("\u{1}```\n");
+            }
+            ("code", _) if pre == 0 => out.push('`'),
+            ("td" | "th", false) => out.push_str(" | "),
+            ("a", false) => {
+                let href = attribute(raw, "href").filter(|h| {
+                    !h.is_empty() && !h.starts_with('#') && !h.to_ascii_lowercase().starts_with("javascript:")
+                });
+                if href.is_some() {
+                    out.push('[');
+                }
+                links.push(href);
+            }
+            ("a", true) => {
+                if let Some(Some(href)) = links.pop() {
+                    out.push_str(&format!("]({href})"));
+                }
+            }
+            (n, _) if BLOCK.contains(&n) => out.push('\n'),
+            _ => {}
         }
     }
-    let decoded = out
-        .replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&");
+    let decoded = decode_entities(&out);
     let mut lines: Vec<String> = Vec::new();
     for line in decoded.lines() {
         let l = line.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -129,7 +173,77 @@ pub fn html_to_text(html: &str) -> String {
             lines.push(l);
         }
     }
-    lines.join("\n")
+    // Restore the line breaks kept inside <pre> (marked with \u{1}).
+    lines.join("\n").replace('\u{1}', "\n").replace('\u{2}', " ").replace('\u{3}', "\t").trim().to_string()
+}
+
+/// The value of `name="..."` (or single-quoted / bare) in a raw tag.
+fn attribute(raw_tag: &str, name: &str) -> Option<String> {
+    let lower = raw_tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find(name).map(|p| from + p) {
+        from = pos + name.len();
+        let before_ok = pos == 0 || lower.as_bytes()[pos - 1].is_ascii_whitespace();
+        let rest = raw_tag[from..].trim_start();
+        if !before_ok || !rest.starts_with('=') {
+            continue;
+        }
+        let value = rest[1..].trim_start();
+        let v = match value.chars().next() {
+            Some(q @ ('"' | '\'')) => value[1..].split(q).next().unwrap_or(""),
+            _ => value.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
+        };
+        return Some(decode_entities(v));
+    }
+    None
+}
+
+fn decode_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        // Look for `;` within the next 12 characters (char-safe: never split UTF-8).
+        let Some(semi) = rest.char_indices().take(12).find(|(_, c)| *c == ';').map(|(i, _)| i) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            "mdash" => Some('—'),
+            "ndash" => Some('–'),
+            "hellip" => Some('…'),
+            "copy" => Some('©'),
+            e if e.starts_with("#x") || e.starts_with("#X") => {
+                u32::from_str_radix(&e[2..], 16).ok().and_then(char::from_u32)
+            }
+            e if e.starts_with('#') => e[1..].parse::<u32>().ok().and_then(char::from_u32),
+            _ => None,
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -145,8 +259,69 @@ mod tests {
         let text = html_to_text(html);
         assert!(text.contains("Title"));
         assert!(text.contains("Hello & welcome"));
-        assert!(text.contains("one\ntwo") || text.contains("one\n\ntwo"), "{text}");
+        assert!(text.contains("- one\n- two"), "{text}");
         assert!(!text.contains("evil") && !text.contains("p{}"));
+    }
+
+    #[test]
+    fn html_conversion_never_panics() {
+        let pieces = [
+            "<",
+            ">",
+            "&",
+            ";",
+            "#",
+            "x",
+            "é",
+            "日本",
+            "<a href=",
+            "\"",
+            "'",
+            "</a>",
+            "<pre>",
+            "</pre>",
+            "<!--",
+            "-->",
+            "&#",
+            "&#x1F600;",
+            "<h7>",
+            "<script>",
+            " ",
+            "\n",
+            "&amp",
+        ];
+        let mut seed = 0x2545_f491_u64;
+        for _ in 0..3_000 {
+            let mut s = String::new();
+            for _ in 0..(seed % 40) {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                s.push_str(pieces[(seed % pieces.len() as u64) as usize]);
+            }
+            let _ = html_to_text(&s);
+        }
+    }
+
+    // SPEC-0002 AC12
+    #[test]
+    fn converts_html_to_markdownish_text() {
+        let html = r##"<html><body><nav><a href="/">Home</a> menu junk</nav><!-- hidden -->
+            <h2>Install</h2><p>Run <code>cargo build</code> or see <a href="https://x.dev/docs?a=1&amp;b=2">the docs</a>.
+            <a href="#top">top</a></p>
+            <pre>fn main() {
+    println!("hi");
+}</pre>
+            <table><tr><th>Flag</th><th>Use</th></tr><tr><td>--json</td><td>events</td></tr></table>
+            <p>caf&#233; &#x2713; &mdash; 5 &lt; 6</p><footer>© footer junk</footer></body></html>"##;
+        let text = html_to_text(html);
+        assert!(text.contains("## Install"), "{text}");
+        assert!(text.contains("Run `cargo build` or see [the docs](https://x.dev/docs?a=1&b=2)."), "{text}");
+        assert!(text.contains("top") && !text.contains("(#top)"), "{text}");
+        assert!(text.contains("```\nfn main() {\n    println!(\"hi\");\n}\n```"), "pre keeps whitespace:\n{text}");
+        assert!(text.contains("| Flag | Use") && text.contains("| --json | events"), "{text}");
+        assert!(text.contains("café ✓ — 5 < 6"), "{text}");
+        assert!(!text.contains("menu junk") && !text.contains("footer junk") && !text.contains("hidden"), "{text}");
     }
 
     #[test]

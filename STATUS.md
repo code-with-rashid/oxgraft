@@ -69,7 +69,6 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
 
 ## Known problems
 
-- `web_fetch` HTML-to-text is basic.
 - Checkpoints restore removes files that became tracked after `.gitignore`
   changed; the pre-restore checkpoint keeps them recoverable.
 

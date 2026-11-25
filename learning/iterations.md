@@ -75,3 +75,4 @@ honestly: an iteration is only logged when its tests pass.
 | 67 | 2026-11-25 | qwen-code | `run --until <check>`: done only when the check passes; failures fed back up to 3 rounds | adopt | GRAFT-0054 | SPEC-0003 | `finish_check_sends_failures_back_until_it_passes` |
 | 68 | 2026-11-25 | goose, claude-code | web_fetch and MCP output fenced as `<untrusted>` with injection-phrase warnings; system prompt rule | adopt | GRAFT-0055 | SPEC-0002 | `untrusted_content_is_fenced_and_flagged` |
 | 69 | 2026-11-25 | claude-code | `doctor` reports trust, approval mode, checkpoints (side-effect free), streaming | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |
+| 70 | 2026-11-25 | — | web_fetch HTML to Markdown-ish text (headings, lists, links, pre, tables, entities), fuzz-tested; fixed a possible UTF-8 slicing panic | fix | — | SPEC-0002 | `converts_html_to_markdownish_text` |
