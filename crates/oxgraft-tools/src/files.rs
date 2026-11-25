@@ -9,6 +9,22 @@ const DEFAULT_READ_LINES: u64 = 2_000;
 const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
 
+/// A syntax check for data files after a write or edit (GRAFT-0105, a light
+/// version of the diagnostics OpenCode and Aider report after edits): JSON and
+/// TOML that no longer parse get a note with the parser's error.
+fn syntax_note(path: &std::path::Path, text: &str) -> String {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let error = match ext.as_str() {
+        "json" => serde_json::from_str::<Value>(text).err().map(|e| e.to_string()),
+        "toml" => text.parse::<toml::Table>().err().map(|e| e.message().to_string()),
+        _ => None,
+    };
+    match error {
+        Some(e) => format!("\nwarning: the file is no longer valid {}: {e}", ext.to_uppercase()),
+        None => String::new(),
+    }
+}
+
 /// Named pipes, sockets and devices can block a read or write forever (GRAFT-0092,
 /// after Claude Code 2.1.332's fix for reads hanging on a named pipe): refuse them.
 fn special_file(path: &std::path::Path, shown: &str) -> Option<String> {
@@ -184,10 +200,11 @@ impl Tool for Write {
         }
         match std::fs::write(&full, content) {
             Ok(()) => ToolOutput::ok(format!(
-                "wrote {} bytes ({} lines) to {}",
+                "wrote {} bytes ({} lines) to {}{}",
                 content.len(),
                 content.lines().count(),
-                display(ctx.workspace, &full)
+                display(ctx.workspace, &full),
+                syntax_note(&full, content)
             )),
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
@@ -288,7 +305,11 @@ impl Tool for Edit {
         match std::fs::write(&full, &updated) {
             Ok(()) => {
                 let (before, after) = (base.lines().count(), updated.lines().count());
-                ToolOutput::ok(format!("edited {} ({before} → {after} lines)", display(ctx.workspace, &full)))
+                ToolOutput::ok(format!(
+                    "edited {} ({before} → {after} lines){}",
+                    display(ctx.workspace, &full),
+                    syntax_note(&full, &updated)
+                ))
             }
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
@@ -595,6 +616,20 @@ mod tests {
         assert_eq!(normalize_path("../outside"), "../outside");
         assert_eq!(normalize_path("/abs/./p"), "/abs/p");
         assert_eq!(action("write", &json!({"path": "src//../x.rs"}), "path").resource, "x.rs");
+    }
+
+    // GRAFT-0105
+    #[test]
+    fn broken_json_and_toml_are_reported() {
+        let f = Fixture::new("syntax");
+        let out = f.run(&Write, json!({"path": "a.json", "content": "{\"a\": 1,}"}));
+        assert!(!out.is_error && out.content.contains("no longer valid JSON"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "b.toml", "content": "name = \"x\"\n"}));
+        assert!(!out.content.contains("warning"), "{}", out.content);
+        let out = f.run(&Edit, json!({"path": "b.toml", "old_string": "name = \"x\"", "new_string": "name = x"}));
+        assert!(out.content.contains("no longer valid TOML"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "c.txt", "content": "{not json"}));
+        assert!(!out.content.contains("warning"));
     }
 
     #[test]

@@ -596,6 +596,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "toml",
  "ureq",
  "url",
  "wait-timeout",

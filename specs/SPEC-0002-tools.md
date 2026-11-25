@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092, GRAFT-0104]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092, GRAFT-0104, GRAFT-0105]
 ---
 
 # SPEC-0002: Built-in tools
@@ -85,3 +85,5 @@ tools beat many overlapping ones) that is safe by default.
 - **AC18** `bash` with `background: true` starts the command and returns an id
   at once; `bash_output` returns its new output and status or stops it
   (`kill: true`); all background commands stop when the run ends.
+- **AC19** After `write` or `edit` changes a `.json` or `.toml` file that no
+  longer parses, the result includes a warning with the parser's error.
