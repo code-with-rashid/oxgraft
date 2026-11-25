@@ -11,8 +11,53 @@ pub struct Human {
     waiting: bool,
 }
 
+/// Model text without terminal control sequences (GRAFT-0091, after goose 1.61
+/// stripping terminal controls from assistant markdown): ESC sequences, carriage
+/// returns and other control characters are dropped; newlines and tabs stay.
+pub fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => {
+                // CSI `ESC [ … final`, OSC `ESC ] … BEL|ST`, or a two-character escape.
+                match chars.peek() {
+                    Some('[') => {
+                        chars.next();
+                        for n in chars.by_ref() {
+                            if ('@'..='~').contains(&n) {
+                                break;
+                            }
+                        }
+                    }
+                    Some(']') => {
+                        chars.next();
+                        while let Some(n) = chars.next() {
+                            if n == '\u{7}' || (n == '\u{1b}' && chars.peek() == Some(&'\\')) {
+                                if n == '\u{1b}' {
+                                    chars.next();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        chars.next();
+                    }
+                    None => {}
+                }
+            }
+            '\n' | '\t' => out.push(c),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn one_line(s: &str, max: usize) -> String {
-    let line = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let cleaned = plain(s);
+    let line = cleaned.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
     if line.chars().count() > max {
         format!("{}…", line.chars().take(max).collect::<String>())
     } else {
@@ -52,10 +97,10 @@ impl Human {
                     println!();
                     self.streaming = true;
                 }
-                print!("{text}");
+                print!("{}", plain(text));
                 let _ = std::io::stdout().flush();
             }
-            Event::Message { text, .. } => println!("\n{}", text.trim()),
+            Event::Message { text, .. } => println!("\n{}", plain(text.trim())),
             Event::ToolCall { id, tool, input } => {
                 let arg = ["path", "command", "pattern"]
                     .iter()
@@ -174,6 +219,16 @@ pub fn strategies(json: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::failure_hint;
+
+    #[test]
+    fn terminal_controls_are_stripped() {
+        use super::plain;
+        assert_eq!(plain("a\u{1b}[2Jb\u{1b}[31mc\u{1b}[0m"), "abc");
+        assert_eq!(plain("x\u{1b}]0;title\u{7}y"), "xy");
+        assert_eq!(plain("x\u{1b}]8;;http://e\u{1b}\\link\u{1b}]8;;\u{1b}\\y"), "xlinky");
+        assert_eq!(plain("over\rwrite\u{8}\u{7}"), "overwrite");
+        assert_eq!(plain("keep\n\tlines"), "keep\n\tlines");
+    }
 
     #[test]
     fn hints_for_common_provider_failures() {
