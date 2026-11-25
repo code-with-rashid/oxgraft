@@ -568,3 +568,35 @@ fn chat_bang_runs_a_command_and_passes_its_output_on() {
     let saved = std::fs::read_to_string(file.path()).unwrap();
     assert!(saved.contains("I ran `echo bang-output` myself") && saved.contains("what did it print?"), "{saved}");
 }
+
+// SPEC-0004 AC12 (GRAFT-0063): headless runs report the files they changed.
+#[test]
+fn json_runs_report_changed_files() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("fileschanged");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "src/new.rs", "content": "fn x() {}\n"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo hi > from_shell.txt"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let events = events(&out);
+    let files = events
+        .iter()
+        .find_map(|e| match e {
+            Event::FilesChanged { files } => Some(files.clone()),
+            _ => None,
+        })
+        .expect("a files_changed event");
+    assert!(files.contains(&"src/new.rs".to_string()) && files.contains(&"from_shell.txt".to_string()), "{files:?}");
+    let pos = |f: fn(&Event) -> bool| events.iter().position(f).unwrap();
+    assert!(pos(|e| matches!(e, Event::FilesChanged { .. })) < pos(|e| matches!(e, Event::SessionFinished { .. })));
+
+    // Nothing changed: no event.
+    let model = ws.script(json!([{"text": "nothing to do"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "look"]);
+    assert!(!self::events(&out).iter().any(|e| matches!(e, Event::FilesChanged { .. })));
+}

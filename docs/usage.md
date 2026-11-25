@@ -54,6 +54,23 @@ press it again to quit.
 Exit codes: `0` done, `1` provider or internal failure, `2` usage/config error,
 `3` stopped by a guard (max turns, token budget, refusal, interrupt).
 
+### Headless events (`--json`)
+
+One JSON object per line, each with a `type` (protocol version 1; new event
+types and optional fields may be added, so ignore what you don't know):
+
+| type | meaning |
+|---|---|
+| `session_started` | protocol version, profile, session id, model |
+| `strategy_selected` | one per seam: which strategy the profile picked |
+| `text_delta` | streamed assistant text; the full text follows in `message` |
+| `message` | a complete assistant reply |
+| `tool_call` / `tool_result` | a tool call and its result (`ok`, `output`) |
+| `approval_requested` / `approval_resolved` | an `ask` decision (`risk` set for risky commands) |
+| `retrying` / `warning` | provider retries; anything worth knowing |
+| `files_changed` | files the run changed (from its checkpoints) |
+| `session_finished` | `ok`, `reason`, `turns`, token counts; always last |
+
 ## Configure
 
 `~/.config/oxgraft/config.toml` (Windows: `%APPDATA%\oxgraft\config.toml`), or

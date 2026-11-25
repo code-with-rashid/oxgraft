@@ -200,6 +200,12 @@ impl Checkpoints {
         Ok(safety)
     }
 
+    /// Paths changed between two checkpoints, relative to the workspace.
+    pub fn changed_files(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
+        let out = self.git(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", from, to])?;
+        Ok(out.split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect())
+    }
+
     /// `git diff --stat` between two checkpoints.
     pub fn diff_stat(&self, from: &str, to: &str) -> Result<String, String> {
         self.git(&["diff", "--no-ext-diff", "--no-textconv", "--stat", from, to])

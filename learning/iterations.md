@@ -90,3 +90,4 @@ honestly: an iteration is only logged when its tests pass.
 | 82 | 2026-11-25 | opencode | Truncated bash output saved in full to .oxgraft/outputs/ with the path in the result | adopt | GRAFT-0060 | SPEC-0002 | `long_output_is_saved_in_full` |
 | 83 | 2026-11-25 | opencode, claude-code | `grep` `context` option (like -C), merged groups | adopt | GRAFT-0061 | SPEC-0002 | `grep_shows_context_lines` |
 | 84 | 2026-11-25 | claude-code | `user_prompt` hooks (add context or block) and `stop` hooks (send the model back, max 3) | adopt | GRAFT-0062 | SPEC-0005 | `user_prompt_and_stop_hooks` |
+| 85 | 2026-11-25 | swe-agent | `files_changed` event before `session_finished` (from checkpoints); JSON event reference in usage docs | adopt | GRAFT-0063 | SPEC-0004 | `json_runs_report_changed_files` |

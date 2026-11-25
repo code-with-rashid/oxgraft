@@ -77,6 +77,11 @@ pub enum Event {
     Warning {
         message: String,
     },
+    /// Files the run changed, from its first to its last workspace checkpoint
+    /// (GRAFT-0063). Emitted just before `session_finished` when checkpoints are on.
+    FilesChanged {
+        files: Vec<String>,
+    },
     SessionFinished {
         ok: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +138,7 @@ mod tests {
             Event::Retrying { attempt: 1, wait_ms: 1000, message: "429".into() },
             Event::Warning { message: "w".into() },
             Event::TextDelta { text: "par".into() },
+            Event::FilesChanged { files: vec!["src/a.rs".into()] },
             Event::SessionFinished { ok: true, reason: None, turns: 2, input_tokens: 5, output_tokens: 6 },
         ];
         for event in events {

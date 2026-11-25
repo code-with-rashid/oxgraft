@@ -360,6 +360,7 @@ impl<'a> Agent<'a> {
                 Ok(cp) => {
                     state.checkpoints = Some(cp);
                     self.checkpoint(session, &mut state, "start", emit);
+                    session.run_start = session.checkpoints.len().checked_sub(1);
                 }
                 Err(e) => emit(&Event::Warning { message: format!("checkpoints off: {e}") }),
             }
@@ -938,6 +939,15 @@ impl<'a> Agent<'a> {
             {
                 emit(&Event::Warning { message: msg });
             }
+        }
+        // What the run changed (GRAFT-0063), for headless consumers and evaluations.
+        if let Some(start) = session.run_start.take()
+            && let (Some(first), Some(last)) = (session.checkpoints.get(start), session.checkpoints.last())
+            && first.commit != last.commit
+            && let Ok(cp) = crate::checkpoint::Checkpoints::open(&self.config.workspace)
+            && let Ok(files) = cp.changed_files(&first.commit, &last.commit)
+        {
+            emit(&Event::FilesChanged { files });
         }
         let (ok, reason) = match &status {
             Status::Done => (true, None),

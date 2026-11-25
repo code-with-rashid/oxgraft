@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -74,3 +74,6 @@ otherwise an error explaining how to choose one.
   `_`) is a custom command: `/name args` in chat or `oxgraft run /name args`
   runs its body with `$ARGUMENTS` replaced (or the arguments appended). An
   unknown `/name` in `run` is a usage error listing the available commands.
+- **AC12** A run that changed the workspace emits `files_changed` with the
+  changed paths (workspace-relative, from the run's checkpoints) just before
+  `session_finished`; a run that changed nothing emits none.

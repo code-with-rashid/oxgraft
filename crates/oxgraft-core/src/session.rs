@@ -35,6 +35,9 @@ pub struct Session {
     /// Workspace checkpoints taken during the session (GRAFT-0046), oldest first.
     #[serde(default)]
     pub checkpoints: Vec<CheckpointRecord>,
+    /// Index in `checkpoints` of the current run's starting state (not saved).
+    #[serde(skip)]
+    pub run_start: Option<usize>,
     /// The session this one was forked from (GRAFT-0049).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
@@ -73,6 +76,7 @@ impl Session {
             archived_messages: 0,
             checkpoints: Vec::new(),
             forked_from: None,
+            run_start: None,
         }
     }
 
