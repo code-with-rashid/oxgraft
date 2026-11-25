@@ -112,6 +112,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         trusted = c.trusted_workspaces.clone();
         cfg.hooks.extend(c.hooks.clone());
         cfg.mcp_servers.extend(c.mcp_servers.clone());
+        check_examples(&c.rules).map_err(|e| format!("{}: {e}", p.display()))?;
         cfg.rules.extend(convert_rules(&c.rules, &mut cfg.warnings));
         layers.push((p.display().to_string(), c));
     }
@@ -161,6 +162,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if !c.rules.is_empty() {
             if is_trusted {
+                check_examples(&c.rules).map_err(|e| format!("{}: {e}", ws_path.display()))?;
                 let rules = convert_rules(&c.rules, &mut cfg.warnings);
                 cfg.rules.extend(rules);
             } else {
@@ -263,6 +265,32 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
 mod tests {
     use super::*;
 
+    // GRAFT-0043: rules carry examples that are checked at load.
+    #[test]
+    fn rule_examples_are_checked_at_load() {
+        #[derive(Deserialize)]
+        struct F {
+            rules: Vec<RuleConfig>,
+        }
+        let ok: F = toml::from_str(
+            "[[rules]]\ntool = \"bash\"\nresource = \"cargo *\"\ndecision = \"allow\"\n\
+             match = [\"cargo test\", \"cargo build --release\"]\nnot_match = [\"cargotest\", \"npm test\"]\n",
+        )
+        .unwrap();
+        assert!(check_examples(&ok.rules).is_ok());
+        let bad: F = toml::from_str(
+            "[[rules]]\ntool = \"bash\"\nresource = \"git status*\"\ndecision = \"allow\"\nmatch = [\"git  status\"]\n",
+        )
+        .unwrap();
+        let err = check_examples(&bad.rules).unwrap_err();
+        assert!(err.contains("`git  status`") && err.contains("under `match`"), "{err}");
+        let bad: F = toml::from_str(
+            "[[rules]]\ntool = \"read\"\nresource = \"*.pem\"\ndecision = \"deny\"\nnot_match = [\"keys/server.pem\"]\n",
+        )
+        .unwrap();
+        assert!(check_examples(&bad.rules).unwrap_err().contains("under `not_match`"));
+    }
+
     #[test]
     fn workspace_config_and_flags_layer() {
         let ws = std::env::temp_dir().join(format!("oxgraft-cfg-{}", std::process::id()));
@@ -297,10 +325,41 @@ pub struct RuleConfig {
     pub resource: String,
     pub decision: String,
     pub justification: Option<String>,
+    /// Resources this rule must match (GRAFT-0043, after Codex execpolicy examples).
+    #[serde(default, rename = "match")]
+    pub must_match: Vec<String>,
+    /// Resources this rule must not match.
+    #[serde(default)]
+    pub not_match: Vec<String>,
 }
 
 fn any() -> String {
     "*".into()
+}
+
+/// Check every rule against its own examples. A rule whose examples fail is a
+/// config error, not a warning: silently dropping a broken deny would fail open.
+fn check_examples(rules: &[RuleConfig]) -> Result<(), String> {
+    for r in rules {
+        let rule = oxgraft_strategies::approval::Rule::new(&r.tool, &r.resource, oxgraft_seams::Decision::Ask);
+        for example in &r.must_match {
+            if !rule.matches(&r.tool, example) {
+                return Err(format!(
+                    "rule `{} {}`: example `{example}` is listed under `match` but the pattern does not match it",
+                    r.tool, r.resource
+                ));
+            }
+        }
+        for example in &r.not_match {
+            if rule.matches(&r.tool, example) {
+                return Err(format!(
+                    "rule `{} {}`: example `{example}` is listed under `not_match` but the pattern matches it",
+                    r.tool, r.resource
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn convert_rules(rules: &[RuleConfig], warnings: &mut Vec<String>) -> Vec<oxgraft_strategies::approval::Rule> {

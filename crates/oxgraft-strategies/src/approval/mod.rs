@@ -23,7 +23,8 @@ impl Rule {
         self
     }
 
-    fn matches(&self, tool: &str, resource: &str) -> bool {
+    /// Whether this rule's patterns match `tool` on `resource` (decision ignored).
+    pub fn matches(&self, tool: &str, resource: &str) -> bool {
         wildcard(&self.tool, tool) && wildcard(&self.resource, resource)
     }
 }

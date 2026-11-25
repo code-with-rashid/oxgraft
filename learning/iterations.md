@@ -59,3 +59,4 @@ honestly: an iteration is only logged when its tests pass.
 | 51 | 2026-11-25 | qwen-code | Protected self-modification paths always ask, whatever the rules | adopt | GRAFT-0040 | SPEC-0006 | `protected_paths_always_ask_and_mistakes_trip_the_breaker` |
 | 52 | 2026-11-25 | cline, openhands | Consecutive-mistake breaker: nudge at 6, stop at 12 | adopt | GRAFT-0041 | SPEC-0006 | `protected_paths_always_ask_and_mistakes_trip_the_breaker` |
 | 53 | 2026-11-25 | openhands | Shell risk rails: fetch-to-exec, forced recursive delete, raw disk, mkfs, sudo always asked, with reason; `needs_fresh_yes` seam method | adopt | GRAFT-0042 | SPEC-0006 | `risky_commands_ignore_always_answers` |
+| 54 | 2026-11-25 | codex | `match`/`not_match` examples on approval rules, validated at load (config error on failure); rules documented in usage.md | adopt | GRAFT-0043 | SPEC-0005 | `rule_examples_are_checked_at_load` |

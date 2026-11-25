@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043]
 ---
 
 # SPEC-0005: Extensions
@@ -26,3 +26,7 @@ scripts) without letting a cloned repository run code unasked.
 - **AC4** Hooks and MCP servers defined by the workspace (`.oxgraft/config.toml`,
   `.mcp.json`) load only when the workspace is listed in the user config's
   `trusted_workspaces`; otherwise a warning explains how to enable them.
+- **AC6** A `[[rules]]` entry may list `match` and `not_match` example
+  resources. At load, every `match` example must match the rule's patterns and
+  no `not_match` example may; otherwise the config is rejected with an error
+  naming the rule and the example.

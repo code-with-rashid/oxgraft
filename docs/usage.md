@@ -74,6 +74,34 @@ env = { GITHUB_TOKEN = "…" }
 A project `.mcp.json` (`{"mcpServers": {...}}`, the Claude Code format) is read
 only for trusted workspaces.
 
+### Approval rules
+
+Rules are added after the built-in ones (read-only tools allowed; edit, write
+and bash ask; `*.env` denied). `*` matches any text. Any matching `deny` wins;
+otherwise the last matching rule decides. Shell commands are checked part by
+part (`a && b`, `a | b`, `a; b`), so `cargo *` never approves `cargo test && rm -rf ~`.
+
+```toml
+[[rules]]
+tool = "bash"
+resource = "cargo *"
+decision = "allow"             # allow | ask | deny
+match = ["cargo test", "cargo clippy --all-targets"]   # must match, checked at load
+not_match = ["cargotest"]                             # must not match
+
+[[rules]]
+tool = "read"
+resource = "*.pem"
+decision = "deny"
+justification = "certificates are secret; ask the user"   # shown to the model
+```
+
+If an example fails, Oxgraft refuses to start and names the rule, so a typo
+can't silently disable a deny. Some shell commands are asked about every time,
+whatever the rules or an earlier "always" answer: downloads piped into a
+shell, forced recursive deletes, raw disk writes, `mkfs` and `sudo`.
+Workspace rules apply only to trusted workspaces.
+
 ## Project instructions and skills
 
 Oxgraft reads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and
