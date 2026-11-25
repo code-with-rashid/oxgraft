@@ -66,4 +66,5 @@ trips. Every step is an event on the protocol stream.
   word, or first two for tools with subcommands such as git, cargo, npm), per
   part: a later command runs without asking only if every part's prefix was
   approved, and never if it contains `$(` or backticks. For other tools
-  "always" covers the tool for the rest of the run.
+  "always" covers the tool for the rest of the run, except `web_fetch`, where it
+  covers that URL's host.

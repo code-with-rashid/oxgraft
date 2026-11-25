@@ -101,3 +101,4 @@ honestly: an iteration is only logged when its tests pass.
 | 93 | 2026-11-25 | claude-code | Adaptive thinking for Anthropic Opus/Sonnet 4.6+ and Fable (`thinking = false` to disable); not yet tried on the live API | adopt | GRAFT-0071 | SPEC-0001 | `adaptive_thinking_for_supported_models` |
 | 94 | 2026-11-25 | goose, claude-code | MCP over Streamable HTTP (`url`, `headers` with ${VAR}, JSON or SSE replies, session id) | adopt | GRAFT-0072 | SPEC-0005 | `http_servers_work_with_json_and_sse_replies` |
 | 95 | 2026-11-25 | codex | web_fetch refuses link-local and cloud-metadata destinations, checking every redirect hop | avoid | GRAFT-0073 | SPEC-0002 | `redirects_to_metadata_are_refused` |
+| 96 | 2026-11-25 | claude-code | "Always" for web_fetch scoped to the host | adopt | GRAFT-0069 | SPEC-0003 | `always_for_web_fetch_is_per_host` |

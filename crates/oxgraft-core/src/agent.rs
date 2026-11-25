@@ -131,6 +131,10 @@ const MAX_CONTINUATIONS: u32 = 3;
 /// prefix of each part (`cargo test`, `npm run build`), so approving `cargo test`
 /// never approves `rm`. Lines with command substitution give no keys.
 pub fn always_keys(tool: &str, resource: &str) -> Vec<String> {
+    if tool == "web_fetch" {
+        // Per host: approving docs.rs doesn't approve every site.
+        return url_host(resource).map(|h| vec![format!("web_fetch:{h}")]).unwrap_or_default();
+    }
     if tool != "bash" {
         return vec![tool.to_string()];
     }
@@ -142,12 +146,29 @@ pub fn always_keys(tool: &str, resource: &str) -> Vec<String> {
 
 /// Whether earlier "always" answers cover this action: for `bash`, every part.
 fn always_covers(always: &HashSet<String>, tool: &str, resource: &str) -> bool {
+    if tool == "web_fetch" {
+        let keys = always_keys(tool, resource);
+        return !keys.is_empty() && keys.iter().all(|k| always.contains(k));
+    }
     if tool != "bash" {
         return always.contains(tool);
     }
     let keys = always_keys(tool, resource);
     let parts = shell_parts(resource).len();
     !keys.is_empty() && keys.len() == parts && keys.iter().all(|k| always.contains(k))
+}
+
+/// Lowercased host of an http(s) URL, without user info or port.
+fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if host.starts_with('[') {
+        host.split(']').next().map(|h| format!("{h}]"))?
+    } else {
+        host.split(':').next()?.to_string()
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// Split on `;`, `&`, `|` and newlines (conservative: quotes are not honoured).

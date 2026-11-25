@@ -786,3 +786,13 @@ fn always_for_bash_is_scoped_to_the_command() {
         .collect();
     assert_eq!(asked, vec!["git status", "git log -1", "git status; rm -f nothing_here", "git status $(echo x)"]);
 }
+
+// SPEC-0003 AC14 (GRAFT-0069): "always" for web_fetch covers that host only.
+#[test]
+fn always_for_web_fetch_is_per_host() {
+    use oxgraft_core::agent::always_keys;
+    assert_eq!(always_keys("web_fetch", "https://Docs.rs/serde?x=1"), vec!["web_fetch:docs.rs"]);
+    assert_eq!(always_keys("web_fetch", "http://user@[::1]:8080/x"), vec!["web_fetch:[::1]"]);
+    assert!(always_keys("web_fetch", "not a url").is_empty());
+    assert_eq!(always_keys("edit", "a.rs"), vec!["edit"]);
+}

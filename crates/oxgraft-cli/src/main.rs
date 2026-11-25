@@ -763,6 +763,9 @@ impl Approver for TerminalApprover {
                                 .join(" + ")
                         }
                     }
+                    "web_fetch" => oxgraft_core::agent::always_keys(tool, &action.resource)
+                        .first()
+                        .map_or("this URL".to_string(), |k| k.trim_start_matches("web_fetch:").to_string()),
                     _ => format!("all {tool}"),
                 };
                 eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {scope}: ");
