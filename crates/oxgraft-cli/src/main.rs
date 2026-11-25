@@ -1296,6 +1296,14 @@ fn doctor(common: &Common, live: bool) -> CliResult {
                 Err(e) => line(false, "model", format!("{spec}: {}", e.message)),
             },
         }
+        // The subagent's model needs working credentials too.
+        if let Some(spec) = &cfg.subagent_model {
+            let options = oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
+            match oxgraft_providers::parse_model(spec).and_then(|m| oxgraft_providers::build(&m, &options).map(|_| m)) {
+                Ok(m) => line(true, "subagent", format!("{spec} (credentials found for `{}`)", m.provider)),
+                Err(e) => line(false, "subagent", format!("{spec}: {}", e.message)),
+            }
+        }
         match profiles::load(
             &ws,
             &profiles::resolve_auto(&cfg.profile, cfg.model.as_deref().unwrap_or("")),

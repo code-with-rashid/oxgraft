@@ -763,3 +763,16 @@ fn stats_sum_usage_per_model() {
     assert!(v["input_tokens"].as_u64().unwrap() > 0);
     assert!(String::from_utf8_lossy(&ws.oxgraft(&["stats"]).stdout).contains("SESSIONS"));
 }
+
+// doctor checks subagent_model credentials too.
+#[test]
+fn doctor_checks_the_subagent_model() {
+    let ws = Ws::new("doctorsub");
+    let model = ws.script(json!([]));
+    let user = ws.0.join("no-user-config").join("oxgraft");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(user.join("config.toml"), "subagent_model = \"nope/x\"\n").unwrap();
+    let out = ws.oxgraft(&["doctor", "--model", &model]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("FAIL subagent"), "{text}");
+}
