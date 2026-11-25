@@ -153,7 +153,13 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         cfg.rules.extend(convert_rules(&c.rules, &mut cfg.warnings));
         layers.push((p.display().to_string(), c));
     }
-    let is_trusted = trusted.iter().any(|t| same_dir(t, workspace));
+    // A worktree Oxgraft made inside a trusted repo (`run --worktree`) is trusted too.
+    let is_trusted = trusted.iter().any(|t| {
+        same_dir(t, workspace)
+            || Path::new(t)
+                .canonicalize()
+                .is_ok_and(|root| workspace.starts_with(root.join(".oxgraft").join("worktrees")))
+    });
     cfg.trusted = is_trusted;
     let local_profiles = std::fs::read_dir(workspace.join("profiles"))
         .map(|d| d.flatten().any(|e| e.path().extension().is_some_and(|x| x == "toml")))

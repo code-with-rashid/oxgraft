@@ -37,3 +37,7 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+The first version left changes uncommitted (so the suggested `git merge` did nothing), passed `\?\` paths to Git on Windows, and dropped the repo's trusted hooks/rules in the worktree. Now changes are committed on the branch at the end (`oxgraft: <task>`), paths are simplified for git, a worktree under a trusted repo is trusted, and the hints name the right commands even when the run fails.

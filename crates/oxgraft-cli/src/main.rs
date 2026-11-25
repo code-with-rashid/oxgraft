@@ -210,6 +210,8 @@ fn available() -> Available {
 /// A new git worktree for a run (GRAFT-0102, after Claude Code's `--worktree`):
 /// `.oxgraft/worktrees/<id>` on branch `oxgraft/<id>` from the current HEAD.
 fn create_worktree(ws: &Path) -> Result<(PathBuf, String), String> {
+    // Git for Windows mishandles `\\?\` paths from canonicalize (review fix).
+    let ws = &oxgraft_core::checkpoint::plain_path(ws);
     let git = |args: &[&str]| -> Result<String, String> {
         let out =
             std::process::Command::new("git").arg("-C").arg(ws).args(args).output().map_err(|e| format!("git: {e}"))?;
@@ -234,6 +236,35 @@ fn create_worktree(ws: &Path) -> Result<(PathBuf, String), String> {
     git(&["worktree", "add", "-q", "-b", &branch, &path_text, "HEAD"])
         .map_err(|e| format!("git worktree add failed: {e}"))?;
     Ok((path, branch))
+}
+
+/// Commit everything in a worktree made by `run --worktree`. Ok(false) = nothing
+/// to commit. Uses the user's git identity, falling back to a neutral one.
+fn commit_worktree(path: &Path, title: &str) -> Result<bool, String> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git").arg("-C").arg(path).args(args).output().map_err(|e| format!("git: {e}"))
+    };
+    git(&["add", "-A"])?;
+    if git(&["diff", "--cached", "--quiet"])?.status.success() {
+        return Ok(false);
+    }
+    let message = format!("oxgraft: {}", if title.trim().is_empty() { "changes" } else { title.trim() });
+    let mut out = git(&["commit", "-q", "--no-verify", "-m", &message])?;
+    if !out.status.success() {
+        // No identity configured: commit as a neutral author rather than fail.
+        out = git(&[
+            "-c",
+            "user.name=oxgraft",
+            "-c",
+            "user.email=oxgraft@localhost",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            &message,
+        ])?;
+    }
+    if out.status.success() { Ok(true) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
 }
 
 /// Rules from `--allow-tool` / `--deny-tool` (GRAFT-0097, after Claude Code's
@@ -339,17 +370,31 @@ fn dispatch(cli: Cli) -> CliResult {
                 }
                 let mut common = common.clone();
                 common.cwd = Some(path.clone());
-                let code = run(&common, task, output, None, None, until)?;
+                let title: String = task.join(" ").lines().next().unwrap_or("").chars().take(60).collect();
+                let result = run(&common, task, output, None, None, until);
+                // Commit what the run changed, so the branch can be merged (review fix).
+                let committed = commit_worktree(&path, &title);
                 if !json && !quiet {
-                    eprintln!(
-                        "worktree {} on branch {branch}: review with `git -C {} diff HEAD`, merge with `git merge {branch}`, \
-                         or remove with `git worktree remove {}`",
-                        path.display(),
-                        path.display(),
-                        path.display()
-                    );
+                    match committed {
+                        Ok(true) => eprintln!(
+                            "worktree {} on branch {branch}: review with `git diff HEAD...{branch}`, merge with \
+                             `git merge {branch}`, discard with `git worktree remove --force {}` and `git branch -D {branch}`",
+                            path.display(),
+                            path.display()
+                        ),
+                        Ok(false) => eprintln!(
+                            "worktree {} on branch {branch}: no changes; remove with `git worktree remove {}` and \
+                             `git branch -D {branch}`",
+                            path.display(),
+                            path.display()
+                        ),
+                        Err(e) => eprintln!(
+                            "worktree {} on branch {branch}: could not commit the changes: {e}",
+                            path.display()
+                        ),
+                    }
                 }
-                return Ok(code);
+                return result;
             }
             run(&common, task, output, resume, fork, until)
         }

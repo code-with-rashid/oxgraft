@@ -938,6 +938,11 @@ fn worktree_runs_leave_the_checkout_alone() {
     let status = Command::new("git").args(["status", "--porcelain"]).current_dir(&ws.0).output().unwrap();
     let status = String::from_utf8_lossy(&status.stdout);
     assert!(!status.contains(".oxgraft"), "the worktree is ignored in the user's repo: {status}");
+    // The run's changes are committed on the branch, so it can be merged.
+    let log = Command::new("git").args(["log", "--all", "--oneline"]).current_dir(&ws.0).output().unwrap();
+    let log = String::from_utf8_lossy(&log.stdout);
+    assert!(log.contains("oxgraft: add a file"), "{log}");
+    assert!(err.contains("merge with `git merge oxgraft/"), "{err}");
 }
 
 // Review fix: an answer that never matches the schema is a failure (exit 3), not success.
