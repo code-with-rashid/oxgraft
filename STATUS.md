@@ -3,10 +3,10 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–116._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–125._
 
 **Branches:** `main` has iterations 1–77 (being tried against a real model by the
-maintainer). Iterations 78 onward are on `next`, in draft PR #1, until that
+maintainer). Iterations 78–125 are on `next`, in draft PR #1, until that
 feedback is in. Items below marked (next) are only on that branch.
 
 ## Current milestone
@@ -55,11 +55,18 @@ feedback is in. Items below marked (next) are only on that branch.
   decline-with-guidance at approval prompts, diff-style edit previews;
   `subagent_model`, `verify_command = "auto"`, whitespace-tolerant `old_string`.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 86 graft records; 116 logged iterations; specs SPEC-0001..0006;
+  archived); 92 graft records; 125 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
 
+- **A third independent review (iterations 103–116) found 8 problems; all are
+  fixed** (117–118): subagent compaction used the main model, `/model` kept
+  stale state, `stats` booked tokens to the wrong model, approval answers like
+  "okay" were read as a decline.
+- goose v1.61.0 and Claude Code v2.1.332 were reviewed from their release notes
+  (iterations 122–125): empty/thinking-only replies, terminal control codes,
+  named pipes and huge hook output are now handled.
 - **A second independent review (iterations 77–97, on `next`) found 12 problems;
   all are fixed** (iterations 98–101). The serious ones: URL hosts were parsed
   differently from the HTTP client (`https://evil.com\@docs.rs/`), which could
