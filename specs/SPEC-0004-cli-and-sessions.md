@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -62,3 +62,9 @@ otherwise an error explaining how to choose one.
   omitted). N must follow a finished reply (an assistant message without tool
   calls); otherwise the error lists valid fork points. The original session is
   never modified; the fork records `forked_from`.
+- **AC10** `--mode` / `approval_mode` / `OXGRAFT_APPROVAL_MODE` selects
+  `read-only` (edit, write, bash and MCP tools denied with a reason), `suggest`
+  (default rules), `auto-edit` (edit and write allowed) or `full-auto` (edit,
+  write and bash allowed). Mode rules sit between the defaults and user rules.
+  Protected paths and risk rails still ask in every mode; an unknown mode is a
+  usage error; an untrusted workspace can't set the mode.

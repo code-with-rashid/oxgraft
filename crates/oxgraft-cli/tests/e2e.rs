@@ -374,3 +374,54 @@ fn sessions_can_be_forked() {
     assert_eq!(bad.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&bad.stderr).contains("fork points"));
 }
+
+// SPEC-0004 AC10 (GRAFT-0052): approval modes; rails still ask; repos can't pick a mode.
+#[test]
+fn approval_modes_change_what_runs_without_asking() {
+    let ws = Ws::new("modes");
+    let results = |out: &Output| -> Vec<(bool, String)> {
+        events(out)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::ToolResult { ok, output, .. } => Some((ok, output)),
+                _ => None,
+            })
+            .collect()
+    };
+    let turns = json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "a.txt", "content": "a\n"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo ran"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "rm -rf nothing_here"}}]},
+        {"text": "done"}
+    ]);
+    // No --yes: every `ask` is declined, so an ok result means the mode allowed it.
+    let model = ws.script(turns.clone());
+    let out = ws.oxgraft(&["run", "--json", "--mode", "full-auto", "--model", &model, "x"]);
+    let r = results(&out);
+    assert!(r[0].0 && r[1].0 && r[1].1.contains("ran"), "{r:?}");
+    assert!(!r[2].0 && r[2].1.contains("declined"), "risky commands still ask: {r:?}");
+
+    let _ = std::fs::remove_file(ws.0.join("a.txt"));
+    let model = ws.script(turns.clone());
+    let out = ws.oxgraft(&["run", "--json", "--mode", "auto-edit", "--model", &model, "x"]);
+    let r = results(&out);
+    assert!(r[0].0 && !r[1].0, "auto-edit allows edits, asks for commands: {r:?}");
+
+    let _ = std::fs::remove_file(ws.0.join("a.txt"));
+    let model = ws.script(turns.clone());
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--mode", "read-only", "--model", &model, "x"]);
+    let r = results(&out);
+    assert!(r.iter().all(|(ok, _)| !ok) && r[0].1.contains("read-only mode"), "{r:?}");
+
+    // A workspace can't switch itself to full-auto.
+    std::fs::create_dir_all(ws.0.join(".oxgraft")).unwrap();
+    std::fs::write(ws.0.join(".oxgraft/config.toml"), "approval_mode = \"full-auto\"\n").unwrap();
+    let _ = std::fs::remove_file(ws.0.join("a.txt"));
+    let model = ws.script(turns);
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "x"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ignoring `approval_mode"));
+    let r = results(&out);
+    assert!(!r[0].0, "untrusted workspace mode ignored: {r:?}");
+
+    assert_eq!(ws.oxgraft(&["run", "--mode", "yolo", "--model", "mock:x.json", "x"]).status.code(), Some(2));
+}

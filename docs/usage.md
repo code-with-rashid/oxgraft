@@ -39,6 +39,9 @@ oxgraft undo                              # restore files changed by the latest 
 oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn
 oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)
 oxgraft --profile sandboxed run "…"       # shell commands confined to the workspace, offline
+oxgraft --mode read-only run "explain the auth flow"   # no edits or commands at all
+oxgraft --mode auto-edit                  # edits without asking; commands still ask
+oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
 ```
 
 Ctrl-C interrupts the current run (and any running command); press it again to quit.

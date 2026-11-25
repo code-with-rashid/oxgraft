@@ -41,6 +41,9 @@ struct Common {
     /// Approve every `ask` action without prompting (deny rules still apply).
     #[arg(long, short = 'y', global = true)]
     yes: bool,
+    /// Approval mode: read-only, suggest (default), auto-edit, full-auto.
+    #[arg(long, global = true)]
+    mode: Option<String>,
     /// Workspace directory (default: current directory).
     #[arg(long, global = true)]
     cwd: Option<PathBuf>,
@@ -124,6 +127,29 @@ const EXIT_STOPPED: u8 = 3;
 
 fn available() -> Available {
     available_with(Vec::new())
+}
+
+/// Rules for an approval mode (GRAFT-0052, after Codex's suggest / auto-edit /
+/// full-auto and read-only modes). They sit between the built-in defaults and the
+/// user's own rules, so explicit rules still win. Protected paths and risk rails
+/// apply in every mode.
+fn mode_rules(mode: &str) -> Result<Vec<oxgraft_strategies::approval::Rule>, String> {
+    use oxgraft_seams::Decision::{Allow, Deny};
+    use oxgraft_strategies::approval::Rule;
+    let why = "read-only mode: describe the change instead, or rerun with --mode suggest";
+    Ok(match mode {
+        "suggest" => Vec::new(),
+        "read-only" => {
+            ["edit", "write", "bash", "mcp__*"].iter().map(|t| Rule::new(t, "*", Deny).because(why)).collect()
+        }
+        "auto-edit" => vec![Rule::new("edit", "*", Allow), Rule::new("write", "*", Allow)],
+        "full-auto" => {
+            vec![Rule::new("edit", "*", Allow), Rule::new("write", "*", Allow), Rule::new("bash", "*", Allow)]
+        }
+        other => {
+            return Err(format!("unknown approval mode `{other}`: use read-only, suggest, auto-edit or full-auto"));
+        }
+    })
 }
 
 /// Strategies, with user-configured approval rules appended to the defaults.
@@ -309,6 +335,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             profile: common.profile.as_deref(),
             effort: common.effort.as_deref(),
             max_turns: common.max_turns,
+            approval_mode: common.mode.as_deref(),
         },
     )
     .map_err(usage)?;
@@ -327,7 +354,9 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let (_, profile_text) =
         profiles::load(&ws, &profiles::resolve_auto(&cfg.profile, &model_ref.model), cfg.trusted).map_err(usage)?;
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
-    let toolkit = Toolkit::assemble(profile, available_with(cfg.rules.clone())).map_err(usage)?;
+    let mut rules = mode_rules(&cfg.approval_mode).map_err(usage)?;
+    rules.extend(cfg.rules.clone());
+    let toolkit = Toolkit::assemble(profile, available_with(rules)).map_err(usage)?;
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;
@@ -603,6 +632,7 @@ fn doctor(common: &Common) -> CliResult {
         profile: common.profile.as_deref(),
         effort: common.effort.as_deref(),
         max_turns: common.max_turns,
+        approval_mode: common.mode.as_deref(),
     };
     let cfg = match config::resolve(&ws, &flags) {
         Ok(c) => {

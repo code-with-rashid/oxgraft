@@ -10,7 +10,7 @@ updates a harness profile or adds or promotes a strategy.
 |---|---|---|---|
 | edit_format | **search_replace** (GRAFT-0001) | whole_file, search_replace_tolerant (GRAFT-0015), apply_patch (GRAFT-0024) | fuzzy diff (cline) |
 | context | **pinned_then_in_order** + compaction (GRAFT-0023) | — | repo map (aider), retrieval |
-| approval | **ordered_rules** (GRAFT-0002) + risk rails (0042) | inert_reads (0047), allow_all | approval modes per session (codex) |
+| approval | **ordered_rules** (GRAFT-0002) + risk rails (0042) | inert_reads (0047), allow_all; modes read-only/auto-edit/full-auto (0052) | per-tool modes in chat |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
 | provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
 | tools | read, write, edit, ls, glob, grep, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
@@ -24,7 +24,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 
 | Harness | Reviewed at | Grafts taken into Oxgraft |
 |---|---|---|
-| codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034, 0043, 0051 |
+| codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034, 0043, 0051, 0052 |
 | claude-code | v2.1.331 (docs) | 0012, 0013, 0016, 0017, 0018, 0028, 0031, 0036 |
 | opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038, 0045 |
 | gemini-cli | v0.71.1 | 0027, 0037 |
