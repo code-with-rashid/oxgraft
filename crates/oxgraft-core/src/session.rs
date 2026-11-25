@@ -46,6 +46,23 @@ pub struct Session {
     pub forked_from: Option<String>,
 }
 
+/// Sessions hold prompts, file contents and command output: on Unix, make the
+/// file readable by its owner only and the folder private (GRAFT-0095).
+#[cfg(unix)]
+fn private(file: &Path, dir: Option<&Path>) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))?;
+    if let Some(dir) = dir {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn private(_file: &Path, _dir: Option<&Path>) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// One workspace checkpoint: the state after `label`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointRecord {
@@ -113,6 +130,7 @@ impl Session {
         let tmp = path.with_extension("json.tmp");
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(&tmp, json)?;
+        let _ = private(&tmp, path.parent()); // best effort: some filesystems refuse chmod
         std::fs::rename(&tmp, &path)
     }
 
@@ -420,6 +438,26 @@ mod prune_tests {
         assert_eq!(left, vec![ids[3].clone(), ids[2].clone()]);
         assert!(!Session::dir(&ws).join(&ids[0]).exists(), "backups go too");
         assert!(Session::dir(&ws).join("notes.json").exists(), "non-session files stay");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    // GRAFT-0095
+    #[test]
+    fn session_files_are_private() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        let s = Session::new("m", "default", &ws);
+        s.save().unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&s.path()), 0o600);
+        assert_eq!(mode(&Session::dir(&ws)), 0o700);
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
