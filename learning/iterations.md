@@ -120,3 +120,4 @@ honestly: an iteration is only logged when its tests pass.
 | 112 | 2026-11-25 | cline, claude-code | Approval preview shows `- old` / `+ new` for old/new_string and batched edits | adopt | GRAFT-0084 | SPEC-0004 | `edit_previews_show_old_and_new` |
 | 113 | 2026-11-25 | claude-code | Terminal bell when a chat turn or run of 30 s or more finishes (`bell = false` to turn off) | adopt | GRAFT-0085 | SPEC-0004 | — |
 | 114 | 2026-11-25 | claude-code | Chat `/init` writes or improves AGENTS.md (same task as `oxgraft init`) | adopt | GRAFT-0032 | SPEC-0004 | — |
+| 115 | 2026-11-25 | opencode | old_string falls back to a unique whole-line match ignoring trailing whitespace and a uniform extra indentation (re-indents new_string) | adopt | GRAFT-0086 | SPEC-0002 | `old_string_tolerates_trailing_space_and_indentation` |

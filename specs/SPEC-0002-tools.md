@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086]
 ---
 
 # SPEC-0002: Built-in tools
@@ -76,3 +76,7 @@ tools beat many overlapping ones) that is safe by default.
   resolves to a link-local, unspecified or known metadata address, on the first
   request and on every redirect (at most 5). Loopback and private addresses are
   allowed.
+- **AC16** If `old_string` is not found exactly, `edit` replaces a unique run of
+  whole lines that matches after ignoring trailing whitespace and a uniform
+  extra indentation, indenting `new_string` the same way; ambiguous matches
+  fail.

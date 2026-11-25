@@ -220,7 +220,8 @@ impl Tool for Edit {
             let all = input.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
             match base.matches(old.as_str()).count() {
                 _ if old.is_empty() => Err("`old_string` is empty".to_string()),
-                0 => Err(format!("`old_string` not found: {:?}", truncate(&old, 200))),
+                0 => whitespace_tolerant_replace(&base, &old, &new)
+                    .ok_or_else(|| format!("`old_string` not found: {:?}", truncate(&old, 200))),
                 1 => Ok(base.replacen(old.as_str(), &new, 1)),
                 _ if all => Ok(base.replace(old.as_str(), &new)),
                 n => Err(format!("`old_string` matches {n} times; add context to make it unique or set replace_all")),
@@ -255,6 +256,55 @@ impl Tool for Edit {
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
     }
+}
+
+/// Fallback when `old_string` doesn't match exactly (GRAFT-0086, after OpenCode's
+/// line-trimmed and indentation-flexible replacers): compare whole lines ignoring
+/// trailing whitespace and a uniform extra indentation. Only a unique match is
+/// replaced; `new_string` gets the same extra indentation.
+fn whitespace_tolerant_replace(base: &str, old: &str, new: &str) -> Option<String> {
+    let old_lines: Vec<&str> = old.trim_matches('\n').lines().map(str::trim_end).collect();
+    if old_lines.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+    let lines: Vec<&str> = base.split_inclusive('\n').collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let mut found: Option<(usize, String)> = None;
+    for start in 0..lines.len().saturating_sub(old_lines.len() - 1) {
+        let window = &lines[start..start + old_lines.len()];
+        // The extra indentation, from the first non-blank old line.
+        let k = old_lines.iter().position(|l| !l.is_empty())?;
+        let b = window[k].trim_end();
+        let o = old_lines[k];
+        if b.len() < o.len() || indent(b) < indent(o) {
+            continue;
+        }
+        let prefix = &b[..indent(b) - indent(o)];
+        if !prefix.chars().all(|c| c == ' ' || c == '\t') {
+            continue;
+        }
+        let matches = window.iter().zip(&old_lines).all(|(b, o)| {
+            let b = b.trim_end();
+            if o.is_empty() { b.is_empty() } else { b.strip_prefix(prefix) == Some(o) }
+        });
+        if matches {
+            if found.is_some() {
+                return None; // ambiguous: never guess
+            }
+            found = Some((start, prefix.to_string()));
+        }
+    }
+    let (start, prefix) = found?;
+    let end = start + old_lines.len();
+    let mut out: String = lines[..start].concat();
+    let replacement: Vec<String> =
+        new.lines().map(|l| if l.trim().is_empty() { String::new() } else { format!("{prefix}{l}") }).collect();
+    out.push_str(&replacement.join("\n"));
+    if lines[end - 1].ends_with('\n') && !replacement.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&lines[end..].concat());
+    Some(out)
 }
 
 /// Apply `[{old_string, new_string}, ...]` to `base`: every `old_string` must occur
@@ -456,6 +506,27 @@ mod tests {
         f.file("b.txt", "aaa\n");
         let out = f.run(&Edit, json!({"path": "b.txt", "edits": [{"old_string": "aa", "new_string": "x"}]}));
         assert!(out.is_error && out.content.contains("matches more than once"), "{}", out.content);
+    }
+
+    // GRAFT-0086: whitespace-tolerant fallback for old_string.
+    #[test]
+    fn old_string_tolerates_trailing_space_and_indentation() {
+        let f = Fixture::new("tolerant-old");
+        f.file("a.py", "class A:\n    def f(self):   \n        return 1\n\n    def g(self):\n        return 2\n");
+        // Model sent the method without its class indentation and without trailing spaces.
+        let out = f.run(&Edit, json!({"path": "a.py", "old_string": "def f(self):\n    return 1", "new_string": "def f(self):\n    return 10"}));
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            f.read("a.py"),
+            "class A:\n    def f(self):\n        return 10\n\n    def g(self):\n        return 2\n"
+        );
+        // Ambiguous tolerant matches are refused.
+        f.file("b.py", "  x = 1\n    x = 1\n");
+        let out = f.run(&Edit, json!({"path": "b.py", "old_string": "x = 1", "new_string": "x = 2"}));
+        assert!(out.is_error, "{}", out.content);
+        // Different text still fails.
+        let out = f.run(&Edit, json!({"path": "a.py", "old_string": "def h(self):", "new_string": "x"}));
+        assert!(out.is_error && out.content.contains("not found"));
     }
 
     #[test]
