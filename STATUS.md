@@ -3,10 +3,10 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–125._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–155._
 
 **Branches:** `main` has iterations 1–77 (being tried against a real model by the
-maintainer). Iterations 78–125 are on `next`, in draft PR #1, until that
+maintainer). Iterations 78–155 are on `next`, in draft PR #1, until that
 feedback is in. Items below marked (next) are only on that branch.
 
 ## Current milestone
@@ -54,12 +54,24 @@ feedback is in. Items below marked (next) are only on that branch.
   in chat `/compact`, `/mode`, `/model`, `/init`, multi-line `"""` input,
   decline-with-guidance at approval prompts, diff-style edit previews;
   `subagent_model`, `verify_command = "auto"`, whitespace-tolerant `old_string`.
+  (next, 126–155) `run --worktree`, `--output-schema`, `--allow-tool`/`--deny-tool`,
+  `--ephemeral`; chat `/diff`, `/commit`, `/resume`, `/export`, `/cost`, `/agents`;
+  background shell commands with `bash_output` (filter, stop; never outlive
+  Oxgraft); named subagents from `.agents/agents` / `.claude/agents`;
+  `AGENTS.local.md` / `CLAUDE.local.md`; JSON/TOML syntax notes after edits;
+  `read` on a directory lists it; `doctor` reports named agents.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 92 graft records; 125 logged iterations; specs SPEC-0001..0006;
+  archived); 109 graft records; 155 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
 
+- **Two independent reviews of iterations 126–145 found 14 problems; all are
+  fixed** (136–139, 146–151). The serious ones: secret scrubbing could be read
+  around through `/proc` during verify; background commands could outlive
+  Oxgraft (double Ctrl-C, `server &`, Windows process trees); `--ephemeral`
+  still wrote undo backups; a symlinked nested `AGENTS.md` could pull an outside
+  file into the prompt; `/commit` staged stray untracked files such as `.env`.
 - **A third independent review (iterations 103–116) found 8 problems; all are
   fixed** (117–118): subagent compaction used the main model, `/model` kept
   stale state, `stats` booked tokens to the wrong model, approval answers like
@@ -97,7 +109,8 @@ feedback is in. Items below marked (next) are only on that branch.
 2. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats
    (GRAFT-0001/0015/0024/0038) and `fewer-prompts` vs default.
 3. Remaining backlog (ROADMAP): egress proxy allowlist, LSP diagnostics,
-   worktree-isolated writing subagents, sandbox expansion on denial.
+   worktree-isolated writing subagents, sandbox expansion on denial, parallel
+   read-only tool calls, image input.
 
 ## Known problems
 
