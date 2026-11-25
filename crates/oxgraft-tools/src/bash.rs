@@ -72,13 +72,15 @@ impl Tool for Bash {
             description: format!(
                 "Run a shell command ({shell}) in the workspace directory. Returns the exit code, stdout and \
                  stderr. Non-interactive: no prompts, no pagers. Default timeout {DEFAULT_TIMEOUT_SECS}s, max \
-                 {MAX_TIMEOUT_SECS}s. Prefer the read/grep/glob tools for looking at files."
+                 {MAX_TIMEOUT_SECS}s. Use `background: true` for servers and watchers. Prefer the read/grep/glob tools \
+                 for looking at files."
             ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The command line"},
-                    "timeout_secs": {"type": "integer", "description": "Timeout in seconds", "minimum": 1}
+                    "timeout_secs": {"type": "integer", "description": "Timeout in seconds", "minimum": 1},
+                    "background": {"type": "boolean", "description": "Start it and return at once (dev servers, watchers); read its output with bash_output"}
                 },
                 "required": ["command"]
             }),
@@ -128,10 +130,26 @@ impl Tool for Bash {
         for name in secret_env_names() {
             cmd.env_remove(name);
         }
+        let background = input.get("background").and_then(Value::as_bool).unwrap_or(false);
+        // A background command gets its own process group, so stopping it also stops
+        // whatever it started (a dev server under `npm run dev`, for example).
+        #[cfg(unix)]
+        if background {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::error(format!("could not start shell: {e}")),
         };
+        if background && input.get("background").and_then(Value::as_bool).unwrap_or(false) {
+            return match crate::background::start(child, command) {
+                Ok(id) => ToolOutput::ok(format!(
+                    "started background command {id}; read its output with bash_output {{\"id\": {id}}} (it is stopped when the run ends)"
+                )),
+                Err(e) => ToolOutput::error(e),
+            };
+        }
 
         // Read pipes on threads so a chatty process can't deadlock us.
         let (tx, rx) = mpsc::channel::<(u8, Vec<u8>)>();

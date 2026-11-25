@@ -840,6 +840,7 @@ fn run(
     if let Some(path) = &output.last_message {
         std::fs::write(path, &answer).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
+    oxgraft_tools::background::kill_all();
     Ok(status_code(&outcome.status))
 }
 
@@ -1467,6 +1468,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         ring_if_long(started, bell);
         last = status_code(&outcome.status);
     }
+    oxgraft_tools::background::kill_all();
     eprintln!("session {} saved", session.id);
     Ok(last)
 }
