@@ -450,3 +450,37 @@ fn run_until_a_check_passes() {
     assert!(events(&out).iter().any(|e| matches!(e, Event::Warning { message } if message.contains("finish check"))));
     assert!(ws.0.join("ok.txt").exists());
 }
+
+// Chat: a task, then /checkpoints and /restore 0 roll the workspace back.
+#[test]
+fn chat_lists_and_restores_checkpoints() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        eprintln!("git not installed; skipping");
+        return;
+    }
+    use std::io::Write as _;
+    let ws = Ws::new("chatcp");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "made.txt", "content": "x\n"}}]},
+        {"text": "made it"}
+    ]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--yes", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"make a file\n/checkpoints\n/restore 0\n/restore x\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("checkpoints of session") && err.contains("turn 1"), "{err}");
+    assert!(err.contains("workspace restored to checkpoint 0"), "{err}");
+    assert!(err.contains("usage: /restore N"), "{err}");
+    assert!(!ws.0.join("made.txt").exists(), "restored to before the task");
+}

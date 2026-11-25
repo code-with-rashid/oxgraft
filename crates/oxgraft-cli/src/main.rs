@@ -235,52 +235,16 @@ fn dispatch(cli: Cli) -> CliResult {
         Some(Command::Checkpoints { id }) => {
             let ws = workspace(&common)?;
             let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
-            if session.checkpoints.is_empty() {
-                println!("session {} has no checkpoints", session.id);
-                return Ok(0);
-            }
-            let cp = oxgraft_core::checkpoint::Checkpoints::open(&ws).map_err(|e| (EXIT_ERROR, e))?;
-            println!(
-                "checkpoints of session {} (restore with: oxgraft restore N --session {}):",
-                session.id, session.id
-            );
-            let mut previous: Option<&str> = None;
-            for (n, c) in session.checkpoints.iter().enumerate() {
-                let stat = previous
-                    .and_then(|p| cp.diff_stat(p, &c.commit).ok())
-                    .and_then(|s| s.lines().last().map(|l| l.trim().to_string()))
-                    .unwrap_or_default();
-                println!("  {n:>3}  {:<10} {}  {stat}", c.label, &c.commit[..c.commit.len().min(10)]);
-                previous = Some(&c.commit);
+            for line in checkpoint_lines(&ws, &session).map_err(|e| (EXIT_ERROR, e))? {
+                println!("{line}");
             }
             Ok(0)
         }
         Some(Command::Restore { number, session }) => {
             let ws = workspace(&common)?;
-            let session = load_session(&ws, &session)?;
-            let Some(target) = session.checkpoints.get(number).cloned() else {
-                return Err(usage(format!(
-                    "session {} has {} checkpoint(s); run `oxgraft checkpoints {}`",
-                    session.id,
-                    session.checkpoints.len(),
-                    session.id
-                )));
-            };
-            let cp = oxgraft_core::checkpoint::Checkpoints::open(&ws).map_err(|e| (EXIT_ERROR, e))?;
-            let safety = cp.restore(&target.commit).map_err(|e| (EXIT_ERROR, e))?;
-            // Record the pre-restore state so the restore can be undone the same way.
-            let mut session = session;
-            session
-                .checkpoints
-                .push(oxgraft_core::session::CheckpointRecord { label: "pre-restore".into(), commit: safety });
-            let _ = session.save();
-            println!(
-                "workspace restored to checkpoint {number} ({}) of session {}; undo with: oxgraft restore {} --session {}",
-                target.label,
-                session.id,
-                session.checkpoints.len() - 1,
-                session.id
-            );
+            let mut session = load_session(&ws, &session)?;
+            let message = restore_checkpoint(&ws, &mut session, number)?;
+            println!("{message}");
             Ok(0)
         }
         Some(Command::McpFixture) => {
@@ -471,6 +435,52 @@ fn run(
     Ok(status_code(&outcome.status))
 }
 
+/// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.
+fn checkpoint_lines(ws: &Path, session: &Session) -> Result<Vec<String>, String> {
+    if session.checkpoints.is_empty() {
+        return Ok(vec![format!("session {} has no checkpoints", session.id)]);
+    }
+    let cp = oxgraft_core::checkpoint::Checkpoints::open(ws)?;
+    let mut out = vec![format!(
+        "checkpoints of session {} (restore with: oxgraft restore N --session {}):",
+        session.id, session.id
+    )];
+    let mut previous: Option<&str> = None;
+    for (n, c) in session.checkpoints.iter().enumerate() {
+        let stat = previous
+            .and_then(|p| cp.diff_stat(p, &c.commit).ok())
+            .and_then(|s| s.lines().last().map(|l| l.trim().to_string()))
+            .unwrap_or_default();
+        out.push(format!("  {n:>3}  {:<10} {}  {stat}", c.label, &c.commit[..c.commit.len().min(10)]));
+        previous = Some(&c.commit);
+    }
+    Ok(out)
+}
+
+/// Put the workspace back to checkpoint `number`, recording a pre-restore
+/// checkpoint so the restore itself can be undone. Returns a message for the user.
+fn restore_checkpoint(ws: &Path, session: &mut Session, number: usize) -> Result<String, (u8, String)> {
+    let Some(target) = session.checkpoints.get(number).cloned() else {
+        return Err(usage(format!(
+            "session {} has {} checkpoint(s); run `oxgraft checkpoints {}`",
+            session.id,
+            session.checkpoints.len(),
+            session.id
+        )));
+    };
+    let cp = oxgraft_core::checkpoint::Checkpoints::open(ws).map_err(|e| (EXIT_ERROR, e))?;
+    let safety = cp.restore(&target.commit).map_err(|e| (EXIT_ERROR, e))?;
+    session.checkpoints.push(oxgraft_core::session::CheckpointRecord { label: "pre-restore".into(), commit: safety });
+    let _ = session.save();
+    Ok(format!(
+        "workspace restored to checkpoint {number} ({}) of session {}; undo with: oxgraft restore {} --session {}",
+        target.label,
+        session.id,
+        session.checkpoints.len() - 1,
+        session.id
+    ))
+}
+
 /// After a run, list what changed in the workspace and how to roll it back
 /// (GRAFT-0048, after SWE-agent's review-on-submit). Uses the run's checkpoints.
 fn change_summary(ws: &Path, session: &Session, before: usize) {
@@ -547,6 +557,23 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 );
                 continue;
             }
+            "/checkpoints" => {
+                match checkpoint_lines(&s.ws, &session) {
+                    Ok(lines) => lines.iter().for_each(|l| eprintln!("{l}")),
+                    Err(e) => eprintln!("checkpoints: {e}"),
+                }
+                continue;
+            }
+            restore if restore.starts_with("/restore") => {
+                match restore.trim_start_matches("/restore").trim().parse::<usize>() {
+                    Ok(n) => match restore_checkpoint(&s.ws, &mut session, n) {
+                        Ok(message) => eprintln!("{message}"),
+                        Err((_, e)) => eprintln!("restore: {e}"),
+                    },
+                    Err(_) => eprintln!("usage: /restore N (see /checkpoints)"),
+                }
+                continue;
+            }
             "/clear" | "/new" => {
                 session = Session::new(&s.model, &s.toolkit.profile.name, &s.ws);
                 eprintln!("started a new session {}", session.id);
@@ -554,7 +581,8 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             }
             "/help" => {
                 eprintln!(
-                    "/undo      restore files changed in this session\n/cost      token usage for this session\n\
+                    "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
                 );

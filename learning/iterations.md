@@ -76,3 +76,4 @@ honestly: an iteration is only logged when its tests pass.
 | 68 | 2026-11-25 | goose, claude-code | web_fetch and MCP output fenced as `<untrusted>` with injection-phrase warnings; system prompt rule | adopt | GRAFT-0055 | SPEC-0002 | `untrusted_content_is_fenced_and_flagged` |
 | 69 | 2026-11-25 | claude-code | `doctor` reports trust, approval mode, checkpoints (side-effect free), streaming | adopt | GRAFT-0031 | SPEC-0004 | `doctor_reports_problems_and_readiness` |
 | 70 | 2026-11-25 | — | web_fetch HTML to Markdown-ish text (headings, lists, links, pre, tables, entities), fuzz-tested; fixed a possible UTF-8 slicing panic | fix | — | SPEC-0002 | `converts_html_to_markdownish_text` |
+| 71 | 2026-11-25 | cline | Chat `/checkpoints` and `/restore N`; checkpoint listing/restore shared with the CLI commands | adopt | GRAFT-0046 | SPEC-0004 | `chat_lists_and_restores_checkpoints` |
