@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051]
 ---
 
 # SPEC-0005: Extensions
@@ -33,3 +33,7 @@ scripts) without letting a cloned repository run code unasked.
 - **AC6** Hooks and `verify_command` run in the same shell as the `bash` tool
   (POSIX `sh`; on Windows Git Bash `sh` if found, else PowerShell), so a command
   that works for the model works in a hook.
+- **AC7** An untrusted workspace cannot choose the profile: `profile` in its
+  `.oxgraft/config.toml` is ignored with a warning, and its `profiles/*.toml`
+  files are not used for name lookup (built-in profiles are), since a profile
+  selects the approval policy. `--profile` and `OXGRAFT_PROFILE` still apply.

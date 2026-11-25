@@ -77,7 +77,10 @@ env = { GITHUB_TOKEN = "…" }
 ```
 
 A project `.mcp.json` (`{"mcpServers": {...}}`, the Claude Code format) is read
-only for trusted workspaces.
+only for trusted workspaces. The same goes for a workspace's `model`,
+`profile`, `verify_command`, hooks, rules and its own `profiles/*.toml`: a
+cloned repository can't change which model you talk to or what runs without
+asking until you add it to `trusted_workspaces`.
 
 ### Approval rules
 

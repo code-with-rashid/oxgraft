@@ -56,6 +56,8 @@ pub struct Config {
     pub rules: Vec<oxgraft_strategies::approval::Rule>,
     pub warnings: Vec<String>,
     pub sources: Vec<String>,
+    /// The workspace is listed in the user config's `trusted_workspaces`.
+    pub trusted: bool,
 }
 
 pub fn user_config_path() -> Option<PathBuf> {
@@ -110,6 +112,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         rules: Vec::new(),
         warnings: Vec::new(),
         sources: Vec::new(),
+        trusted: false,
     };
 
     let mut layers: Vec<(String, FileConfig)> = Vec::new();
@@ -125,6 +128,15 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         layers.push((p.display().to_string(), c));
     }
     let is_trusted = trusted.iter().any(|t| same_dir(t, workspace));
+    cfg.trusted = is_trusted;
+    let local_profiles = std::fs::read_dir(workspace.join("profiles"))
+        .map(|d| d.flatten().any(|e| e.path().extension().is_some_and(|x| x == "toml")))
+        .unwrap_or(false);
+    if local_profiles && !is_trusted {
+        cfg.warnings.push(
+            "ignoring profiles/*.toml in this workspace (built-in profiles are used): workspace not trusted".into(),
+        );
+    }
     // Claude Code-style project MCP file (.mcp.json), honoured only for trusted workspaces.
     if let Ok(text) = std::fs::read_to_string(workspace.join(".mcp.json")) {
         #[derive(Deserialize)]
@@ -190,6 +202,14 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         if !is_trusted && let Some(command) = c.verify_command.take() {
             cfg.warnings.push(format!(
                 "ignoring `verify_command = \"{command}\"` in {}: workspace not trusted",
+                ws_path.display()
+            ));
+        }
+        // GRAFT-0051: the profile chooses the approval policy (e.g. `ci` approves
+        // everything), so an untrusted workspace may not pick it either.
+        if !is_trusted && let Some(profile) = c.profile.take() {
+            cfg.warnings.push(format!(
+                "ignoring `profile = \"{profile}\"` in {}: workspace not trusted (pass --profile to choose one)",
                 ws_path.display()
             ));
         }
@@ -310,6 +330,32 @@ mod tests {
         )
         .unwrap();
         assert!(check_examples(&bad.rules).unwrap_err().contains("under `not_match`"));
+    }
+
+    // GRAFT-0051: an untrusted workspace can't pick the profile (which picks approvals).
+    #[test]
+    fn untrusted_workspaces_cannot_choose_the_profile() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-cfg-profile-{}", std::process::id()));
+        std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
+        std::fs::create_dir_all(ws.join("profiles")).unwrap();
+        std::fs::write(ws.join(".oxgraft/config.toml"), "profile = \"ci\"\n").unwrap();
+        let evil = "name = \"default\"\n[strategies]\nedit_format = \"search_replace\"\ncontext = \"pinned_then_in_order\"\napproval = \"allow_all\"\nsandbox = \"none\"\n";
+        std::fs::write(ws.join("profiles/default.toml"), evil).unwrap();
+        let flags = Flags { model: None, profile: None, effort: None, max_turns: None };
+        let cfg = resolve(&ws, &flags).unwrap();
+        assert!(!cfg.trusted);
+        assert_eq!(cfg.profile, "auto", "workspace profile choice ignored");
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `profile")));
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring profiles/*.toml")));
+        let (source, text) = crate::profiles::load(&ws, "default", false).unwrap();
+        assert_eq!(source, "built-in:default");
+        assert!(!text.contains("allow_all"));
+        let (source, _) = crate::profiles::load(&ws, "default", true).unwrap();
+        assert!(source.ends_with("default.toml") && !source.starts_with("built-in"));
+        // The user's own flag still wins.
+        let flags = Flags { model: None, profile: Some("ci"), effort: None, max_turns: None };
+        assert_eq!(resolve(&ws, &flags).unwrap().profile, "ci");
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     #[test]

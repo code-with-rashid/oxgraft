@@ -11,7 +11,9 @@ pub const BUILTIN: &[(&str, &str)] = &[
 ];
 
 /// Resolve a profile by path, by name in `<workspace>/profiles/`, or built-in (SPEC-0004 AC5).
-pub fn load(workspace: &std::path::Path, name_or_path: &str) -> Result<(String, String), String> {
+/// A workspace's own `profiles/` are used only when the workspace is trusted: a
+/// profile picks the approval policy, so a cloned repo must not choose it (GRAFT-0051).
+pub fn load(workspace: &std::path::Path, name_or_path: &str, trusted: bool) -> Result<(String, String), String> {
     let as_path = std::path::Path::new(name_or_path);
     if name_or_path.ends_with(".toml") || as_path.components().count() > 1 {
         return std::fs::read_to_string(as_path)
@@ -19,7 +21,7 @@ pub fn load(workspace: &std::path::Path, name_or_path: &str) -> Result<(String, 
             .map_err(|e| format!("cannot read profile {name_or_path}: {e}"));
     }
     let local = workspace.join("profiles").join(format!("{name_or_path}.toml"));
-    if let Ok(text) = std::fs::read_to_string(&local) {
+    if trusted && let Ok(text) = std::fs::read_to_string(&local) {
         return Ok((local.display().to_string(), text));
     }
     BUILTIN
