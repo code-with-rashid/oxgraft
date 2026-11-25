@@ -225,6 +225,12 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         // GRAFT-0051: the profile chooses the approval policy (e.g. `ci` approves
         // everything), so an untrusted workspace may not pick it either.
+        if !is_trusted && c.instructions.take().is_some() {
+            cfg.warnings.push(format!(
+                "ignoring `instructions` in {}: workspace not trusted (put repository guidance in AGENTS.md)",
+                ws_path.display()
+            ));
+        }
         if !is_trusted && let Some(mode) = c.approval_mode.take() {
             cfg.warnings.push(format!(
                 "ignoring `approval_mode = \"{mode}\"` in {}: workspace not trusted (pass --mode to choose one)",
@@ -372,7 +378,7 @@ mod tests {
         assert!(check_examples(&bad.rules).unwrap_err().contains("under `not_match`"));
     }
 
-    // GRAFT-0067: instructions from config and flags accumulate, in order.
+    // GRAFT-0067: instructions from config and flags accumulate; untrusted workspaces add none.
     #[test]
     fn instructions_accumulate_across_layers() {
         let ws = std::env::temp_dir().join(format!("oxgraft-cfg-instr-{}", std::process::id()));
@@ -387,8 +393,10 @@ mod tests {
             approval_mode: None,
         };
         let cfg = resolve(&ws, &flags).unwrap();
-        let n = cfg.instructions.len();
-        assert_eq!(&cfg.instructions[n - 2..], &["Use tabs.".to_string(), "Answer briefly.".to_string()]);
+        // An untrusted workspace's instructions are ignored; the user's flag applies.
+        assert_eq!(cfg.instructions.last().map(String::as_str), Some("Answer briefly."));
+        assert!(!cfg.instructions.iter().any(|i| i == "Use tabs."));
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `instructions`")));
         let _ = std::fs::remove_dir_all(&ws);
     }
 

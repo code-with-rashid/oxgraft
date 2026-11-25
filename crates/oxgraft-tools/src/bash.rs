@@ -214,7 +214,17 @@ impl Tool for Bash {
 fn save_full_output(workspace: &std::path::Path, text: &str) -> Option<String> {
     const KEEP: usize = 20;
     let dir = workspace.join(".oxgraft").join("outputs");
+    // A repository could make these symlinks to elsewhere: refuse to follow them.
+    for p in [workspace.join(".oxgraft"), dir.clone()] {
+        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+            return None;
+        }
+    }
     std::fs::create_dir_all(&dir).ok()?;
+    let real = dir.canonicalize().ok()?;
+    if !real.starts_with(workspace.canonicalize().ok()?) {
+        return None;
+    }
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
     let name = format!("bash-{stamp}.log");
     std::fs::write(dir.join(&name), text).ok()?;
@@ -222,7 +232,9 @@ fn save_full_output(workspace: &std::path::Path, text: &str) -> Option<String> {
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "log"))
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("bash-") && n.ends_with(".log"))
+        })
         .collect();
     logs.sort();
     for old in logs.iter().take(logs.len().saturating_sub(KEEP)) {
@@ -286,6 +298,22 @@ mod tests {
         assert!(full.contains("line0") && full.contains("line777") && full.contains("line1499"));
         let short = f.run(&Bash, json!({"command": "echo short"}));
         assert!(!short.content.contains("saved to"));
+
+        // A planted symlink is never followed, and other .log files are never deleted.
+        #[cfg(unix)]
+        {
+            let elsewhere = f.dir.with_extension("elsewhere");
+            std::fs::create_dir_all(&elsewhere).unwrap();
+            std::fs::write(elsewhere.join("keep.log"), "precious").unwrap();
+            let g = Fixture::new("longout-planted");
+            std::fs::create_dir_all(g.dir.join(".oxgraft")).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, g.dir.join(".oxgraft/outputs")).unwrap();
+            let out = g.run(&Bash, json!({"command": cmd}));
+            assert!(!out.content.contains("saved to"), "{}", out.content);
+            assert!(elsewhere.join("keep.log").exists());
+            assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 1);
+            let _ = std::fs::remove_dir_all(&elsewhere);
+        }
     }
 
     // SPEC-0006 AC7

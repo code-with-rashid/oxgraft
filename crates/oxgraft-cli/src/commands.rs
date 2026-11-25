@@ -19,18 +19,24 @@ fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
 
-/// Commands available in `workspace`; a workspace command hides a home one of the same name.
+/// Commands available in `workspace`. The user's own (home) commands come first,
+/// so a repository can't shadow them; files that resolve outside their commands
+/// directory (symlinks to secrets) are ignored.
 pub fn discover(workspace: &Path) -> Vec<CustomCommand> {
-    let mut roots = vec![workspace.to_path_buf()];
-    roots.extend(home().filter(|h| h != workspace));
+    let mut roots: Vec<PathBuf> = home().filter(|h| h != workspace).into_iter().collect();
+    roots.push(workspace.to_path_buf());
     let mut found: Vec<CustomCommand> = Vec::new();
     for root in roots {
         for dir in DIRS {
-            let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+            let Ok(base) = root.join(dir).canonicalize() else { continue };
+            let Ok(entries) = std::fs::read_dir(&base) else { continue };
             let mut paths: Vec<PathBuf> =
                 entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).collect();
             paths.sort();
             for path in paths {
+                if !path.canonicalize().is_ok_and(|real| real.starts_with(&base) && real.is_file()) {
+                    continue;
+                }
                 let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
                 let valid = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
                 if !valid || found.iter().any(|c| c.name == name) {
@@ -113,6 +119,14 @@ mod tests {
         assert_eq!(expand(&ws, "/tests only unit").unwrap(), "Run the tests and fix failures.\n\nonly unit");
         assert!(expand(&ws, "/nope").is_none());
         assert!(expand(&ws, "not a command").is_none());
+        #[cfg(unix)]
+        {
+            let secret = ws.with_extension("secret");
+            std::fs::write(&secret, "TOP SECRET").unwrap();
+            std::os::unix::fs::symlink(&secret, ws.join(".agents/commands/leak.md")).unwrap();
+            assert!(expand(&ws, "/leak").is_none(), "symlinks out of the commands dir are ignored");
+            let _ = std::fs::remove_file(&secret);
+        }
         let _ = std::fs::remove_dir_all(&ws);
     }
 }

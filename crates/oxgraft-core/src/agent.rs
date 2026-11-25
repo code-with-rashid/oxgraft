@@ -462,7 +462,10 @@ impl<'a> Agent<'a> {
             });
         }
         let (mut task_text, attached) = if depth == 0 {
-            crate::prompt::expand_mentions(&self.config.workspace, task)
+            let policy = &self.toolkit.approval;
+            let may_read =
+                |rel: &str| policy.decide(&Action { tool: "read".into(), resource: rel.into() }) != Decision::Deny;
+            crate::prompt::expand_mentions(&self.config.workspace, task, &may_read)
         } else {
             (task.to_string(), Vec::new())
         };

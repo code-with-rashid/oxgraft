@@ -224,7 +224,11 @@ mod tests {
 /// appended, and the attached paths (so the model may edit them without a read).
 /// Only regular text files inside the workspace are attached; anything else
 /// (emails, `@decorators`, missing or outside paths) is left as plain text.
-pub fn expand_mentions(workspace: &Path, task: &str) -> (String, Vec<std::path::PathBuf>) {
+pub fn expand_mentions(
+    workspace: &Path,
+    task: &str,
+    may_read: &dyn Fn(&str) -> bool,
+) -> (String, Vec<std::path::PathBuf>) {
     const MAX_FILES: usize = 10;
     const MAX_BYTES: u64 = 200_000;
     const MAX_CHARS: usize = 20_000;
@@ -234,6 +238,10 @@ pub fn expand_mentions(workspace: &Path, task: &str) -> (String, Vec<std::path::
         let Some(rel) = word.strip_prefix('@') else { continue };
         let rel = rel.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '"', '\'', '`']);
         if rel.is_empty() || attached.len() >= MAX_FILES || attached.iter().any(|(r, _, _)| r == rel) {
+            continue;
+        }
+        // Paths the approval policy denies reading (e.g. `*.env`) are never attached.
+        if !may_read(rel) {
             continue;
         }
         let Ok(full) = workspace.join(rel).canonicalize() else { continue };
@@ -277,13 +285,16 @@ mod mention_tests {
         std::fs::write(base.join("secret.txt"), "TOP SECRET").unwrap();
         let task =
             "Fix @src/lib.rs, and @src/lib.rs again. Mail me@example.com about @missing.rs, @bin.dat, @../secret.txt";
-        let (text, paths) = expand_mentions(&ws, task);
+        let (text, paths) = expand_mentions(&ws, task, &|_| true);
         assert!(text.starts_with(task));
         assert_eq!(text.matches("<file path=\"src/lib.rs\">").count(), 1, "{text}");
         assert!(text.contains("pub fn answer()"));
         assert!(!text.contains("TOP SECRET") && !text.contains("bin.dat\">"), "{text}");
         assert_eq!(paths.len(), 1);
-        assert_eq!(expand_mentions(&ws, "no mentions here").0, "no mentions here");
+        assert_eq!(expand_mentions(&ws, "no mentions here", &|_| true).0, "no mentions here");
+        std::fs::write(ws.join(".env"), "SECRET=1").unwrap();
+        let (text, _) = expand_mentions(&ws, "see @.env", &|p| !p.ends_with(".env"));
+        assert!(!text.contains("SECRET"), "denied paths are not attached");
         let _ = std::fs::remove_dir_all(&base);
     }
 }
