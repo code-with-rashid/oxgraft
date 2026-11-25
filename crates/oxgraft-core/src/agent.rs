@@ -78,6 +78,8 @@ pub struct AgentConfig {
     pub finish_check: Option<String>,
     /// Remind the model of unfinished todo items before finishing (off in plan mode).
     pub todo_reminder: bool,
+    /// JSON schema the final answer must match (`run --output-schema`, GRAFT-0101).
+    pub output_schema: Option<Value>,
 }
 
 impl AgentConfig {
@@ -101,6 +103,7 @@ impl AgentConfig {
             shell: crate::hooks::Shell::default(),
             finish_check: None,
             todo_reminder: true,
+            output_schema: None,
         }
     }
 
@@ -448,6 +451,13 @@ impl<'a> Agent<'a> {
 
     pub fn system_prompt(&self) -> String {
         let mut p = crate::prompt::system_prompt(&self.config.workspace, &crate::prompt::today());
+        if let Some(schema) = &self.config.output_schema {
+            p.push_str(&format!(
+                "\n\nOUTPUT FORMAT: when you finish, reply with only a JSON object (no prose, no code fence) matching \
+                 this JSON schema:\n{}",
+                serde_json::to_string_pretty(schema).unwrap_or_default()
+            ));
+        }
         if let Some(extra) = &self.config.append_system {
             p.push_str("\n\n");
             p.push_str(extra);
@@ -735,6 +745,25 @@ impl<'a> Agent<'a> {
                     )));
                     self.save(session, emit);
                     continue;
+                }
+                // Structured output (GRAFT-0101, after Codex's `exec --output-schema`):
+                // the final answer must be a JSON object matching the schema.
+                if let Some(schema) = &self.config.output_schema
+                    && depth == 0
+                {
+                    let problems = crate::schema::check_answer(&final_text, schema);
+                    if !problems.is_empty() && !last_turn && finish_failures < MAX_FINISH_ROUNDS {
+                        finish_failures += 1;
+                        emit(&Event::Warning {
+                            message: "final answer doesn't match the output schema; asking again".into(),
+                        });
+                        session.messages.push(Message::user(format!(
+                            "[Your final answer must be only a JSON object matching the schema. Problems: {}]",
+                            problems.join("; ")
+                        )));
+                        self.save(session, emit);
+                        continue;
+                    }
                 }
                 // Finish check (GRAFT-0054, after Qwen Code's /goal verifier): "done" only
                 // counts once an independent check passes; failures go back to the model.

@@ -6,6 +6,7 @@ pub mod checkpoint;
 pub mod hooks;
 pub mod prompt;
 pub mod retry;
+pub mod schema;
 pub mod session;
 
 pub use agent::{Agent, AgentConfig, Answer, Approver, Fixed, Outcome, Status};

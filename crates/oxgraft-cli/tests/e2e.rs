@@ -883,3 +883,22 @@ fn chat_resume_switches_session() {
     assert!(saved.contains("next question"), "the resumed session continued");
     assert!(ws.read("t.md").contains("next question"), "/export wrote the transcript");
 }
+
+// GRAFT-0101: --output-schema makes the final answer schema-valid JSON.
+#[test]
+fn output_schema_yields_valid_json() {
+    let ws = Ws::new("schema");
+    std::fs::write(
+        ws.0.join("schema.json"),
+        r#"{"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}"#,
+    )
+    .unwrap();
+    let fenced = format!("{}json\n{}\n{}", "```", r#"{"summary": "all good"}"#, "```");
+    let model = ws.script(json!([
+        {"text": "Here is the summary: all good."},
+        {"text": fenced}
+    ]));
+    let out = ws.oxgraft(&["run", "-q", "--output-schema", "schema.json", "--model", &model, "summarise"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r#"{"summary":"all good"}"#);
+}

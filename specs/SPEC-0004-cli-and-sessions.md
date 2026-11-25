@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -107,3 +107,6 @@ otherwise an error explaining how to choose one.
   a deny always wins.
 - **AC24** In chat, `/resume [ID]` (default `last`) continues a saved session;
   an unknown id is reported and changes nothing.
+- **AC25** With `--output-schema FILE`, a final answer that is not a JSON object
+  matching the schema (type, required, properties, items, enum) is sent back
+  with the problems, up to 3 times; a valid answer is printed as compact JSON.

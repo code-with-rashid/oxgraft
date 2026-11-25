@@ -48,6 +48,7 @@ oxgraft run "fix the failing test"        # one task, then exit
 oxgraft run "explain @src/main.rs"        # @path attaches a file from the workspace
 oxgraft run --json --yes "…"              # headless: JSONL events on stdout, approve `ask` actions
 oxgraft run -q "summarise CHANGELOG.md" > summary.txt   # only the final answer
+oxgraft run -q --output-schema schema.json "…"   # final answer is JSON matching the schema
 oxgraft run --resume last "now add docs"  # continue the latest session
 oxgraft run --fork last@4 "try it another way"  # new session from the first 4 messages of another
 oxgraft run --until "cargo test" "fix the failing test"  # not done until the check passes

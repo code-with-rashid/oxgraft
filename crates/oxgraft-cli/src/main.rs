@@ -91,6 +91,10 @@ enum Command {
         /// Also write the final answer to this file.
         #[arg(long, value_name = "FILE")]
         output_last_message: Option<PathBuf>,
+        /// The final answer must be a JSON object matching this JSON schema file;
+        /// it is printed as compact JSON (pair with --quiet for scripts).
+        #[arg(long, value_name = "FILE")]
+        output_schema: Option<PathBuf>,
     },
     /// Interactive session (the default when no command is given).
     Chat {
@@ -285,8 +289,15 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message }) => {
-            let output = RunOutput { json, quiet, last_message: output_last_message };
+        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message, output_schema }) => {
+            let schema = match output_schema {
+                Some(path) => {
+                    let text = std::fs::read_to_string(&path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+                    Some(serde_json::from_str::<Value>(&text).map_err(|e| usage(format!("{}: {e}", path.display())))?)
+                }
+                None => None,
+            };
+            let output = RunOutput { json, quiet, last_message: output_last_message, schema };
             run(&common, task, output, resume, fork, until)
         }
         Some(Command::Sessions { json }) => {
@@ -425,7 +436,7 @@ fn dispatch(cli: Cli) -> CliResult {
         Some(Command::Doctor { live }) => doctor(&common, live),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
         Some(Command::Init { json }) => {
-            let output = RunOutput { json, quiet: false, last_message: None };
+            let output = RunOutput { json, quiet: false, last_message: None, schema: None };
             run(&common, vec![INIT_TASK.to_string()], output, None, None, None)
         }
         Some(Command::Models) => {
@@ -632,6 +643,8 @@ struct RunOutput {
     json: bool,
     quiet: bool,
     last_message: Option<PathBuf>,
+    /// `--output-schema` (GRAFT-0101).
+    schema: Option<Value>,
 }
 
 fn run(
@@ -683,6 +696,7 @@ fn run(
     }
     let mut s = setup(common)?;
     s.config.finish_check = until;
+    s.config.output_schema = output.schema.clone();
     let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> = if common.yes || json || !std::io::stdin().is_terminal() {
         Box::new(Fixed(if common.yes { Answer::Yes } else { Answer::No }))
@@ -706,9 +720,15 @@ fn run(
             renderer.event(e);
         }
     });
+    // With a schema, the answer is reported as compact JSON (fences removed).
+    let answer = match &output.schema {
+        Some(_) => oxgraft_core::schema::normalise(&outcome.final_text)
+            .unwrap_or_else(|| outcome.final_text.trim().to_string()),
+        None => outcome.final_text.trim().to_string(),
+    };
     if output.quiet {
-        if !outcome.final_text.trim().is_empty() {
-            println!("{}", outcome.final_text.trim());
+        if !answer.is_empty() {
+            println!("{answer}");
         }
         if let Status::Stopped(reason) | Status::Failed(reason) = &outcome.status {
             eprintln!("oxgraft: stopped: {reason}");
@@ -719,8 +739,7 @@ fn run(
         eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
     }
     if let Some(path) = &output.last_message {
-        std::fs::write(path, outcome.final_text.trim())
-            .map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
+        std::fs::write(path, &answer).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
     Ok(status_code(&outcome.status))
 }

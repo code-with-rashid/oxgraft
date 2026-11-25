@@ -139,3 +139,4 @@ honestly: an iteration is only logged when its tests pass.
 | 131 | 2026-11-25 | claude-code | `/cost` shows how full the context is (last request size vs window); sessions keep `context_tokens` | adopt | GRAFT-0099 | SPEC-0006 | `context_usage_lines` |
 | 132 | 2026-11-25 | claude-code | Chat `/resume [ID]` switches to a saved session and shows its last reply | adopt | GRAFT-0100 | SPEC-0004 | `chat_resume_switches_session` |
 | 133 | 2026-11-25 | opencode | Chat `/export [FILE]` writes the conversation as Markdown | adopt | GRAFT-0066 | SPEC-0004 | `chat_resume_switches_session` |
+| 134 | 2026-11-25 | codex | `run --output-schema FILE`: final answer must be a JSON object matching the schema (re-asked up to 3 times); printed as compact JSON | adopt | GRAFT-0101 | SPEC-0004 | `output_schema_yields_valid_json` |
