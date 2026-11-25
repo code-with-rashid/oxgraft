@@ -58,6 +58,9 @@ pub enum HookEvent {
     /// Before a task reaches the model (GRAFT-0062). Exit 2 blocks it; stdout is
     /// added to the task as context. `OXGRAFT_PROMPT` holds the task.
     UserPrompt,
+    /// When a new session starts (GRAFT-0098): stdout is added to the first task as
+    /// context (e.g. the current ticket or branch notes). Exit 2 stops the run.
+    SessionStart,
     /// When the model wants to finish (GRAFT-0062). Exit 2 sends stderr back as
     /// feedback and the run continues. `OXGRAFT_FINAL_MESSAGE` holds its reply.
     Stop,
@@ -110,8 +113,9 @@ impl Hook {
             HookEvent::SessionEnd => "session_end",
             HookEvent::UserPrompt => "user_prompt",
             HookEvent::Stop => "stop",
+            HookEvent::SessionStart => "session_start",
         };
-        let capture = event == HookEvent::UserPrompt;
+        let capture = matches!(event, HookEvent::UserPrompt | HookEvent::SessionStart);
         cmd.current_dir(workspace)
             .stdin(Stdio::null())
             .stdout(if capture { Stdio::piped() } else { Stdio::null() })

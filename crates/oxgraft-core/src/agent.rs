@@ -488,16 +488,22 @@ impl<'a> Agent<'a> {
         } else {
             (task.to_string(), Vec::new())
         };
-        // user_prompt hooks (GRAFT-0062): add context, or block the task.
+        // session_start hooks (GRAFT-0098) for a new session, then user_prompt hooks
+        // (GRAFT-0062): add context, or block the task.
         if depth == 0 {
-            for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::UserPrompt) {
-                match hook.run(&self.config.shell, &self.config.workspace, HookEvent::UserPrompt, "", task, None) {
+            let new_session = session.messages.is_empty();
+            let events: &[HookEvent] =
+                if new_session { &[HookEvent::SessionStart, HookEvent::UserPrompt] } else { &[HookEvent::UserPrompt] };
+            for hook in self.config.hooks.iter().filter(|h| events.contains(&h.event)) {
+                let event = hook.event;
+                let name = if event == HookEvent::SessionStart { "session_start" } else { "user_prompt" };
+                match hook.run(&self.config.shell, &self.config.workspace, event, "", task, None) {
                     HookResult::Ok => {}
                     HookResult::Context(extra) => {
-                        task_text.push_str(&format!("\n\n[Context added by a user_prompt hook:]\n{extra}"));
+                        task_text.push_str(&format!("\n\n[Context added by a {name} hook:]\n{extra}"));
                     }
                     HookResult::Feedback(reason) => {
-                        let status = Status::Stopped(format!("blocked by a user_prompt hook: {reason}"));
+                        let status = Status::Stopped(format!("blocked by a {name} hook: {reason}"));
                         return self.finish(session, emit, status, 0, Usage::default(), String::new());
                     }
                     HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),

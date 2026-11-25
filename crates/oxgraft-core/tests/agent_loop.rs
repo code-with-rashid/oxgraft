@@ -922,3 +922,29 @@ fn empty_replies_are_not_final_answers() {
     assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("without text"))));
     assert_eq!(session.messages.last().unwrap().text(), "the answer");
 }
+
+// GRAFT-0098: session_start hooks add context to a new session's first task only.
+#[test]
+fn session_start_hooks_run_once_per_session() {
+    use oxgraft_core::hooks::{Hook, HookEvent};
+    let ws = Ws::new("sessstart");
+    let script: Script = serde_json::from_value(json!({"turns": [{"text": "one"}, {"text": "two"}]})).unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    config.hooks = vec![Hook {
+        event: HookEvent::SessionStart,
+        tools: vec![],
+        command: "echo ticket-42".into(),
+        timeout_secs: 10,
+    }];
+    let agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    let mut session = Session::new("mock", "test", &ws.0);
+    agent.run(&mut session, "first task", &mut |_| {});
+    agent.run(&mut session, "second task", &mut |_| {});
+    let texts: Vec<String> =
+        session.messages.iter().filter(|m| m.role == oxgraft_seams::Role::User).map(|m| m.text()).collect();
+    assert!(texts[0].contains("ticket-42") && texts[0].contains("session_start"), "{texts:?}");
+    assert!(!texts[1].contains("ticket-42"), "{texts:?}");
+}
