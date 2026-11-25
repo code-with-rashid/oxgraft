@@ -123,6 +123,11 @@ impl Tool for Bash {
             .env("NO_COLOR", "1")
             .env("TERM", "dumb")
             .env("OXGRAFT", "1");
+        // Secrets stay out of model-run commands (GRAFT-0094, after Codex's
+        // shell_environment_policy): `env | curl …` can't leak your API keys.
+        for name in secret_env_names() {
+            cmd.env_remove(name);
+        }
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::error(format!("could not start shell: {e}")),
@@ -207,6 +212,27 @@ impl Tool for Bash {
         };
         if status.is_none() { ToolOutput::error(out) } else { ToolOutput::ok(out) }
     }
+}
+
+/// Environment variables hidden from commands the model runs: names containing
+/// KEY, TOKEN, SECRET, PASSWORD, PASSWD or CREDENTIAL (any case), except those
+/// listed in `OXGRAFT_SHELL_ENV_KEEP` (comma-separated), e.g. `GITHUB_TOKEN`.
+pub fn secret_env_names() -> Vec<String> {
+    let keep: Vec<String> = std::env::var("OXGRAFT_SHELL_ENV_KEEP")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| is_secret_name(k) && !keep.contains(&k.to_ascii_uppercase()))
+        .collect()
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"].iter().any(|p| n.contains(p))
 }
 
 /// Write `text` to `.oxgraft/outputs/<n>.log` in the workspace, keeping the 20
@@ -313,6 +339,33 @@ mod tests {
             assert!(elsewhere.join("keep.log").exists());
             assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 1);
             let _ = std::fs::remove_dir_all(&elsewhere);
+        }
+    }
+
+    // GRAFT-0094
+    #[test]
+    fn secret_looking_variables_are_hidden() {
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "github_token",
+            "AWS_SECRET_ACCESS_KEY",
+            "DB_PASSWORD",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ] {
+            assert!(is_secret_name(name), "{name}");
+        }
+        for name in ["PATH", "HOME", "LANG", "CARGO_HOME", "MONKEY_ISLAND_PATH_X"] {
+            // (MONKEY contains KEY: hidden too; conservative by design)
+            assert_eq!(is_secret_name(name), name.contains("KEY"), "{name}");
+        }
+        // The test process has PATH; a secret-looking variable in it is never passed on.
+        if let Some(path) = std::env::vars().find(|(k, _)| is_secret_name(k)).map(|(k, _)| k) {
+            assert!(secret_env_names().contains(&path));
+        }
+        let f = Fixture::new("envscrub");
+        if matches!(shell_kind(), ShellKind::Posix(_)) {
+            let out = f.run(&Bash, json!({"command": "env"}));
+            assert!(!out.content.lines().any(|l| l.split('=').next().is_some_and(is_secret_name)), "{}", out.content);
         }
     }
 

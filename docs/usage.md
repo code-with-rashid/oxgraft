@@ -165,6 +165,10 @@ whatever the rules or an earlier "always" answer: downloads piped into a
 shell, forced recursive deletes, raw disk writes, `mkfs` and `sudo`.
 Workspace rules apply only to trusted workspaces.
 
+Commands the model runs never see environment variables that look like
+secrets (names containing KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL). To pass
+one on purpose, list it: `OXGRAFT_SHELL_ENV_KEEP=GITHUB_TOKEN`.
+
 ## Project instructions and skills
 
 Oxgraft reads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and
