@@ -879,3 +879,29 @@ fn declining_with_feedback_reaches_the_model() {
     let results = tool_results(&events);
     assert!(!results[0].0 && results[0].1.contains("said: use cargo check instead"), "{results:?}");
 }
+
+// GRAFT-0081: the `task` subagent can use its own (cheaper) model.
+#[test]
+fn subagent_uses_its_own_model() {
+    let ws = Ws::new("submodel");
+    let main: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [{"name": "task", "input": {"prompt": "find the config"}}]},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let sub: Script = serde_json::from_value(json!({"turns": [{"text": "report from the small model"}]})).unwrap();
+    let (main, sub) = (Mock::new(main), Mock::new(sub));
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut agent =
+        Agent::new(&toolkit, &main, oxgraft_tools::builtin(), &approver, AgentConfig::new("big", ws.0.clone()));
+    agent.subagent = Some((&sub, "small".into()));
+    let mut session = Session::new("big", "test", &ws.0);
+    let mut events = Vec::new();
+    let outcome = agent.run(&mut session, "x", &mut |e| events.push(e.clone()));
+    assert_eq!(outcome.status, Status::Done);
+    let results = tool_results(&events);
+    assert!(results[0].0 && results[0].1.contains("report from the small model"), "{results:?}");
+    let sub_session = Session::list(&ws.0);
+    assert!(sub_session.iter().all(|s| s.model == "big"), "subagent sessions are hidden from the list");
+}

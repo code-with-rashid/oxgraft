@@ -30,6 +30,8 @@ pub struct FileConfig {
     pub approval_mode: Option<String>,
     /// Extra standing instructions appended to the system prompt.
     pub instructions: Option<String>,
+    /// Model for the read-only `task` subagent, e.g. a cheaper one (`haiku`).
+    pub subagent_model: Option<String>,
     /// Snapshot the workspace after each changing turn (default true).
     pub checkpoints: Option<bool>,
     #[serde(default)]
@@ -62,6 +64,7 @@ pub struct Config {
     pub approval_mode: String,
     /// Instructions from every config layer, in order (user, workspace, flags).
     pub instructions: Vec<String>,
+    pub subagent_model: Option<String>,
     pub checkpoints: bool,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
@@ -124,6 +127,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         thinking: true,
         approval_mode: "suggest".into(),
         instructions: Vec::new(),
+        subagent_model: None,
         checkpoints: true,
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
@@ -225,6 +229,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         // GRAFT-0051: the profile chooses the approval policy (e.g. `ci` approves
         // everything), so an untrusted workspace may not pick it either.
+        if !is_trusted && let Some(m) = c.subagent_model.take() {
+            cfg.warnings
+                .push(format!("ignoring `subagent_model = \"{m}\"` in {}: workspace not trusted", ws_path.display()));
+        }
         if !is_trusted && c.instructions.take().is_some() {
             cfg.warnings.push(format!(
                 "ignoring `instructions` in {}: workspace not trusted (put repository guidance in AGENTS.md)",
@@ -291,6 +299,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.profile {
             cfg.profile = v;
+            used = true;
+        }
+        if let Some(v) = layer.subagent_model.filter(|v| !v.trim().is_empty()) {
+            cfg.subagent_model = Some(v);
             used = true;
         }
         if let Some(v) = layer.instructions.filter(|v| !v.trim().is_empty()) {

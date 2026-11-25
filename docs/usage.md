@@ -98,6 +98,7 @@ model = "anthropic/claude-opus-5-5"
 profile = "auto"               # auto (by model family), default, baseline, ci, tolerant, codex-like, sandboxed, fewer-prompts, or a path
 effort = "high"                # Anthropic effort: low, medium, high, xhigh, max, none
 thinking = true                # adaptive thinking on Anthropic models that support it
+subagent_model = "haiku"      # cheaper model for the read-only `task` subagent
 max_turns = 50
 max_tokens = 16000             # per response
 max_session_tokens = 2000000   # stop a run above this many tokens

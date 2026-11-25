@@ -397,6 +397,8 @@ struct Setup {
     model: String,
     config: AgentConfig,
     tools: Vec<Box<dyn oxgraft_seams::Tool>>,
+    /// Provider and model for the `task` subagent, when `subagent_model` is set.
+    subagent: Option<(Box<dyn oxgraft_seams::Provider>, String)>,
 }
 
 fn setup(common: &Common) -> Result<Setup, (u8, String)> {
@@ -480,8 +482,20 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         }
         eprintln!("\noxgraft: interrupting… (press Ctrl-C again to quit)");
     });
+    let subagent = match &cfg.subagent_model {
+        Some(spec) => {
+            let m =
+                oxgraft_providers::parse_model(spec).map_err(|e| usage(format!("subagent_model: {}", e.message)))?;
+            let options = oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
+            let p =
+                oxgraft_providers::build(&m, &options).map_err(|e| usage(format!("subagent_model: {}", e.message)))?;
+            Some((p, m.model))
+        }
+        None => None,
+    };
     Ok(Setup {
         ws,
+        subagent,
         toolkit,
         profile_text,
         user_rules: cfg.rules.clone(),
@@ -579,7 +593,8 @@ fn run(
     } else {
         Box::new(TerminalApprover)
     };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
     let mut renderer = render::Human::default();
     let before = session.checkpoints.len();
     let outcome = agent.run(&mut session, task.trim(), &mut |e: &Event| {
@@ -707,6 +722,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         .collect::<Result<_, _>>()?;
     let mut mode = s.mode.clone();
     let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
     eprintln!(
         "oxgraft · {} · profile {} · {}\nType a task, or /help for commands.",
         s.model,

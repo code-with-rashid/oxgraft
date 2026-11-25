@@ -331,6 +331,9 @@ pub struct Agent<'a> {
     pub config: AgentConfig,
     /// Sleep used between retries; tests replace it.
     pub sleep: fn(Duration),
+    /// Provider and model for the read-only `task` subagent (GRAFT-0081); the main
+    /// ones when `None`.
+    pub subagent: Option<(&'a dyn Provider, String)>,
 }
 
 impl std::fmt::Debug for Agent<'_> {
@@ -368,7 +371,7 @@ impl<'a> Agent<'a> {
         approver: &'a dyn Approver,
         config: AgentConfig,
     ) -> Self {
-        Self { toolkit, provider, tools, approver, config, sleep: std::thread::sleep }
+        Self { toolkit, provider, tools, approver, config, sleep: std::thread::sleep, subagent: None }
     }
 
     /// Tools visible at a nesting depth: everything at the top level (plus `task`
@@ -414,7 +417,7 @@ impl<'a> Agent<'a> {
         let Some(prompt) = input.get("prompt").and_then(Value::as_str).filter(|p| !p.trim().is_empty()) else {
             return ToolOutput::error("missing required field `prompt`");
         };
-        let mut sub = Session::new(&self.config.model, "subagent", &self.config.workspace);
+        let mut sub = Session::new(self.backend(1).1, "subagent", &self.config.workspace);
         let label = input.get("description").and_then(Value::as_str).unwrap_or("subagent");
         sub.title = format!("[subagent] {label}");
         let task = format!(
@@ -429,6 +432,14 @@ impl<'a> Agent<'a> {
             Status::Stopped(r) | Status::Failed(r) => {
                 ToolOutput::error(format!("the subagent stopped early ({r}). Partial report:\n{}", outcome.final_text))
             }
+        }
+    }
+
+    /// Provider and model for a run at `depth` (subagents may use a cheaper model).
+    fn backend(&self, depth: u32) -> (&dyn Provider, &str) {
+        match (&self.subagent, depth) {
+            (Some((provider, model)), d) if d > 0 => (*provider, model.as_str()),
+            _ => (self.provider, self.config.model.as_str()),
         }
     }
 
@@ -452,7 +463,7 @@ impl<'a> Agent<'a> {
             protocol: PROTOCOL_VERSION,
             profile: self.toolkit.profile.name.clone(),
             session_id: Some(session.id.clone()),
-            model: Some(self.config.model.clone()),
+            model: Some(self.backend(depth).1.to_string()),
         });
         for e in self.toolkit.session_preamble().into_iter().skip(1) {
             emit(&e);
@@ -550,7 +561,7 @@ impl<'a> Agent<'a> {
                 emit(&Event::TurnStarted { turn });
             }
             let request = CompletionRequest {
-                model: self.config.model.clone(),
+                model: self.backend(depth).1.to_string(),
                 system: system.clone(),
                 messages: session.messages.clone(),
                 tools: specs.clone(),
@@ -560,7 +571,7 @@ impl<'a> Agent<'a> {
                 // Both closures need `emit`; route retries through a cell (ADR 0007).
                 let emit_cell = std::cell::RefCell::new(&mut *emit);
                 stream_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &request,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
@@ -575,7 +586,7 @@ impl<'a> Agent<'a> {
                 )
             } else {
                 complete_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &request,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
@@ -625,7 +636,7 @@ impl<'a> Agent<'a> {
                 messages.extend(trail.iter().cloned());
                 let retry = CompletionRequest { messages, ..request.clone() };
                 match complete_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &retry,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
