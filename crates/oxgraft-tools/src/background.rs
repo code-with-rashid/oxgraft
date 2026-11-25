@@ -18,10 +18,31 @@ const MAX_PROCESSES: usize = 8;
 
 struct Process {
     child: Child,
-    output: Arc<Mutex<Vec<u8>>>,
-    /// Bytes of `output` already shown to the model (adjusted when trimmed).
+    output: Arc<Mutex<Buffer>>,
+    /// Total bytes (including dropped ones) already shown to the model.
     shown: usize,
     command: String,
+}
+
+/// The newest output of a process. Trimmed by the reader threads as output
+/// arrives (review fix), so a chatty watcher can't grow it without limit.
+#[derive(Default)]
+struct Buffer {
+    data: Vec<u8>,
+    /// Bytes dropped from the front so far.
+    dropped: usize,
+}
+
+impl Buffer {
+    fn push(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+        // Trim in chunks, so the copy happens once per quarter-buffer of output.
+        if self.data.len() > MAX_BUFFER + MAX_BUFFER / 4 {
+            let drop = self.data.len() - MAX_BUFFER;
+            self.data.drain(..drop);
+            self.dropped += drop;
+        }
+    }
 }
 
 fn registry() -> &'static Mutex<BTreeMap<u32, Process>> {
@@ -40,7 +61,7 @@ pub fn start(mut child: Child, command: &str) -> Result<u32, String> {
         let _ = child.wait();
         return Err(format!("at most {MAX_PROCESSES} background processes; stop one with bash_output kill"));
     }
-    let output = Arc::new(Mutex::new(Vec::new()));
+    let output = Arc::new(Mutex::new(Buffer::default()));
     let pipes: Vec<Box<dyn Read + Send>> = [
         child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
         child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
@@ -57,7 +78,7 @@ pub fn start(mut child: Child, command: &str) -> Result<u32, String> {
                     break;
                 }
                 if let Ok(mut o) = out.lock() {
-                    o.extend_from_slice(&buf[..n]);
+                    o.push(&buf[..n]);
                 }
             }
         });
@@ -176,14 +197,14 @@ impl Tool for BashOutput {
         }
         let state = status(&mut p.child);
         let new = {
-            let Ok(mut out) = p.output.lock() else { return ToolOutput::error("output buffer poisoned") };
-            if out.len() > MAX_BUFFER {
-                let drop = out.len() - MAX_BUFFER;
-                out.drain(..drop);
-                p.shown = p.shown.saturating_sub(drop);
+            let Ok(out) = p.output.lock() else { return ToolOutput::error("output buffer poisoned") };
+            let skipped = out.dropped.saturating_sub(p.shown);
+            let start = p.shown.saturating_sub(out.dropped).min(out.data.len());
+            let mut text = String::from_utf8_lossy(&out.data[start..]).into_owned();
+            if skipped > 0 {
+                text = format!("[… {skipped} earlier bytes dropped]\n{text}");
             }
-            let text = String::from_utf8_lossy(&out[p.shown.min(out.len())..]).into_owned();
-            p.shown = out.len();
+            p.shown = out.dropped + out.data.len();
             text
         };
         let body = if new.trim().is_empty() { "(no new output)".to_string() } else { new };
@@ -223,6 +244,17 @@ mod tests {
         assert!(stopped.content.contains("exited"), "{}", stopped.content);
         assert!(f.run(&BashOutput, json!({"id": 999_999})).is_error);
         assert!(f.run(&BashOutput, json!({})).content.contains("echo started"));
+    }
+
+    // Review fix: output is capped as it arrives, and dropped bytes are reported.
+    #[test]
+    fn buffer_is_capped_as_output_arrives() {
+        let mut b = Buffer::default();
+        for _ in 0..300 {
+            b.push(&[b'x'; 8192]);
+        }
+        assert!(b.data.len() <= MAX_BUFFER + MAX_BUFFER / 4, "{}", b.data.len());
+        assert_eq!(b.dropped + b.data.len(), 300 * 8192);
     }
 
     // Review fix: a child the shell left running in the group is stopped too.
