@@ -55,6 +55,12 @@ pub enum HookEvent {
     PreTool,
     PostTool,
     SessionEnd,
+    /// Before a task reaches the model (GRAFT-0062). Exit 2 blocks it; stdout is
+    /// added to the task as context. `OXGRAFT_PROMPT` holds the task.
+    UserPrompt,
+    /// When the model wants to finish (GRAFT-0062). Exit 2 sends stderr back as
+    /// feedback and the run continues. `OXGRAFT_FINAL_MESSAGE` holds its reply.
+    Stop,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +81,8 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookResult {
     Ok,
+    /// `user_prompt` hooks only: text the hook printed, to add to the task.
+    Context(String),
     /// Exit code 2: stderr is feedback for the model.
     Feedback(String),
     /// Hook failed to run or exited non-zero (not 2).
@@ -100,14 +108,22 @@ impl Hook {
             HookEvent::PreTool => "pre_tool",
             HookEvent::PostTool => "post_tool",
             HookEvent::SessionEnd => "session_end",
+            HookEvent::UserPrompt => "user_prompt",
+            HookEvent::Stop => "stop",
         };
+        let capture = event == HookEvent::UserPrompt;
         cmd.current_dir(workspace)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(if capture { Stdio::piped() } else { Stdio::null() })
             .stderr(Stdio::piped())
             .env("OXGRAFT_HOOK_EVENT", event_name)
-            .env("OXGRAFT_TOOL", tool)
-            .env("OXGRAFT_TOOL_INPUT", input);
+            .env("OXGRAFT_TOOL", tool);
+        let text: String = input.chars().take(100_000).collect();
+        match event {
+            HookEvent::UserPrompt => cmd.env("OXGRAFT_PROMPT", text),
+            HookEvent::Stop => cmd.env("OXGRAFT_FINAL_MESSAGE", text),
+            _ => cmd.env("OXGRAFT_TOOL_INPUT", text),
+        };
         if let Some(out) = output {
             cmd.env("OXGRAFT_TOOL_OUTPUT", out.chars().take(100_000).collect::<String>());
         }
@@ -123,6 +139,14 @@ impl Hook {
             }
             s
         });
+        let mut stdout = child.stdout.take();
+        let out_reader = std::thread::spawn(move || {
+            let mut s = String::new();
+            if let Some(o) = stdout.as_mut() {
+                let _ = o.read_to_string(&mut s);
+            }
+            s
+        });
         let status = match child.wait_timeout(Duration::from_secs(self.timeout_secs.max(1))) {
             Ok(Some(s)) => s,
             Ok(None) => {
@@ -133,7 +157,9 @@ impl Hook {
             Err(e) => return HookResult::Failed(format!("hook `{}`: {e}", self.command)),
         };
         let err = reader.join().unwrap_or_default().trim().to_string();
+        let out: String = out_reader.join().unwrap_or_default().trim().chars().take(20_000).collect();
         match status.code() {
+            Some(0) if capture && !out.is_empty() => HookResult::Context(out),
             Some(0) => HookResult::Ok,
             Some(2) => {
                 HookResult::Feedback(if err.is_empty() { format!("blocked by hook `{}`", self.command) } else { err })

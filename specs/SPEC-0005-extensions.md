@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062]
 ---
 
 # SPEC-0005: Extensions
@@ -37,3 +37,8 @@ scripts) without letting a cloned repository run code unasked.
   `.oxgraft/config.toml` is ignored with a warning, and its `profiles/*.toml`
   files are not used for name lookup (built-in profiles are), since a profile
   selects the approval policy. `--profile` and `OXGRAFT_PROFILE` still apply.
+- **AC8** `user_prompt` hooks run before a task reaches the model (task in
+  `OXGRAFT_PROMPT`): stdout is appended to the task as context, exit 2 stops the
+  run with the hook's message. `stop` hooks run when the model wants to finish
+  (reply in `OXGRAFT_FINAL_MESSAGE`): exit 2 sends stderr back to the model and
+  the run continues, at most 3 times per run.

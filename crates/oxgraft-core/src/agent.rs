@@ -166,6 +166,8 @@ const MAX_CALLS_PER_TURN: usize = 32;
 const MAX_VERIFY_ROUNDS: u32 = 3;
 /// Times a failing finish check is sent back before the run stops (GRAFT-0054).
 const MAX_FINISH_ROUNDS: u32 = 3;
+/// Times stop hooks may send the model back before finishing is accepted (GRAFT-0062).
+const MAX_STOP_ROUNDS: u32 = 3;
 const MISTAKE_NUDGE: u32 = 6;
 const MISTAKE_STOP: u32 = 12;
 
@@ -312,11 +314,27 @@ impl<'a> Agent<'a> {
                 message: format!("closed {repaired} unanswered tool call(s) left by an interrupted run"),
             });
         }
-        let (task_text, attached) = if depth == 0 {
+        let (mut task_text, attached) = if depth == 0 {
             crate::prompt::expand_mentions(&self.config.workspace, task)
         } else {
             (task.to_string(), Vec::new())
         };
+        // user_prompt hooks (GRAFT-0062): add context, or block the task.
+        if depth == 0 {
+            for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::UserPrompt) {
+                match hook.run(&self.config.shell, &self.config.workspace, HookEvent::UserPrompt, "", task, None) {
+                    HookResult::Ok => {}
+                    HookResult::Context(extra) => {
+                        task_text.push_str(&format!("\n\n[Context added by a user_prompt hook:]\n{extra}"));
+                    }
+                    HookResult::Feedback(reason) => {
+                        let status = Status::Stopped(format!("blocked by a user_prompt hook: {reason}"));
+                        return self.finish(session, emit, status, 0, Usage::default(), String::new());
+                    }
+                    HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+                }
+            }
+        }
         session.messages.push(Message::user(task_text));
         self.save(session, emit);
 
@@ -351,6 +369,7 @@ impl<'a> Agent<'a> {
         let mut changed_files = false;
         let mut verify_failures = 0;
         let mut finish_failures = 0;
+        let mut stop_rounds = 0;
         let mut consecutive_errors = 0u32;
         let mut final_text = String::new();
 
@@ -535,6 +554,34 @@ impl<'a> Agent<'a> {
                         session.messages.push(Message::user(format!(
                             "[The task is not done: the check `{check}` failed. Fix the problems below, then finish \
                              again.]\n{out}"
+                        )));
+                        self.save(session, emit);
+                        continue;
+                    }
+                }
+                // stop hooks (GRAFT-0062): exit 2 sends feedback and the run goes on.
+                if depth == 0 && stop_rounds < MAX_STOP_ROUNDS {
+                    let mut feedback = Vec::new();
+                    for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::Stop) {
+                        match hook.run(
+                            &self.config.shell,
+                            &self.config.workspace,
+                            HookEvent::Stop,
+                            "",
+                            &final_text,
+                            None,
+                        ) {
+                            HookResult::Feedback(msg) => feedback.push(msg),
+                            HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+                            HookResult::Ok | HookResult::Context(_) => {}
+                        }
+                    }
+                    if !feedback.is_empty() {
+                        stop_rounds += 1;
+                        emit(&Event::Warning { message: "a stop hook asked the model to continue".into() });
+                        session.messages.push(Message::user(format!(
+                            "[A stop hook did not accept finishing yet:]\n{}",
+                            feedback.join("\n")
                         )));
                         self.save(session, emit);
                         continue;
@@ -730,7 +777,7 @@ impl<'a> Agent<'a> {
         let input_json = input.to_string();
         for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PreTool, name)) {
             match hook.run(&self.config.shell, &self.config.workspace, HookEvent::PreTool, name, &input_json, None) {
-                HookResult::Ok => {}
+                HookResult::Ok | HookResult::Context(_) => {}
                 HookResult::Feedback(reason) => {
                     emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
                     return ToolOutput::error(format!("Blocked by a pre_tool hook: {reason}"));
@@ -841,7 +888,7 @@ impl<'a> Agent<'a> {
                 &input_json,
                 Some(&output.content),
             ) {
-                HookResult::Ok => {}
+                HookResult::Ok | HookResult::Context(_) => {}
                 HookResult::Feedback(feedback) => {
                     output.content.push_str(&format!("\n\nFeedback from a post_tool hook:\n{feedback}"));
                 }

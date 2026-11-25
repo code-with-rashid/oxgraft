@@ -719,3 +719,40 @@ fn unfinished_todo_items_get_one_reminder() {
     let history = serde_json::to_string(&session.messages).unwrap();
     assert!(history.contains("write tests") && history.contains("not marked done"), "{history}");
 }
+
+// SPEC-0005 AC8 (GRAFT-0062): user_prompt hooks add context or block; stop hooks
+// can send the model back before it finishes.
+#[test]
+fn user_prompt_and_stop_hooks() {
+    use oxgraft_core::hooks::{Hook, HookEvent};
+    let ws = Ws::new("hookevents");
+    let run_with = |hooks: Vec<Hook>, turns: serde_json::Value| {
+        let script: Script = serde_json::from_value(json!({ "turns": turns })).unwrap();
+        let provider = Mock::new(script);
+        let toolkit = toolkit("allow_all");
+        let approver = Fixed(Answer::Yes);
+        let mut config = AgentConfig::new("mock", ws.0.clone());
+        config.hooks = hooks;
+        let agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+        let mut session = Session::new("mock", "test", &ws.0);
+        let outcome = agent.run(&mut session, "the task", &mut |_| {});
+        (outcome.status, session)
+    };
+    let hook = |event, command: &str| Hook { event, tools: vec![], command: command.into(), timeout_secs: 10 };
+
+    let (status, session) = run_with(vec![hook(HookEvent::UserPrompt, "echo extra-context")], json!([{"text": "ok"}]));
+    assert_eq!(status, Status::Done);
+    assert!(serde_json::to_string(&session.messages[0]).unwrap().contains("extra-context"));
+
+    let (status, _) =
+        run_with(vec![hook(HookEvent::UserPrompt, "echo not today 1>&2 && exit 2")], json!([{"text": "ok"}]));
+    assert!(matches!(status, Status::Stopped(ref r) if r.contains("not today")), "{status:?}");
+
+    if cfg!(unix) {
+        let stop = "test -f .stop-seen || { touch .stop-seen; echo run the tests first 1>&2; exit 2; }";
+        let (status, session) =
+            run_with(vec![hook(HookEvent::Stop, stop)], json!([{"text": "done"}, {"text": "tests pass, done"}]));
+        assert_eq!(status, Status::Done);
+        assert!(serde_json::to_string(&session.messages).unwrap().contains("run the tests first"));
+    }
+}

@@ -74,9 +74,10 @@ checkpoints = true             # snapshot the workspace after changing turns (pr
 trusted_workspaces = ["/home/me/code/my-repo"]
 
 [[hooks]]
-event = "post_tool"            # pre_tool | post_tool | session_end
+event = "post_tool"            # pre_tool | post_tool | session_end | user_prompt | stop
 tools = ["edit", "write"]      # empty = all tools
-command = "cargo fmt --all"    # exit 2 = feedback to the model (post) or block (pre)
+command = "cargo fmt --all"    # exit 2 = feedback (post_tool, stop) or block (pre_tool, user_prompt);
+                               # user_prompt stdout is added to the task
 
 [mcp_servers.github]
 command = "github-mcp-server"
