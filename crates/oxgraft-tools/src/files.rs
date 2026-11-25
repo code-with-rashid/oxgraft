@@ -11,15 +11,28 @@ const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
 
 /// A syntax check for data files after a write or edit (GRAFT-0105, a light
 /// version of the diagnostics OpenCode and Aider report after edits): JSON and
-/// TOML that no longer parse get a note with the parser's error.
-fn syntax_note(path: &std::path::Path, text: &str) -> String {
+/// TOML that no longer parse get a note with the parser's error. Files that
+/// didn't parse before the change (JSON with comments, say) and well-known
+/// JSON-with-comments files (`tsconfig.json`, `.vscode/*.json`, …) get none,
+/// so the model isn't pushed to strip legitimate comments (review fix).
+fn syntax_note(path: &std::path::Path, before: Option<&str>, text: &str) -> String {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let error = match ext.as_str() {
-        "json" => serde_json::from_str::<Value>(text).err().map(|e| e.to_string()),
-        "toml" => text.parse::<toml::Table>().err().map(|e| e.message().to_string()),
+    let parse_error = |t: &str| match ext.as_str() {
+        "json" => serde_json::from_str::<Value>(t).err().map(|e| e.to_string()),
+        "toml" => t.parse::<toml::Table>().err().map(|e| e.message().to_string()),
         _ => None,
     };
-    match error {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    let jsonc = ext == "json"
+        && (name.starts_with("tsconfig")
+            || name.starts_with("jsconfig")
+            || name == "devcontainer.json"
+            || name == ".devcontainer.json"
+            || path.components().any(|c| c.as_os_str() == ".vscode" || c.as_os_str() == ".devcontainer"));
+    if jsonc || before.is_some_and(|b| parse_error(b).is_some()) {
+        return String::new();
+    }
+    match parse_error(text) {
         Some(e) => format!("\nwarning: the file is no longer valid {}: {e}", ext.to_uppercase()),
         None => String::new(),
     }
@@ -193,6 +206,11 @@ impl Tool for Write {
             return ToolOutput::error(msg);
         }
         ctx.snapshot(&full);
+        // The old content, for the syntax note (only small existing files).
+        let before = std::fs::metadata(&full)
+            .is_ok_and(|m| m.is_file() && m.len() <= MAX_EDIT_BYTES)
+            .then(|| std::fs::read_to_string(&full).ok())
+            .flatten();
         if let Some(parent) = full.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
@@ -204,7 +222,7 @@ impl Tool for Write {
                 content.len(),
                 content.lines().count(),
                 display(ctx.workspace, &full),
-                syntax_note(&full, content)
+                syntax_note(&full, before.as_deref(), content)
             )),
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
@@ -308,7 +326,7 @@ impl Tool for Edit {
                 ToolOutput::ok(format!(
                     "edited {} ({before} → {after} lines){}",
                     display(ctx.workspace, &full),
-                    syntax_note(&full, &updated)
+                    syntax_note(&full, Some(&base), &updated)
                 ))
             }
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
@@ -630,6 +648,14 @@ mod tests {
         assert!(out.content.contains("no longer valid TOML"), "{}", out.content);
         let out = f.run(&Write, json!({"path": "c.txt", "content": "{not json"}));
         assert!(!out.content.contains("warning"));
+        // JSON with comments: no warning when it didn't parse before, or for known JSONC names.
+        let jsonc = "{\n  // comment\n  \"a\": 1\n}\n";
+        std::fs::write(f.dir.join("d.json"), jsonc).unwrap();
+        f.run(&crate::Read, json!({"path": "d.json"}));
+        let out = f.run(&Edit, json!({"path": "d.json", "old_string": "\"a\": 1", "new_string": "\"a\": 2"}));
+        assert!(!out.is_error && !out.content.contains("warning"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "tsconfig.json", "content": jsonc}));
+        assert!(!out.content.contains("warning"), "{}", out.content);
     }
 
     #[test]
