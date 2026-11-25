@@ -37,3 +37,11 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+The first version parsed the host by hand, differently from the HTTP client:
+`http://169.254.169.254\@example.com/`, percent-encoded or tab-split hosts and
+numeric IPv4 forms slipped through. Hosts are now parsed with the `url` crate
+(the parser ureq uses), and a ureq resolver refuses blocked addresses at
+connect time, which also closes the DNS-rebinding gap.

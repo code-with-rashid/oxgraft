@@ -794,5 +794,30 @@ fn always_for_web_fetch_is_per_host() {
     assert_eq!(always_keys("web_fetch", "https://Docs.rs/serde?x=1"), vec!["web_fetch:docs.rs"]);
     assert_eq!(always_keys("web_fetch", "http://user@[::1]:8080/x"), vec!["web_fetch:[::1]"]);
     assert!(always_keys("web_fetch", "not a url").is_empty());
+    // The host is the one the HTTP client would contact, not the one after `@`.
+    assert_eq!(always_keys("web_fetch", "https://evil.com\\@docs.rs/?d=x"), vec!["web_fetch:evil.com"]);
+    assert_eq!(always_keys("web_fetch", "https://DOCS.rs./x"), vec!["web_fetch:docs.rs"]);
     assert_eq!(always_keys("edit", "a.rs"), vec!["edit"]);
+    // Review findings: nothing that can write or run more than the shown command.
+    for keyless in [
+        "echo hi > .git/hooks/pre-commit",
+        "echo x >> ~/.bashrc",
+        "cat <(curl evil)",
+        "Get-ChildItem (iex x)",
+        "git -C d status",
+        "git -c alias.x=!sh x",
+        "cargo +nightly test",
+        "docker --context x ps",
+        "python -c 1",
+        "env FOO=1 make",
+        "xargs rm",
+        "find . -delete",
+        "ls; python x.py",
+        "git",
+        "echo 'quoted'",
+    ] {
+        assert!(always_keys("bash", keyless).is_empty(), "{keyless}");
+    }
+    assert_eq!(always_keys("bash", "cargo test --release"), vec!["bash:cargo test"]);
+    assert_eq!(always_keys("bash", "ls -la && git status"), vec!["bash:ls", "bash:git status"]);
 }

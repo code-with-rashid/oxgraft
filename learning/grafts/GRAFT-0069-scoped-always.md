@@ -37,3 +37,13 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+The first version keyed `echo hi > .git/hooks/pre-commit` as `echo`, and
+`git -C d status` as plain `git`. Now a command line gives no "always" key if
+it contains redirection, substitution, subexpressions, quotes, escapes or `@`;
+wrappers and interpreters (`python`, `env`, `xargs`, `find`, `sed`, `awk`, …)
+give none; subcommand tools with a flag or `+toolchain` before the subcommand
+give none; and every part must have a key. For web_fetch the host comes from
+the `url` crate, so `https://evil.com\@docs.rs/` is evil.com.

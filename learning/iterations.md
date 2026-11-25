@@ -103,3 +103,5 @@ honestly: an iteration is only logged when its tests pass.
 | 95 | 2026-11-25 | codex | web_fetch refuses link-local and cloud-metadata destinations, checking every redirect hop | avoid | GRAFT-0073 | SPEC-0002 | `redirects_to_metadata_are_refused` |
 | 96 | 2026-11-25 | claude-code | "Always" for web_fetch scoped to the host | adopt | GRAFT-0069 | SPEC-0003 | `always_for_web_fetch_is_per_host` |
 | 97 | 2026-11-25 | opencode, claude-code | `oxgraft prune [--keep N] [--dry-run]` bounds session storage | adopt | GRAFT-0074 | SPEC-0004 | `prune_keeps_the_newest_sessions` |
+| 98 | 2026-11-25 | — | Review fix: URL hosts parsed with the url crate (as the HTTP client does) for web_fetch "always" and the metadata guard; guarded DNS resolver closes rebinding | fix | GRAFT-0069, GRAFT-0073 | SPEC-0002 | `metadata_and_link_local_destinations_are_blocked` |
+| 99 | 2026-11-25 | — | Review fix: bash "always" gives no key for redirection, substitution, quotes, wrappers/interpreters, or flags before a subcommand | fix | GRAFT-0069 | SPEC-0003 | `always_for_web_fetch_is_per_host` |

@@ -138,10 +138,16 @@ pub fn always_keys(tool: &str, resource: &str) -> Vec<String> {
     if tool != "bash" {
         return vec![tool.to_string()];
     }
-    if resource.contains("$(") || resource.contains('`') {
+    // Anything that can write or run more than the visible command gives no key, so
+    // "always" is just "yes" for it: substitution, redirection, process substitution,
+    // PowerShell subexpressions, escapes and quotes (GRAFT-0069 revision).
+    if resource.contains(['$', '`', '>', '<', '(', ')', '{', '}', '\\', '"', '\'', '@']) {
         return Vec::new();
     }
-    shell_parts(resource).iter().filter_map(|p| command_prefix(p)).map(|p| format!("bash:{p}")).collect()
+    let parts = shell_parts(resource);
+    let keys: Vec<String> = parts.iter().filter_map(|p| command_prefix(p)).map(|p| format!("bash:{p}")).collect();
+    // All or nothing: a part without a key makes the whole line keyless.
+    if keys.len() == parts.len() { keys } else { Vec::new() }
 }
 
 /// Whether earlier "always" answers cover this action: for `bash`, every part.
@@ -158,17 +164,15 @@ fn always_covers(always: &HashSet<String>, tool: &str, resource: &str) -> bool {
     !keys.is_empty() && keys.len() == parts && keys.iter().all(|k| always.contains(k))
 }
 
-/// Lowercased host of an http(s) URL, without user info or port.
+/// Lowercased host of an http(s) URL, parsed the way the HTTP client parses it
+/// (so `https://evil.com\\@docs.rs/` is evil.com, not docs.rs).
 fn url_host(url: &str) -> Option<String> {
-    let rest = url.split_once("://")?.1;
-    let authority = rest.split(['/', '?', '#']).next()?;
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = if host.starts_with('[') {
-        host.split(']').next().map(|h| format!("{h}]"))?
-    } else {
-        host.split(':').next()?.to_string()
-    };
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+    let parsed = url::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    (!host.is_empty()).then_some(host)
 }
 
 /// Split on `;`, `&`, `|` and newlines (conservative: quotes are not honoured).
@@ -178,9 +182,57 @@ fn shell_parts(command: &str) -> Vec<&str> {
 
 /// `cargo test --release` → `cargo test`; `ls -la` → `ls`; `FOO=1 make` → none.
 fn command_prefix(part: &str) -> Option<String> {
+    // Commands that run other commands or code: approving them approves anything.
+    const WRAPPERS: &[&str] = &[
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "fish",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "python",
+        "python3",
+        "node",
+        "deno",
+        "perl",
+        "ruby",
+        "php",
+        "env",
+        "xargs",
+        "find",
+        "timeout",
+        "nohup",
+        "nice",
+        "time",
+        "watch",
+        "exec",
+        "eval",
+        "source",
+        ".",
+        "command",
+        "builtin",
+        "sudo",
+        "doas",
+        "su",
+        "ssh",
+        "npx",
+        "bunx",
+        "iex",
+        "invoke-expression",
+        "start-process",
+        "awk",
+        "sed",
+    ];
     let mut words = part.split_whitespace();
     let first = words.next()?;
     if first.contains('=') || first.contains(['(', ')', '{', '}', '<', '>']) {
+        return None;
+    }
+    let name = first.rsplit(['/', '\\']).next().unwrap_or(first).to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    if WRAPPERS.contains(&name) {
         return None;
     }
     // Tools whose second word picks a subcommand: `git status` and `git push` differ.
@@ -211,13 +263,12 @@ fn command_prefix(part: &str) -> Option<String> {
         "helm",
     ];
     match words.next() {
-        Some(second)
-            if SUBCOMMANDS.contains(&first)
-                && !second.starts_with('-')
-                && second.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)) =>
-        {
-            Some(format!("{first} {second}"))
+        Some(second) if SUBCOMMANDS.contains(&first) => {
+            let plain = !second.starts_with(['-', '+'])
+                && second.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c));
+            plain.then(|| format!("{first} {second}"))
         }
+        None if SUBCOMMANDS.contains(&first) => None,
         _ => Some(first.to_string()),
     }
 }
