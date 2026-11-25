@@ -630,3 +630,22 @@ fn sessions_export_as_markdown() {
     assert_eq!(ws.oxgraft(&["export", "-o", file.to_str().unwrap()]).status.code(), Some(0));
     assert!(std::fs::read_to_string(file).unwrap().contains("The file says alpha."));
 }
+
+// SPEC-0004 AC15 (GRAFT-0070): --plan is read-only.
+#[test]
+fn plan_mode_changes_nothing() {
+    let ws = Ws::new("plan");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "x.txt", "content": "x"}}]},
+        {"text": "1. Create x.txt."}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--plan", "--model", &model, "add x.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!ws.0.join("x.txt").exists());
+    assert!(
+        events(&out)
+            .iter()
+            .any(|e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("read-only")))
+    );
+    assert_eq!(ws.oxgraft(&["run", "--plan", "--mode", "full-auto", "--model", &model, "x"]).status.code(), Some(2));
+}

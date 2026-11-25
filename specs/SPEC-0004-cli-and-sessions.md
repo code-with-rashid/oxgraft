@@ -82,3 +82,6 @@ otherwise an error explaining how to choose one.
   and tool results shortened to 1,500 characters; thinking blocks are omitted.
 - **AC14** `instructions` from the user config, the workspace config and
   `--append-system-prompt` are all appended to the system prompt, in that order.
+- **AC15** `--plan` runs in read-only mode with an instruction to return a
+  numbered plan instead of changing anything; it cannot be combined with
+  `--mode`.

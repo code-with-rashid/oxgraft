@@ -48,6 +48,10 @@ struct Common {
     /// Extra instructions added to the system prompt for this run.
     #[arg(long, global = true, value_name = "TEXT")]
     append_system_prompt: Option<String>,
+    /// Plan only: read-only mode, and the model returns a step-by-step plan
+    /// instead of changing anything. Continue with `--resume last`.
+    #[arg(long, global = true, conflicts_with = "mode")]
+    plan: bool,
     /// Workspace directory (default: current directory).
     #[arg(long, global = true)]
     cwd: Option<PathBuf>,
@@ -139,6 +143,11 @@ agents working here. Cover: what the project is (2-3 sentences); the layout (key
 exact commands to install, build, test, lint and run (verify each one you can by running it); code conventions you can \
 see in the code; and anything surprising a newcomer would get wrong. If AGENTS.md already exists, read it first and \
 improve it rather than replacing good content. Keep it under 150 lines; no generic advice.";
+
+/// Plan mode instructions (GRAFT-0070, after Claude Code's plan mode).
+const PLAN_INSTRUCTIONS: &str = "PLAN MODE: do not change anything (edits and commands are disabled). Explore with \
+the read-only tools, then reply with a concise plan: the goal, the files to change and how, the risks, and how the \
+change will be verified, as numbered steps. The user will review it and continue the session to carry it out.";
 
 /// Providers that run on the user's machine, with small default context windows.
 const LOCAL_PROVIDERS: &[&str] = &["ollama", "lmstudio"];
@@ -337,7 +346,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             profile: common.profile.as_deref(),
             effort: common.effort.as_deref(),
             max_turns: common.max_turns,
-            approval_mode: common.mode.as_deref(),
+            approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
             instructions: common.append_system_prompt.as_deref(),
         },
     )
@@ -388,6 +397,10 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let mut extra: Vec<String> = cfg.instructions.clone();
     if !extra.is_empty() {
         extra.insert(0, "Additional instructions from the user's configuration:".into());
+    }
+    if common.plan {
+        // Plan mode (GRAFT-0070): edits and commands are denied by read-only mode.
+        extra.push(PLAN_INSTRUCTIONS.into());
     }
     extra.extend(skills);
     config.append_system = if extra.is_empty() { None } else { Some(extra.join("\n\n")) };
@@ -852,7 +865,7 @@ fn doctor(common: &Common, live: bool) -> CliResult {
         profile: common.profile.as_deref(),
         effort: common.effort.as_deref(),
         max_turns: common.max_turns,
-        approval_mode: common.mode.as_deref(),
+        approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
         instructions: common.append_system_prompt.as_deref(),
     };
     let cfg = match config::resolve(&ws, &flags) {

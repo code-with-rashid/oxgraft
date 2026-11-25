@@ -56,6 +56,7 @@ oxgraft checkpoints                       # workspace snapshots of the latest se
 oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)
 oxgraft --profile sandboxed run "…"       # shell commands confined to the workspace, offline
 oxgraft --mode read-only run "explain the auth flow"   # no edits or commands at all
+oxgraft run --plan "migrate to the new API"     # read-only; ends with a plan. Then: oxgraft run --resume last "go ahead"
 oxgraft --mode auto-edit                  # edits without asking; commands still ask
 oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
 ```
