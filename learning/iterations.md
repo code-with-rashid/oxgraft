@@ -111,3 +111,4 @@ honestly: an iteration is only logged when its tests pass.
 | 103 | 2026-11-25 | codex, claude-code | `run --quiet` prints only the final answer; `--output-last-message FILE` saves it | adopt | GRAFT-0075 | SPEC-0004 | `quiet_runs_print_only_the_answer` |
 | 104 | 2026-11-25 | claude-code | Chat `/compact`: summarise the conversation on demand (`Agent::compact_session`) | adopt | GRAFT-0076 | SPEC-0006 | `sessions_compact_on_request` |
 | 105 | 2026-11-25 | claude-code, codex | Chat `/mode X` switches approval mode without restarting (one toolkit per mode) | adopt | GRAFT-0077 | SPEC-0004 | `chat_mode_switches_approvals` |
+| 106 | 2026-11-25 | claude-code | Decline an approval with guidance: typed text goes to the model (`Answer::NoWith`) | adopt | GRAFT-0078 | SPEC-0003 | `declining_with_feedback_reaches_the_model` |

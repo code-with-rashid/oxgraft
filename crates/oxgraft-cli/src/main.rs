@@ -882,7 +882,7 @@ impl Approver for TerminalApprover {
         }
         loop {
             if risk.is_some() {
-                eprint!("  allow {tool}: {detail}? [y]es / [n]o: ");
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o, or say what to do instead: ");
             } else {
                 let scope = match tool {
                     "bash" => {
@@ -901,7 +901,7 @@ impl Approver for TerminalApprover {
                         .map_or("this URL".to_string(), |k| k.trim_start_matches("web_fetch:").to_string()),
                     _ => format!("all {tool}"),
                 };
-                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {scope}: ");
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {scope}, or say what to do instead: ");
             }
             let _ = std::io::stderr().flush();
             let mut answer = String::new();
@@ -912,6 +912,8 @@ impl Approver for TerminalApprover {
                 "y" | "yes" => return Answer::Yes,
                 "n" | "no" | "" => return Answer::No,
                 "a" | "always" => return Answer::Always,
+                // Anything longer is guidance for the model (GRAFT-0078).
+                text if text.chars().count() > 3 => return Answer::NoWith(answer.trim().to_string()),
                 _ => continue,
             }
         }

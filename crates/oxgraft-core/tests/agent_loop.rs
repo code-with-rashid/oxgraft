@@ -861,3 +861,21 @@ fn sessions_compact_on_request() {
     assert_eq!(session.messages.len(), 1);
     assert!(session.messages[0].text().contains("Summary: the user asked"));
 }
+
+// GRAFT-0078: declining with guidance passes the guidance to the model.
+#[test]
+fn declining_with_feedback_reaches_the_model() {
+    let ws = Ws::new("nowith");
+    let (_, events, _) = run(
+        &ws,
+        "ordered_rules",
+        Answer::NoWith("use cargo check instead".into()),
+        json!({"turns": [
+            {"tool_calls": [{"name": "bash", "input": {"command": "cargo build"}}]},
+            {"text": "ok"}
+        ]}),
+        3,
+    );
+    let results = tool_results(&events);
+    assert!(!results[0].0 && results[0].1.contains("said: use cargo check instead"), "{results:?}");
+}

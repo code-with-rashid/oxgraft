@@ -21,12 +21,14 @@ use crate::retry::{RetryPolicy, complete_with_retries, stream_with_retries};
 use crate::session::Session;
 
 /// Answer to an approval prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Yes,
     No,
     /// Yes, and don't ask again for this tool in this session.
     Always,
+    /// No, and here is what to do instead (GRAFT-0078).
+    NoWith(String),
 }
 
 /// Asks the user about actions the approval policy marks `ask`.
@@ -35,12 +37,12 @@ pub trait Approver {
 }
 
 /// Headless approver: answers every `ask` the same way.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Fixed(pub Answer);
 
 impl Approver for Fixed {
     fn approve(&self, _: &str, _: &Action, _: &Value) -> Answer {
-        self.0
+        self.0.clone()
     }
 }
 
@@ -1027,6 +1029,12 @@ impl<'a> Agent<'a> {
                         return ToolOutput::error(
                             "The user declined this action. Do not retry it; choose another approach or explain what you need.",
                         );
+                    }
+                    Answer::NoWith(feedback) => {
+                        emit(&Event::ApprovalResolved { id: id.into(), decision: "ask_declined".into() });
+                        return ToolOutput::error(format!(
+                            "The user declined this action and said: {feedback}\nFollow their guidance; do not retry the same action."
+                        ));
                     }
                     Answer::Always => {
                         state.always.extend(always_keys(name, &action.resource));

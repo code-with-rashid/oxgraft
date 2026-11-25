@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078]
 ---
 
 # SPEC-0003: Agent loop
@@ -68,3 +68,5 @@ trips. Every step is an event on the protocol stream.
   approved, and never if it contains `$(` or backticks. For other tools
   "always" covers the tool for the rest of the run, except `web_fetch`, where it
   covers that URL's host.
+- **AC15** At an approval prompt, text other than yes/no/always declines the
+  action and is passed to the model as the user's guidance.
