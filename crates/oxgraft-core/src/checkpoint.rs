@@ -49,6 +49,26 @@ pub fn plain_path(path: &Path) -> PathBuf {
     }
 }
 
+/// Canonicalize the longest existing prefix of `path` and re-append the rest.
+fn canonical_prefix(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name().map(|n| n.to_os_string()), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+    let mut real = existing.canonicalize().unwrap_or(existing);
+    for name in rest.into_iter().rev() {
+        real.push(name);
+    }
+    real
+}
+
 /// FNV-1a: a stable name for a workspace's checkpoint repo across runs and builds.
 fn fnv(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
@@ -98,7 +118,9 @@ impl Checkpoints {
     /// outside `workspace`.
     pub fn open_at(workspace: &Path, git_dir: &Path) -> Result<Self, String> {
         let workspace = plain_path(&workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf()));
-        let cp = Self { git_dir: plain_path(git_dir), workspace };
+        // Compare real paths: symlinks (/var -> /private/var) and Windows short names
+        // (RUNNER~1) must not let a git dir inside the workspace look outside it.
+        let cp = Self { git_dir: plain_path(&canonical_prefix(git_dir)), workspace };
         if cp.git_dir.starts_with(&cp.workspace) {
             return Err("the checkpoint repository must be outside the workspace".into());
         }
