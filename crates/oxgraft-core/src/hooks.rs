@@ -55,6 +55,15 @@ pub enum HookEvent {
     PreTool,
     PostTool,
     SessionEnd,
+    /// Before a task reaches the model (GRAFT-0062). Exit 2 blocks it; stdout is
+    /// added to the task as context. `OXGRAFT_PROMPT` holds the task.
+    UserPrompt,
+    /// When a new session starts (GRAFT-0098): stdout is added to the first task as
+    /// context (e.g. the current ticket or branch notes). Exit 2 stops the run.
+    SessionStart,
+    /// When the model wants to finish (GRAFT-0062). Exit 2 sends stderr back as
+    /// feedback and the run continues. `OXGRAFT_FINAL_MESSAGE` holds its reply.
+    Stop,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +84,8 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookResult {
     Ok,
+    /// `user_prompt` hooks only: text the hook printed, to add to the task.
+    Context(String),
     /// Exit code 2: stderr is feedback for the model.
     Feedback(String),
     /// Hook failed to run or exited non-zero (not 2).
@@ -100,14 +111,23 @@ impl Hook {
             HookEvent::PreTool => "pre_tool",
             HookEvent::PostTool => "post_tool",
             HookEvent::SessionEnd => "session_end",
+            HookEvent::UserPrompt => "user_prompt",
+            HookEvent::Stop => "stop",
+            HookEvent::SessionStart => "session_start",
         };
+        let capture = matches!(event, HookEvent::UserPrompt | HookEvent::SessionStart);
         cmd.current_dir(workspace)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(if capture { Stdio::piped() } else { Stdio::null() })
             .stderr(Stdio::piped())
             .env("OXGRAFT_HOOK_EVENT", event_name)
-            .env("OXGRAFT_TOOL", tool)
-            .env("OXGRAFT_TOOL_INPUT", input);
+            .env("OXGRAFT_TOOL", tool);
+        let text: String = input.chars().take(100_000).collect();
+        match event {
+            HookEvent::UserPrompt => cmd.env("OXGRAFT_PROMPT", text),
+            HookEvent::Stop => cmd.env("OXGRAFT_FINAL_MESSAGE", text),
+            _ => cmd.env("OXGRAFT_TOOL_INPUT", text),
+        };
         if let Some(out) = output {
             cmd.env("OXGRAFT_TOOL_OUTPUT", out.chars().take(100_000).collect::<String>());
         }
@@ -123,6 +143,14 @@ impl Hook {
             }
             s
         });
+        let mut stdout = child.stdout.take();
+        let out_reader = std::thread::spawn(move || {
+            let mut s = String::new();
+            if let Some(o) = stdout.as_mut() {
+                let _ = o.read_to_string(&mut s);
+            }
+            s
+        });
         let status = match child.wait_timeout(Duration::from_secs(self.timeout_secs.max(1))) {
             Ok(Some(s)) => s,
             Ok(None) => {
@@ -132,8 +160,12 @@ impl Hook {
             }
             Err(e) => return HookResult::Failed(format!("hook `{}`: {e}", self.command)),
         };
-        let err = reader.join().unwrap_or_default().trim().to_string();
+        // Hook output goes to the model: keep the end of very long output (GRAFT-0093,
+        // after Claude Code 2.1.332 shortening hook text over ~50,000 characters).
+        let err = keep_tail(reader.join().unwrap_or_default().trim(), MAX_HOOK_OUTPUT);
+        let out: String = out_reader.join().unwrap_or_default().trim().chars().take(20_000).collect();
         match status.code() {
+            Some(0) if capture && !out.is_empty() => HookResult::Context(out),
             Some(0) => HookResult::Ok,
             Some(2) => {
                 HookResult::Feedback(if err.is_empty() { format!("blocked by hook `{}`", self.command) } else { err })
@@ -143,10 +175,55 @@ impl Hook {
     }
 }
 
+/// Most hook output (stderr feedback) passed to the model.
+const MAX_HOOK_OUTPUT: usize = 20_000;
+
+/// The last `max` characters of `text`, with a note when something was cut.
+fn keep_tail(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(count - max).collect();
+    format!(
+        "[… {} earlier characters of hook output omitted]
+{tail}",
+        count - max
+    )
+}
+
 /// Run a verification command (build, lint, tests) in the workspace. Returns whether it
 /// passed and its combined output (tail-truncated), with a timeout.
-pub fn run_check(shell: &Shell, command: &str, workspace: &Path, timeout_secs: u64) -> (bool, String) {
+/// Environment variables that look like secrets (names containing KEY, TOKEN,
+/// SECRET, PASSWORD, PASSWD or CREDENTIAL), except those in OXGRAFT_SHELL_ENV_KEEP.
+/// Same rule as the bash tool (GRAFT-0094).
+pub fn secret_env_names() -> Vec<String> {
+    let keep: Vec<String> = std::env::var("OXGRAFT_SHELL_ENV_KEEP")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| {
+            let n = k.to_ascii_uppercase();
+            ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"].iter().any(|p| n.contains(p))
+                && !keep.contains(&n)
+        })
+        .collect()
+}
+
+/// Run a check command. `scrub` hides secret-looking environment variables: use
+/// it whenever the command runs code the model may have written (verify_command,
+/// `--until`), not for the user's own commands.
+pub fn run_check(shell: &Shell, command: &str, workspace: &Path, timeout_secs: u64, scrub: bool) -> (bool, String) {
     let mut cmd = shell.command(command);
+    if scrub {
+        for name in secret_env_names() {
+            cmd.env_remove(name);
+        }
+    }
     cmd.current_dir(workspace).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -218,5 +295,13 @@ mod tests {
         let c: C = toml::from_str("[[hooks]]\nevent = \"post_tool\"\ncommand = \"fmt\"\n").unwrap();
         assert_eq!(c.hooks[0].event, HookEvent::PostTool);
         assert_eq!(c.hooks[0].timeout_secs, 60);
+    }
+
+    #[test]
+    fn long_hook_output_is_shortened() {
+        assert_eq!(keep_tail("short", 10), "short");
+        let long = "x".repeat(30) + "END";
+        let kept = keep_tail(&long, 5);
+        assert!(kept.ends_with("xxEND") && kept.contains("28 earlier characters"), "{kept}");
     }
 }

@@ -13,10 +13,10 @@ updates a harness profile or adds or promotes a strategy.
 | approval | **ordered_rules** (GRAFT-0002) + risk rails (0042) | inert_reads (0047), allow_all; modes read-only/auto-edit/full-auto (0052) | per-tool modes in chat |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
 | provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
-| tools | read, write, edit, ls, glob, grep, map, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
+| tools | read, write, edit, ls, glob, grep, map, bash (+ background, bash_output), todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
 | session | save/resume/repair, undo (GRAFT-0005, 0020), per-turn checkpoints (0046), fork (0049) | budgets (0021) | session tree UI (pi) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
-| delegation | read-only `task` subagent (0026) | — | named subagents with policies (opencode) |
+| delegation | read-only `task` subagent (0026), named subagents from agent files (0106) | — | writing subagents in worktrees (claude-code) |
 
 ## By harness
 
@@ -24,16 +24,16 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 
 | Harness | Reviewed at | Grafts taken into Oxgraft |
 |---|---|---|
-| codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034, 0043, 0051, 0052 |
-| claude-code | v2.1.331 (docs) | 0012, 0013, 0016, 0017, 0018, 0028, 0031, 0036 |
-| opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038, 0045 |
-| gemini-cli | v0.71.1 | 0027, 0037 |
-| aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039, 0053 |
-| goose | v1.60.2 | 0019, 0022, 0033, 0055 |
+| codex | rust-v0.172.0 | 0006, 0008, 0010, 0024, 0025, 0030, 0032, 0034, 0043, 0051, 0052, 0073, 0075, 0089, 0094, 0095, 0101, 0108 |
+| claude-code | v2.1.332 (docs) | 0012, 0013, 0016, 0017, 0018, 0028, 0031, 0036, 0056, 0057, 0062, 0067, 0069, 0070, 0071, 0076, 0077, 0078, 0080, 0081, 0085, 0092, 0093, 0096, 0097, 0098, 0099, 0100, 0102, 0104, 0107, 0109 |
+| opencode | v1.19.6 | 0002, 0003, 0009, 0014, 0026, 0038, 0045, 0059, 0060, 0061, 0066, 0074, 0086, 0087, 0105, 0106, 0110 |
+| gemini-cli | v0.71.1 | 0027, 0037, 0058 |
+| aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039, 0053, 0064, 0065, 0079, 0082, 0083, 0088, 0103 |
+| goose | v1.61.0 | 0019, 0022, 0033, 0055, 0072, 0090, 0091 |
 | pi | v1.6.0 | 0023, 0049, 0050 |
-| cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046 |
+| cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046, 0084 |
 | openhands | v1.45.0 (sdk v1.64.0) | 0021, 0042 |
-| swe-agent | v1.1.0 | 0004, 0044, 0048 |
+| swe-agent | v1.1.0 | 0004, 0044, 0048, 0063 |
 | mini-swe-agent | v2.4.6 | 0007 |
 | qwen-code | v0.28.4 | 0040, 0054 |
 | kilocode | v7.8.32 | — |

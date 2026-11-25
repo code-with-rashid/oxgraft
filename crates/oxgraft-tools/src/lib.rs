@@ -1,5 +1,6 @@
 //! Built-in tools (SPEC-0002). Small and sharp: read, write, edit, ls, glob, grep, bash.
 
+pub mod background;
 mod bash;
 mod extra;
 mod files;
@@ -38,6 +39,7 @@ pub fn builtin() -> Vec<Box<dyn Tool>> {
         Box::new(Grep),
         Box::new(RepoMap),
         Box::new(Bash),
+        Box::new(background::BashOutput),
         Box::new(Todo),
         Box::new(WebFetch),
     ]

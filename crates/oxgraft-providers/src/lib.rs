@@ -16,17 +16,34 @@ pub struct ModelRef {
     pub model: String,
 }
 
-/// Parse `provider/model` (the model part may itself contain `/`) or `mock:<path>`.
+/// Short names for current models (GRAFT-0065, as Claude Code and Aider accept
+/// `opus`, `sonnet`, …). Update when new models ship.
+pub const ALIASES: &[(&str, &str)] = &[
+    ("opus", "anthropic/claude-opus-5-5"),
+    ("sonnet", "anthropic/claude-sonnet-5-5"),
+    ("haiku", "anthropic/claude-haiku-5-5"),
+    ("fable", "anthropic/claude-fable-5-2"),
+];
+
+/// Parse `provider/model` (the model part may itself contain `/`), `mock:<path>`,
+/// or a short alias from [`ALIASES`].
 pub fn parse_model(spec: &str) -> Result<ModelRef, ProviderError> {
     let spec = spec.trim();
     if let Some(path) = spec.strip_prefix("mock:") {
         return Ok(ModelRef { provider: mock::ID.into(), model: path.into() });
     }
+    if let Some((_, full)) = ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(spec)) {
+        return parse_model(full);
+    }
     let (provider, model) = spec.split_once('/').ok_or_else(|| {
         ProviderError::new(
             "oxgraft",
             ErrorKind::Config,
-            format!("model `{spec}` must look like provider/model, e.g. anthropic/{}", anthropic::DEFAULT_MODEL),
+            format!(
+                "model `{spec}` must look like provider/model, e.g. anthropic/{}, or be one of: {}",
+                anthropic::DEFAULT_MODEL,
+                ALIASES.iter().map(|(a, _)| *a).collect::<Vec<_>>().join(", ")
+            ),
         )
     })?;
     if model.is_empty() {
@@ -54,6 +71,8 @@ pub fn known_providers() -> Vec<&'static str> {
 pub struct Options {
     /// Anthropic `output_config.effort` (low, medium, high, xhigh, max).
     pub effort: Option<String>,
+    /// Don't request adaptive thinking from Anthropic models (GRAFT-0071).
+    pub no_thinking: bool,
 }
 
 /// Build the provider for a model reference.
@@ -62,7 +81,9 @@ pub fn build(model: &ModelRef, options: &Options) -> Result<Box<dyn Provider>, P
         return Ok(Box::new(mock::Mock::from_file(&model.model)?));
     }
     if model.provider == anthropic::ID {
-        return Ok(Box::new(anthropic::Anthropic::from_env(options.effort.clone())?));
+        return Ok(Box::new(
+            anthropic::Anthropic::from_env(options.effort.clone())?.with_thinking(!options.no_thinking),
+        ));
     }
     let preset = openai::PRESETS.iter().find(|p| p.id == model.provider).copied().ok_or_else(|| {
         ProviderError::new("oxgraft", ErrorKind::Config, format!("unknown provider {}", model.provider))
@@ -85,7 +106,13 @@ mod tests {
         assert_eq!(parse_model("mock:tests/a.json").unwrap().provider, "mock");
         let err = parse_model("nope/x").unwrap_err();
         assert!(err.message.contains("anthropic"), "{err}");
-        assert!(parse_model("noslash").is_err());
+        assert!(parse_model("noslash").unwrap_err().message.contains("opus, sonnet"));
+        // GRAFT-0065: aliases
+        assert_eq!(
+            parse_model("sonnet").unwrap(),
+            ModelRef { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() }
+        );
+        assert_eq!(parse_model(" Opus ").unwrap().model, "claude-opus-5-5");
         assert!(parse_model("openai/").is_err());
     }
 }

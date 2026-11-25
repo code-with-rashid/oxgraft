@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078, GRAFT-0080, GRAFT-0090, GRAFT-0106, GRAFT-0107]
 ---
 
 # SPEC-0003: Agent loop
@@ -56,3 +56,27 @@ trips. Every step is an event on the protocol stream.
   output goes back to the model and the run continues, up to 3 times, after
   which the run stops with `finish check … still failing`. The check comes only
   from the command line, never from workspace config.
+- **AC12** `@path` words in a task attach that file's content (text files inside
+  the workspace only; at most 10 files, 200 KB each, 20k characters shown) after
+  the task text; attached files count as read for the read-before-edit guard.
+- **AC13** If the model replies without tool calls while its latest `todo` list
+  has items not marked `done`, it gets one reminder per run naming them; the
+  next finish is accepted.
+- **AC14** An "always" answer for `bash` approves that command prefix (first
+  word, or first two for tools with subcommands such as git, cargo, npm), per
+  part: a later command runs without asking only if every part's prefix was
+  approved, and never if it contains `$(` or backticks. For other tools
+  "always" covers the tool for the rest of the run, except `web_fetch`, where it
+  covers that URL's host.
+- **AC15** At an approval prompt, text other than yes/no/always declines the
+  action and is passed to the model as the user's guidance.
+- **AC16** Before each top-level model request the loop emits `turn_started`
+  with the turn number.
+- **AC17** A reply with neither visible text nor tool calls is not a final
+  answer: the model is asked to continue (at most 3 times per run, shared with
+  max_tokens continuations).
+- **AC18** `task` with `agent` runs that named subagent: its instructions come
+  before the prompt and it sees only its listed tools within the read-only
+  subagent set; an unknown name is an error listing the available agents.
+- **AC19** `AGENTS.local.md` and `CLAUDE.local.md` are read after the shared
+  instruction files; instruction files resolving outside the workspace are skipped.

@@ -2,7 +2,7 @@
 id: SPEC-0006
 title: Sandbox, interrupts, budgets, compaction
 status: implemented
-grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025, GRAFT-0042]
+grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025, GRAFT-0042, GRAFT-0076, GRAFT-0094]
 ---
 
 # SPEC-0006: Safety and long sessions
@@ -31,3 +31,8 @@ grafts: [GRAFT-0020, GRAFT-0021, GRAFT-0023, GRAFT-0025, GRAFT-0042]
   result ends with a note that the sandbox likely caused it and that the model
   should tell the user rather than retry. The sandbox is never widened
   automatically.
+- **AC8** Chat `/compact` compacts the session immediately, the same way as
+  automatic compaction; an empty session is left alone.
+- **AC9** Shell commands run by the model get no environment variable whose
+  name contains KEY, TOKEN, SECRET, PASSWORD, PASSWD or CREDENTIAL, unless it
+  is listed in `OXGRAFT_SHELL_ENV_KEEP`.

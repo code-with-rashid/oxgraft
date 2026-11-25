@@ -9,6 +9,43 @@ const DEFAULT_READ_LINES: u64 = 2_000;
 const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
 
+/// A syntax check for data files after a write or edit (GRAFT-0105, a light
+/// version of the diagnostics OpenCode and Aider report after edits): JSON and
+/// TOML that no longer parse get a note with the parser's error. Files that
+/// didn't parse before the change (JSON with comments, say) and well-known
+/// JSON-with-comments files (`tsconfig.json`, `.vscode/*.json`, …) get none,
+/// so the model isn't pushed to strip legitimate comments (review fix).
+fn syntax_note(path: &std::path::Path, before: Option<&str>, text: &str) -> String {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let parse_error = |t: &str| match ext.as_str() {
+        "json" => serde_json::from_str::<Value>(t).err().map(|e| e.to_string()),
+        "toml" => t.parse::<toml::Table>().err().map(|e| e.message().to_string()),
+        _ => None,
+    };
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    let jsonc = ext == "json"
+        && (name.starts_with("tsconfig")
+            || name.starts_with("jsconfig")
+            || name == "devcontainer.json"
+            || name == ".devcontainer.json"
+            || path.components().any(|c| c.as_os_str() == ".vscode" || c.as_os_str() == ".devcontainer"));
+    if jsonc || before.is_some_and(|b| parse_error(b).is_some()) {
+        return String::new();
+    }
+    match parse_error(text) {
+        Some(e) => format!("\nwarning: the file is no longer valid {}: {e}", ext.to_uppercase()),
+        None => String::new(),
+    }
+}
+
+/// Named pipes, sockets and devices can block a read or write forever (GRAFT-0092,
+/// after Claude Code 2.1.332's fix for reads hanging on a named pipe): refuse them.
+fn special_file(path: &std::path::Path, shown: &str) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    (!meta.is_file() && !meta.is_dir())
+        .then(|| format!("`{shown}` is not a regular file (a pipe, socket or device); it can't be read or edited"))
+}
+
 fn too_large(path: &std::path::Path, limit: u64, shown: &str) -> Option<String> {
     let len = std::fs::metadata(path).ok()?.len();
     (len > limit).then(|| {
@@ -21,7 +58,27 @@ fn too_large(path: &std::path::Path, limit: u64, shown: &str) -> Option<String> 
 }
 
 fn action(tool: &str, input: &Value, field: &str) -> Action {
-    Action { tool: tool.into(), resource: input.get(field).and_then(Value::as_str).unwrap_or("").into() }
+    Action { tool: tool.into(), resource: normalize_path(input.get(field).and_then(Value::as_str).unwrap_or("")) }
+}
+
+/// The path as approval rules see it (review fix for GRAFT-0097): `/` separators,
+/// no `.` segments, `..` folded where possible, so `src/../build.rs` is matched
+/// as `build.rs` and `./secrets/x` as `secrets/x`.
+pub fn normalize_path(path: &str) -> String {
+    let unified = path.replace('\\', "/");
+    let absolute = unified.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in unified.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute { format!("/{joined}") } else { joined }
 }
 
 macro_rules! try_tool {
@@ -66,8 +123,17 @@ impl Tool for Read {
         let offset = try_tool!(opt_u64(input, "offset")).unwrap_or(1).max(1);
         let limit = try_tool!(opt_u64(input, "limit")).unwrap_or(DEFAULT_READ_LINES).max(1);
         let full = try_tool!(resolve(ctx.workspace, path));
+        // A directory gets its listing (GRAFT-0110, after OpenCode's read tool),
+        // which is what the model wanted, instead of an error and another turn.
         if full.is_dir() {
-            return ToolOutput::error(format!("`{path}` is a directory; use `ls` to list it"));
+            let listing = Ls.run(&serde_json::json!({"path": path}), ctx);
+            if listing.is_error {
+                return listing;
+            }
+            return ToolOutput::ok(format!("`{path}` is a directory; its entries:\n{}", listing.content));
+        }
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
         }
         if let Some(msg) = too_large(&full, MAX_READ_BYTES, path) {
             return ToolOutput::error(msg);
@@ -142,7 +208,15 @@ impl Tool for Write {
         if full.is_dir() {
             return ToolOutput::error(format!("`{path}` is a directory"));
         }
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
+        }
         ctx.snapshot(&full);
+        // The old content, for the syntax note (only small existing files).
+        let before = std::fs::metadata(&full)
+            .is_ok_and(|m| m.is_file() && m.len() <= MAX_EDIT_BYTES)
+            .then(|| std::fs::read_to_string(&full).ok())
+            .flatten();
         if let Some(parent) = full.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
@@ -150,10 +224,11 @@ impl Tool for Write {
         }
         match std::fs::write(&full, content) {
             Ok(()) => ToolOutput::ok(format!(
-                "wrote {} bytes ({} lines) to {}",
+                "wrote {} bytes ({} lines) to {}{}",
                 content.len(),
                 content.lines().count(),
-                display(ctx.workspace, &full)
+                display(ctx.workspace, &full),
+                syntax_note(&full, before.as_deref(), content)
             )),
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
@@ -201,6 +276,9 @@ impl Tool for Edit {
         let legacy = legacy && !batch;
         let edit = if legacy || batch { "" } else { try_tool!(str_field(input, "edit")) };
         let full = try_tool!(resolve(ctx.workspace, path));
+        if let Some(msg) = special_file(&full, path) {
+            return ToolOutput::error(msg);
+        }
         if let Some(msg) = too_large(&full, MAX_EDIT_BYTES, path) {
             return ToolOutput::error(msg);
         }
@@ -220,7 +298,8 @@ impl Tool for Edit {
             let all = input.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
             match base.matches(old.as_str()).count() {
                 _ if old.is_empty() => Err("`old_string` is empty".to_string()),
-                0 => Err(format!("`old_string` not found: {:?}", truncate(&old, 200))),
+                0 => whitespace_tolerant_replace(&base, &old, &new)
+                    .ok_or_else(|| format!("`old_string` not found: {:?}", truncate(&old, 200))),
                 1 => Ok(base.replacen(old.as_str(), &new, 1)),
                 _ if all => Ok(base.replace(old.as_str(), &new)),
                 n => Err(format!("`old_string` matches {n} times; add context to make it unique or set replace_all")),
@@ -250,11 +329,65 @@ impl Tool for Edit {
         match std::fs::write(&full, &updated) {
             Ok(()) => {
                 let (before, after) = (base.lines().count(), updated.lines().count());
-                ToolOutput::ok(format!("edited {} ({before} → {after} lines)", display(ctx.workspace, &full)))
+                ToolOutput::ok(format!(
+                    "edited {} ({before} → {after} lines){}",
+                    display(ctx.workspace, &full),
+                    syntax_note(&full, Some(&base), &updated)
+                ))
             }
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
     }
+}
+
+/// Fallback when `old_string` doesn't match exactly (GRAFT-0086, after OpenCode's
+/// line-trimmed and indentation-flexible replacers): compare whole lines ignoring
+/// trailing whitespace and a uniform extra indentation. Only a unique match is
+/// replaced; `new_string` gets the same extra indentation.
+fn whitespace_tolerant_replace(base: &str, old: &str, new: &str) -> Option<String> {
+    let old_lines: Vec<&str> = old.trim_matches('\n').lines().map(str::trim_end).collect();
+    if old_lines.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+    let lines: Vec<&str> = base.split_inclusive('\n').collect();
+    // Only spaces and tabs count, so byte offsets stay on character boundaries.
+    let indent = |l: &str| l.len() - l.trim_start_matches([' ', '\t']).len();
+    let mut found: Option<(usize, String)> = None;
+    for start in 0..lines.len().saturating_sub(old_lines.len() - 1) {
+        let window = &lines[start..start + old_lines.len()];
+        // The extra indentation, from the first non-blank old line.
+        let k = old_lines.iter().position(|l| !l.is_empty())?;
+        let b = window[k].trim_end();
+        let o = old_lines[k];
+        if b.len() < o.len() || indent(b) < indent(o) {
+            continue;
+        }
+        let prefix = &b[..indent(b) - indent(o)];
+        if !prefix.chars().all(|c| c == ' ' || c == '\t') {
+            continue;
+        }
+        let matches = window.iter().zip(&old_lines).all(|(b, o)| {
+            let b = b.trim_end();
+            if o.is_empty() { b.is_empty() } else { b.strip_prefix(prefix) == Some(o) }
+        });
+        if matches {
+            if found.is_some() {
+                return None; // ambiguous: never guess
+            }
+            found = Some((start, prefix.to_string()));
+        }
+    }
+    let (start, prefix) = found?;
+    let end = start + old_lines.len();
+    let mut out: String = lines[..start].concat();
+    let replacement: Vec<String> =
+        new.lines().map(|l| if l.trim().is_empty() { String::new() } else { format!("{prefix}{l}") }).collect();
+    out.push_str(&replacement.join("\n"));
+    if lines[end - 1].ends_with('\n') && !replacement.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&lines[end..].concat());
+    Some(out)
 }
 
 /// Apply `[{old_string, new_string}, ...]` to `base`: every `old_string` must occur
@@ -456,6 +589,93 @@ mod tests {
         f.file("b.txt", "aaa\n");
         let out = f.run(&Edit, json!({"path": "b.txt", "edits": [{"old_string": "aa", "new_string": "x"}]}));
         assert!(out.is_error && out.content.contains("matches more than once"), "{}", out.content);
+    }
+
+    // GRAFT-0086: whitespace-tolerant fallback for old_string.
+    #[test]
+    fn old_string_tolerates_trailing_space_and_indentation() {
+        let f = Fixture::new("tolerant-old");
+        f.file("a.py", "class A:\n    def f(self):   \n        return 1\n\n    def g(self):\n        return 2\n");
+        // Model sent the method without its class indentation and without trailing spaces.
+        let out = f.run(&Edit, json!({"path": "a.py", "old_string": "def f(self):\n    return 1", "new_string": "def f(self):\n    return 10"}));
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            f.read("a.py"),
+            "class A:\n    def f(self):\n        return 10\n\n    def g(self):\n        return 2\n"
+        );
+        // Ambiguous tolerant matches are refused.
+        f.file("b.py", "  x = 1\n    x = 1\n");
+        let out = f.run(&Edit, json!({"path": "b.py", "old_string": "x = 1", "new_string": "x = 2"}));
+        assert!(out.is_error, "{}", out.content);
+        // Different text still fails.
+        let out = f.run(&Edit, json!({"path": "a.py", "old_string": "def h(self):", "new_string": "x"}));
+        assert!(out.is_error && out.content.contains("not found"));
+        // Non-ASCII whitespace never splits a character (review finding).
+        f.file("c.txt", "\u{a0}x\n");
+        let out = f.run(&Edit, json!({"path": "c.txt", "old_string": " x", "new_string": "y"}));
+        assert!(out.is_error && !out.content.contains("panicked"), "{}", out.content);
+    }
+
+    // GRAFT-0092: pipes and devices are refused instead of blocking.
+    #[cfg(unix)]
+    #[test]
+    fn special_files_are_refused() {
+        let f = Fixture::new("fifo");
+        let pipe = f.dir.join("pipe");
+        assert!(std::process::Command::new("mkfifo").arg(&pipe).status().is_ok_and(|s| s.success()));
+        for out in [
+            f.run(&Read, json!({"path": "pipe"})),
+            f.run(&Edit, json!({"path": "pipe", "old_string": "a", "new_string": "b"})),
+            f.run(&Write, json!({"path": "pipe", "content": "x"})),
+        ] {
+            assert!(out.is_error && out.content.contains("not a regular file"), "{}", out.content);
+        }
+    }
+
+    #[test]
+    fn paths_are_normalized_for_approval_rules() {
+        assert_eq!(normalize_path("src/../build.rs"), "build.rs");
+        assert_eq!(normalize_path("./secrets/x"), "secrets/x");
+        assert_eq!(normalize_path("a\\b/./c"), "a/b/c");
+        assert_eq!(normalize_path("../outside"), "../outside");
+        assert_eq!(normalize_path("/abs/./p"), "/abs/p");
+        assert_eq!(action("write", &json!({"path": "src//../x.rs"}), "path").resource, "x.rs");
+    }
+
+    // GRAFT-0110
+    #[test]
+    fn reading_a_directory_lists_it() {
+        let f = Fixture::new("readdir");
+        std::fs::create_dir_all(f.dir.join("src")).unwrap();
+        std::fs::write(f.dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let out = f.run(&Read, json!({"path": "src"}));
+        assert!(
+            !out.is_error && out.content.contains("is a directory") && out.content.contains("main.rs"),
+            "{}",
+            out.content
+        );
+    }
+
+    // GRAFT-0105
+    #[test]
+    fn broken_json_and_toml_are_reported() {
+        let f = Fixture::new("syntax");
+        let out = f.run(&Write, json!({"path": "a.json", "content": "{\"a\": 1,}"}));
+        assert!(!out.is_error && out.content.contains("no longer valid JSON"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "b.toml", "content": "name = \"x\"\n"}));
+        assert!(!out.content.contains("warning"), "{}", out.content);
+        let out = f.run(&Edit, json!({"path": "b.toml", "old_string": "name = \"x\"", "new_string": "name = x"}));
+        assert!(out.content.contains("no longer valid TOML"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "c.txt", "content": "{not json"}));
+        assert!(!out.content.contains("warning"));
+        // JSON with comments: no warning when it didn't parse before, or for known JSONC names.
+        let jsonc = "{\n  // comment\n  \"a\": 1\n}\n";
+        std::fs::write(f.dir.join("d.json"), jsonc).unwrap();
+        f.run(&crate::Read, json!({"path": "d.json"}));
+        let out = f.run(&Edit, json!({"path": "d.json", "old_string": "\"a\": 1", "new_string": "\"a\": 2"}));
+        assert!(!out.is_error && !out.content.contains("warning"), "{}", out.content);
+        let out = f.run(&Write, json!({"path": "tsconfig.json", "content": jsonc}));
+        assert!(!out.content.contains("warning"), "{}", out.content);
     }
 
     #[test]

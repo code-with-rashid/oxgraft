@@ -21,12 +21,14 @@ use crate::retry::{RetryPolicy, complete_with_retries, stream_with_retries};
 use crate::session::Session;
 
 /// Answer to an approval prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Yes,
     No,
     /// Yes, and don't ask again for this tool in this session.
     Always,
+    /// No, and here is what to do instead (GRAFT-0078).
+    NoWith(String),
 }
 
 /// Asks the user about actions the approval policy marks `ask`.
@@ -35,13 +37,24 @@ pub trait Approver {
 }
 
 /// Headless approver: answers every `ask` the same way.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Fixed(pub Answer);
 
 impl Approver for Fixed {
     fn approve(&self, _: &str, _: &Action, _: &Value) -> Answer {
-        self.0
+        self.0.clone()
     }
+}
+
+/// A named subagent (GRAFT-0106, after OpenCode's agents and Claude Code's
+/// `.claude/agents`): its own instructions and, optionally, a subset of the
+/// read-only subagent tools. Empty `tools` means all of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentType {
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +87,12 @@ pub struct AgentConfig {
     pub shell: crate::hooks::Shell,
     /// Command that must pass before the run may finish (`oxgraft run --until`).
     pub finish_check: Option<String>,
+    /// Remind the model of unfinished todo items before finishing (off in plan mode).
+    pub todo_reminder: bool,
+    /// JSON schema the final answer must match (`run --output-schema`, GRAFT-0101).
+    pub output_schema: Option<Value>,
+    /// Named subagents the `task` tool can start (GRAFT-0106).
+    pub subagent_types: Vec<SubagentType>,
 }
 
 impl AgentConfig {
@@ -96,6 +115,9 @@ impl AgentConfig {
             checkpoints: false,
             shell: crate::hooks::Shell::default(),
             finish_check: None,
+            todo_reminder: true,
+            output_schema: None,
+            subagent_types: Vec::new(),
         }
     }
 
@@ -126,6 +148,153 @@ pub struct Outcome {
 }
 
 const MAX_CONTINUATIONS: u32 = 3;
+/// What an "always" answer approves (GRAFT-0069, after Claude Code's per-command
+/// "don't ask again"): the whole tool, except for `bash`, where it is the command
+/// prefix of each part (`cargo test`, `npm run build`), so approving `cargo test`
+/// never approves `rm`. Lines with command substitution give no keys.
+pub fn always_keys(tool: &str, resource: &str) -> Vec<String> {
+    if tool == "web_fetch" {
+        // Per host: approving docs.rs doesn't approve every site.
+        return url_host(resource).map(|h| vec![format!("web_fetch:{h}")]).unwrap_or_default();
+    }
+    if tool != "bash" {
+        return vec![tool.to_string()];
+    }
+    // Anything that can write or run more than the visible command gives no key, so
+    // "always" is just "yes" for it: substitution, redirection, process substitution,
+    // PowerShell subexpressions, escapes and quotes (GRAFT-0069 revision).
+    if resource.contains(['$', '`', '>', '<', '(', ')', '{', '}', '\\', '"', '\'', '@']) {
+        return Vec::new();
+    }
+    let parts = shell_parts(resource);
+    let keys: Vec<String> = parts.iter().filter_map(|p| command_prefix(p)).map(|p| format!("bash:{p}")).collect();
+    // All or nothing: a part without a key makes the whole line keyless.
+    if keys.len() == parts.len() { keys } else { Vec::new() }
+}
+
+/// Whether earlier "always" answers cover this action: for `bash`, every part.
+fn always_covers(always: &HashSet<String>, tool: &str, resource: &str) -> bool {
+    if tool == "web_fetch" {
+        let keys = always_keys(tool, resource);
+        return !keys.is_empty() && keys.iter().all(|k| always.contains(k));
+    }
+    if tool != "bash" {
+        return always.contains(tool);
+    }
+    let keys = always_keys(tool, resource);
+    let parts = shell_parts(resource).len();
+    !keys.is_empty() && keys.len() == parts && keys.iter().all(|k| always.contains(k))
+}
+
+/// Lowercased host of an http(s) URL, parsed the way the HTTP client parses it
+/// (so `https://evil.com\\@docs.rs/` is evil.com, not docs.rs).
+fn url_host(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
+/// Split on `;`, `&`, `|` and newlines (conservative: quotes are not honoured).
+fn shell_parts(command: &str) -> Vec<&str> {
+    command.split([';', '&', '|', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect()
+}
+
+/// `cargo test --release` → `cargo test`; `ls -la` → `ls`; `FOO=1 make` → none.
+fn command_prefix(part: &str) -> Option<String> {
+    // Commands that run other commands or code: approving them approves anything.
+    const WRAPPERS: &[&str] = &[
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "fish",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "python",
+        "python3",
+        "node",
+        "deno",
+        "perl",
+        "ruby",
+        "php",
+        "env",
+        "xargs",
+        "find",
+        "timeout",
+        "nohup",
+        "nice",
+        "time",
+        "watch",
+        "exec",
+        "eval",
+        "source",
+        ".",
+        "command",
+        "builtin",
+        "sudo",
+        "doas",
+        "su",
+        "ssh",
+        "npx",
+        "bunx",
+        "iex",
+        "invoke-expression",
+        "start-process",
+        "awk",
+        "sed",
+    ];
+    let mut words = part.split_whitespace();
+    let first = words.next()?;
+    if first.contains('=') || first.contains(['(', ')', '{', '}', '<', '>']) {
+        return None;
+    }
+    let name = first.rsplit(['/', '\\']).next().unwrap_or(first).to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    if WRAPPERS.contains(&name) {
+        return None;
+    }
+    // Tools whose second word picks a subcommand: `git status` and `git push` differ.
+    const SUBCOMMANDS: &[&str] = &[
+        "git",
+        "cargo",
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "npx",
+        "go",
+        "docker",
+        "kubectl",
+        "uv",
+        "poetry",
+        "pip",
+        "pip3",
+        "dotnet",
+        "gradle",
+        "mvn",
+        "make",
+        "rustup",
+        "brew",
+        "apt",
+        "gh",
+        "terraform",
+        "helm",
+    ];
+    match words.next() {
+        Some(second) if SUBCOMMANDS.contains(&first) => {
+            let plain = !second.starts_with(['-', '+'])
+                && second.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c));
+            plain.then(|| format!("{first} {second}"))
+        }
+        None if SUBCOMMANDS.contains(&first) => None,
+        _ => Some(first.to_string()),
+    }
+}
+
 /// Private re-asks for malformed tool calls per turn (GRAFT-0044).
 const MAX_REQUERIES: u32 = 2;
 
@@ -166,6 +335,8 @@ const MAX_CALLS_PER_TURN: usize = 32;
 const MAX_VERIFY_ROUNDS: u32 = 3;
 /// Times a failing finish check is sent back before the run stops (GRAFT-0054).
 const MAX_FINISH_ROUNDS: u32 = 3;
+/// Times stop hooks may send the model back before finishing is accepted (GRAFT-0062).
+const MAX_STOP_ROUNDS: u32 = 3;
 const MISTAKE_NUDGE: u32 = 6;
 const MISTAKE_STOP: u32 = 12;
 
@@ -177,6 +348,9 @@ pub struct Agent<'a> {
     pub config: AgentConfig,
     /// Sleep used between retries; tests replace it.
     pub sleep: fn(Duration),
+    /// Provider and model for the read-only `task` subagent (GRAFT-0081); the main
+    /// ones when `None`.
+    pub subagent: Option<(&'a dyn Provider, String)>,
 }
 
 impl std::fmt::Debug for Agent<'_> {
@@ -195,13 +369,24 @@ struct RunState {
     instructions: HashSet<PathBuf>,
     /// Checkpoint repo, when enabled and working.
     checkpoints: Option<crate::checkpoint::Checkpoints>,
+    /// The model's latest `todo` list, for the unfinished-plan reminder (GRAFT-0059).
+    todo: Vec<(String, String)>,
+    todo_reminded: bool,
+    /// Tools a named subagent is limited to (within `SUBAGENT_TOOLS`).
+    tools: Option<Vec<String>>,
 }
 
 /// Tools that can't change the workspace, so a turn using only these needs no checkpoint.
-const READ_ONLY_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "map", "skill", "todo", "task", "web_fetch"];
+const READ_ONLY_TOOLS: &[&str] =
+    &["read", "ls", "glob", "grep", "map", "skill", "todo", "task", "web_fetch", "bash_output"];
 
 /// Tools a subagent may use: read-only, so its work never needs undo.
 const SUBAGENT_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "map", "skill"];
+
+/// Whether a subagent may use `name`: read-only, and in its agent's tool list if it has one.
+fn subagent_may_use(name: &str, allowed: Option<&[String]>) -> bool {
+    SUBAGENT_TOOLS.contains(&name) && allowed.is_none_or(|a| a.iter().any(|t| t == name))
+}
 
 impl<'a> Agent<'a> {
     pub fn new(
@@ -211,33 +396,44 @@ impl<'a> Agent<'a> {
         approver: &'a dyn Approver,
         config: AgentConfig,
     ) -> Self {
-        Self { toolkit, provider, tools, approver, config, sleep: std::thread::sleep }
+        Self { toolkit, provider, tools, approver, config, sleep: std::thread::sleep, subagent: None }
     }
 
     /// Tools visible at a nesting depth: everything at the top level (plus `task`
     /// when subagents are enabled); read-only tools inside a subagent.
-    fn specs(&self, depth: u32) -> Vec<ToolSpec> {
+    fn specs(&self, depth: u32, allowed: Option<&[String]>) -> Vec<ToolSpec> {
         let mut specs: Vec<ToolSpec> = self
             .tools
             .iter()
             .map(|t| t.spec(self.toolkit.edit_format.as_ref()))
-            .filter(|s| depth == 0 || SUBAGENT_TOOLS.contains(&s.name.as_str()))
+            .filter(|s| depth == 0 || subagent_may_use(&s.name, allowed))
             .collect();
         if depth == 0 && self.config.subagents {
+            let mut description = "Delegate a self-contained exploration or research question to a subagent with a \
+                fresh context. It can read, list, glob and grep (no edits or commands) and returns a concise report. \
+                Use it to search large codebases without filling your own context; give it a precise prompt."
+                .to_string();
+            let mut properties = serde_json::json!({
+                "description": {"type": "string", "description": "3-5 word label"},
+                "prompt": {"type": "string", "description": "What to find out, and what to report back"}
+            });
+            let types = &self.config.subagent_types;
+            if !types.is_empty() {
+                description.push_str("\n\nSpecialised agents (set `agent`):");
+                for t in types {
+                    description.push_str(&format!("\n- {}: {}", t.name, t.description));
+                }
+                let names: Vec<&str> = types.iter().map(|t| t.name.as_str()).collect();
+                properties["agent"] = serde_json::json!({
+                    "type": "string",
+                    "enum": names,
+                    "description": "Named agent to use (optional)"
+                });
+            }
             specs.push(ToolSpec {
                 name: "task".into(),
-                description: "Delegate a self-contained exploration or research question to a subagent with a fresh \
-                    context. It can read, list, glob and grep (no edits or commands) and returns a concise report. \
-                    Use it to search large codebases without filling your own context; give it a precise prompt."
-                    .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "description": {"type": "string", "description": "3-5 word label"},
-                        "prompt": {"type": "string", "description": "What to find out, and what to report back"}
-                    },
-                    "required": ["prompt"]
-                }),
+                description,
+                input_schema: serde_json::json!({"type": "object", "properties": properties, "required": ["prompt"]}),
             });
         }
         specs
@@ -257,15 +453,32 @@ impl<'a> Agent<'a> {
         let Some(prompt) = input.get("prompt").and_then(Value::as_str).filter(|p| !p.trim().is_empty()) else {
             return ToolOutput::error("missing required field `prompt`");
         };
-        let mut sub = Session::new(&self.config.model, "subagent", &self.config.workspace);
+        let kind = match input.get("agent").and_then(Value::as_str).filter(|a| !a.is_empty()) {
+            None => None,
+            Some(name) => match self.config.subagent_types.iter().find(|t| t.name == name) {
+                Some(t) => Some(t),
+                None => {
+                    let names: Vec<&str> = self.config.subagent_types.iter().map(|t| t.name.as_str()).collect();
+                    let names = if names.is_empty() { "none".to_string() } else { names.join(", ") };
+                    return ToolOutput::error(format!("unknown agent `{name}`; available agents: {names}"));
+                }
+            },
+        };
+        let mut sub = Session::new(self.backend(1).1, "subagent", &self.config.workspace);
+        sub.ephemeral = session.ephemeral;
         let label = input.get("description").and_then(Value::as_str).unwrap_or("subagent");
         sub.title = format!("[subagent] {label}");
+        let role = kind.map(|t| format!("{}\n\nTask:\n", t.instructions.trim())).unwrap_or_default();
         let task = format!(
-            "{prompt}\n\nYou are a read-only subagent: investigate with the available tools, then reply with a concise, \
-             specific report (file paths, line numbers, findings). Do not ask questions."
+            "{role}{prompt}\n\nYou are a read-only subagent: investigate with the available tools, then reply with a \
+             concise, specific report (file paths, line numbers, findings). Do not ask questions."
         );
-        let outcome = self.run_at(&mut sub, &task, &mut |_| {}, 1);
-        session.usage.add(outcome.usage);
+        let allowed = kind.map(|t| t.tools.clone()).filter(|t| !t.is_empty());
+        let outcome = self.run_at(&mut sub, &task, &mut |_| {}, 1, allowed);
+        // Book the subagent's tokens to the model(s) it actually used.
+        for (model, usage) in &sub.usage_by_model {
+            session.add_usage(model, *usage);
+        }
         match outcome.status {
             Status::Done if !outcome.final_text.trim().is_empty() => ToolOutput::ok(outcome.final_text),
             Status::Done => ToolOutput::error("the subagent finished without a report"),
@@ -275,8 +488,29 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// Provider and model for a run at `depth` (subagents may use a cheaper model).
+    fn backend(&self, depth: u32) -> (&dyn Provider, &str) {
+        match (&self.subagent, depth) {
+            (Some((provider, model)), d) if d > 0 => (*provider, model.as_str()),
+            _ => (self.provider, self.config.model.as_str()),
+        }
+    }
+
     pub fn system_prompt(&self) -> String {
+        self.system_prompt_at(0)
+    }
+
+    /// The system prompt for a run at `depth`: the output-schema instruction is for
+    /// the final answer only, so subagents don't get it.
+    fn system_prompt_at(&self, depth: u32) -> String {
         let mut p = crate::prompt::system_prompt(&self.config.workspace, &crate::prompt::today());
+        if let Some(schema) = self.config.output_schema.as_ref().filter(|_| depth == 0) {
+            p.push_str(&format!(
+                "\n\nOUTPUT FORMAT: when you finish, reply with only a JSON object (no prose, no code fence) matching \
+                 this JSON schema:\n{}",
+                serde_json::to_string_pretty(schema).unwrap_or_default()
+            ));
+        }
         if let Some(extra) = &self.config.append_system {
             p.push_str("\n\n");
             p.push_str(extra);
@@ -287,15 +521,22 @@ impl<'a> Agent<'a> {
     /// Run one user task to completion. `emit` receives every protocol event;
     /// `session` is saved after every turn.
     pub fn run(&self, session: &mut Session, task: &str, emit: &mut dyn FnMut(&Event)) -> Outcome {
-        self.run_at(session, task, emit, 0)
+        self.run_at(session, task, emit, 0, None)
     }
 
-    fn run_at(&self, session: &mut Session, task: &str, emit: &mut dyn FnMut(&Event), depth: u32) -> Outcome {
+    fn run_at(
+        &self,
+        session: &mut Session,
+        task: &str,
+        emit: &mut dyn FnMut(&Event),
+        depth: u32,
+        tools: Option<Vec<String>>,
+    ) -> Outcome {
         emit(&Event::SessionStarted {
             protocol: PROTOCOL_VERSION,
             profile: self.toolkit.profile.name.clone(),
             session_id: Some(session.id.clone()),
-            model: Some(self.config.model.clone()),
+            model: Some(self.backend(depth).1.to_string()),
         });
         for e in self.toolkit.session_preamble().into_iter().skip(1) {
             emit(&e);
@@ -309,11 +550,41 @@ impl<'a> Agent<'a> {
                 message: format!("closed {repaired} unanswered tool call(s) left by an interrupted run"),
             });
         }
-        session.messages.push(Message::user(task));
+        let (mut task_text, attached) = if depth == 0 {
+            let policy = &self.toolkit.approval;
+            let may_read =
+                |rel: &str| policy.decide(&Action { tool: "read".into(), resource: rel.into() }) != Decision::Deny;
+            crate::prompt::expand_mentions(&self.config.workspace, task, &may_read)
+        } else {
+            (task.to_string(), Vec::new())
+        };
+        // session_start hooks (GRAFT-0098) for a new session, then user_prompt hooks
+        // (GRAFT-0062): add context, or block the task.
+        if depth == 0 {
+            let new_session = session.messages.is_empty();
+            let events: &[HookEvent] =
+                if new_session { &[HookEvent::SessionStart, HookEvent::UserPrompt] } else { &[HookEvent::UserPrompt] };
+            for hook in self.config.hooks.iter().filter(|h| events.contains(&h.event)) {
+                let event = hook.event;
+                let name = if event == HookEvent::SessionStart { "session_start" } else { "user_prompt" };
+                match hook.run(&self.config.shell, &self.config.workspace, event, "", task, None) {
+                    HookResult::Ok => {}
+                    HookResult::Context(extra) => {
+                        task_text.push_str(&format!("\n\n[Context added by a {name} hook:]\n{extra}"));
+                    }
+                    HookResult::Feedback(reason) => {
+                        let status = Status::Stopped(format!("blocked by a {name} hook: {reason}"));
+                        return self.finish(session, emit, status, 0, Usage::default(), String::new());
+                    }
+                    HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+                }
+            }
+        }
+        session.messages.push(Message::user(task_text));
         self.save(session, emit);
 
-        let system = self.system_prompt();
-        let specs = self.specs(depth);
+        let system = self.system_prompt_at(depth);
+        let specs = self.specs(depth, tools.as_deref());
         let mut state = RunState {
             always: HashSet::new(),
             recent: Vec::new(),
@@ -321,12 +592,21 @@ impl<'a> Agent<'a> {
             seen: HashMap::new(),
             instructions: HashSet::new(),
             checkpoints: None,
+            todo: Vec::new(),
+            todo_reminded: false,
+            tools,
         };
+        // Attached files count as read, so the model can edit them straight away.
+        for path in attached {
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            state.seen.insert(path, mtime);
+        }
         if self.config.checkpoints && depth == 0 {
             match crate::checkpoint::Checkpoints::open(&self.config.workspace) {
                 Ok(cp) => {
                     state.checkpoints = Some(cp);
                     self.checkpoint(session, &mut state, "start", emit);
+                    session.run_start = session.checkpoints.len().checked_sub(1);
                 }
                 Err(e) => emit(&Event::Warning { message: format!("checkpoints off: {e}") }),
             }
@@ -336,6 +616,8 @@ impl<'a> Agent<'a> {
         let mut changed_files = false;
         let mut verify_failures = 0;
         let mut finish_failures = 0;
+        let mut schema_failures = 0;
+        let mut stop_rounds = 0;
         let mut consecutive_errors = 0u32;
         let mut final_text = String::new();
 
@@ -356,8 +638,11 @@ impl<'a> Agent<'a> {
                 let reason = format!("token budget exhausted ({budget} tokens)");
                 return self.finish(session, emit, Status::Stopped(reason), turn - 1, usage, final_text);
             }
+            if depth == 0 {
+                emit(&Event::TurnStarted { turn });
+            }
             let request = CompletionRequest {
-                model: self.config.model.clone(),
+                model: self.backend(depth).1.to_string(),
                 system: system.clone(),
                 messages: session.messages.clone(),
                 tools: specs.clone(),
@@ -367,7 +652,7 @@ impl<'a> Agent<'a> {
                 // Both closures need `emit`; route retries through a cell (ADR 0007).
                 let emit_cell = std::cell::RefCell::new(&mut *emit);
                 stream_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &request,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
@@ -382,7 +667,7 @@ impl<'a> Agent<'a> {
                 )
             } else {
                 complete_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &request,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
@@ -396,7 +681,10 @@ impl<'a> Agent<'a> {
                 Err(e) => return self.finish(session, emit, Status::Failed(e.to_string()), turn, usage, final_text),
             };
             usage.add(completion.usage);
-            session.usage.add(completion.usage);
+            session.add_usage(self.backend(depth).1, completion.usage);
+            if depth == 0 {
+                session.context_tokens = completion.usage.input_tokens + completion.usage.output_tokens;
+            }
 
             // Re-query malformed tool calls (GRAFT-0044, after SWE-agent's format-error
             // requery): the bad attempt and its error stay out of the history, so later
@@ -432,7 +720,7 @@ impl<'a> Agent<'a> {
                 messages.extend(trail.iter().cloned());
                 let retry = CompletionRequest { messages, ..request.clone() };
                 match complete_with_retries(
-                    self.provider,
+                    self.backend(depth).0,
                     &retry,
                     &self.config.retry,
                     &|d| (self.sleep)(d),
@@ -440,7 +728,7 @@ impl<'a> Agent<'a> {
                 ) {
                     Ok(c) => {
                         usage.add(c.usage);
-                        session.usage.add(c.usage);
+                        session.add_usage(self.backend(depth).1, c.usage);
                         completion = c;
                     }
                     Err(_) => {
@@ -485,16 +773,79 @@ impl<'a> Agent<'a> {
                     ));
                     continue;
                 }
+                // A reply with no text and no tool calls (only thinking, or nothing) is
+                // not an answer: ask once more instead of ending silently (GRAFT-0090,
+                // after goose 1.61's recovery from thinking-only turns).
+                if session.messages.last().is_some_and(|m| m.text().trim().is_empty())
+                    && completion.stop != StopReason::Refusal
+                    && continuations < MAX_CONTINUATIONS
+                {
+                    continuations += 1;
+                    emit(&Event::Warning {
+                        message: "the model replied without text or tool calls; asking it to continue".into(),
+                    });
+                    session.messages.push(Message::user(
+                        "Your last reply had no visible text and no tool calls. Continue the task: call a tool, or give your final answer.",
+                    ));
+                    continue;
+                }
+                // Unfinished plan (GRAFT-0059, after OpenCode's and Claude Code's todo
+                // reminders): once per run, point out items not marked done.
+                let open: Vec<&str> =
+                    state.todo.iter().filter(|(_, st)| st != "done").map(|(t, _)| t.as_str()).collect();
+                let last_turn = turn == self.config.max_turns;
+                if !open.is_empty() && !state.todo_reminded && self.config.todo_reminder && !last_turn {
+                    state.todo_reminded = true;
+                    emit(&Event::Warning {
+                        message: format!("{} todo item(s) not done; reminding the model", open.len()),
+                    });
+                    session.messages.push(Message::user(format!(
+                        "[Your todo list still has {} item(s) not marked done: {}. Finish them, or update the list \
+                         (mark them done, or remove ones that no longer apply) and say why, then finish.]",
+                        open.len(),
+                        open.join("; ")
+                    )));
+                    self.save(session, emit);
+                    continue;
+                }
+                // Structured output (GRAFT-0101, after Codex's `exec --output-schema`):
+                // the final answer must be a JSON object matching the schema.
+                if let Some(schema) = &self.config.output_schema
+                    && depth == 0
+                {
+                    let problems = crate::schema::check_answer(&final_text, schema);
+                    if !problems.is_empty() && (last_turn || schema_failures >= MAX_FINISH_ROUNDS) {
+                        // Never report success with output a script can't use (review fix).
+                        let reason = format!("final answer doesn't match the output schema: {}", problems.join("; "));
+                        return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
+                    }
+                    if !problems.is_empty() {
+                        schema_failures += 1;
+                        emit(&Event::Warning {
+                            message: "final answer doesn't match the output schema; asking again".into(),
+                        });
+                        session.messages.push(Message::user(format!(
+                            "[Your final answer must be only a JSON object matching the schema. Problems: {}]",
+                            problems.join("; ")
+                        )));
+                        self.save(session, emit);
+                        continue;
+                    }
+                }
                 // Finish check (GRAFT-0054, after Qwen Code's /goal verifier): "done" only
                 // counts once an independent check passes; failures go back to the model.
                 if let Some(check) = &self.config.finish_check
                     && depth == 0
                 {
-                    let (ok, out) = crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600);
+                    let (ok, out) =
+                        crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600, true);
                     if !ok {
-                        if finish_failures >= MAX_FINISH_ROUNDS {
-                            let reason =
-                                format!("finish check `{check}` still failing after {MAX_FINISH_ROUNDS} rounds");
+                        if finish_failures >= MAX_FINISH_ROUNDS || last_turn {
+                            let reason = if last_turn {
+                                format!("finish check `{check}` failed and no turns are left")
+                            } else {
+                                format!("finish check `{check}` still failing after {MAX_FINISH_ROUNDS} rounds")
+                            };
                             return self.finish(session, emit, Status::Stopped(reason), turn, usage, final_text);
                         }
                         finish_failures += 1;
@@ -502,6 +853,34 @@ impl<'a> Agent<'a> {
                         session.messages.push(Message::user(format!(
                             "[The task is not done: the check `{check}` failed. Fix the problems below, then finish \
                              again.]\n{out}"
+                        )));
+                        self.save(session, emit);
+                        continue;
+                    }
+                }
+                // stop hooks (GRAFT-0062): exit 2 sends feedback and the run goes on.
+                if depth == 0 && stop_rounds < MAX_STOP_ROUNDS && !last_turn {
+                    let mut feedback = Vec::new();
+                    for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::Stop) {
+                        match hook.run(
+                            &self.config.shell,
+                            &self.config.workspace,
+                            HookEvent::Stop,
+                            "",
+                            &final_text,
+                            None,
+                        ) {
+                            HookResult::Feedback(msg) => feedback.push(msg),
+                            HookResult::Failed(msg) => emit(&Event::Warning { message: msg }),
+                            HookResult::Ok | HookResult::Context(_) => {}
+                        }
+                    }
+                    if !feedback.is_empty() {
+                        stop_rounds += 1;
+                        emit(&Event::Warning { message: "a stop hook asked the model to continue".into() });
+                        session.messages.push(Message::user(format!(
+                            "[A stop hook did not accept finishing yet:]\n{}",
+                            feedback.join("\n")
                         )));
                         self.save(session, emit);
                         continue;
@@ -515,6 +894,17 @@ impl<'a> Agent<'a> {
             let mut results = Vec::with_capacity(calls.len());
             for (index, (id, name, input)) in calls.into_iter().enumerate() {
                 emit(&Event::ToolCall { id: id.clone(), tool: name.clone(), input: input.clone() });
+                if name == "todo"
+                    && let Some(items) = input["items"].as_array()
+                {
+                    state.todo = items
+                        .iter()
+                        .map(|i| {
+                            let text = i["text"].as_str().unwrap_or("").to_string();
+                            (text, i["status"].as_str().unwrap_or("pending").to_string())
+                        })
+                        .collect();
+                }
                 let output = if index >= MAX_CALLS_PER_TURN {
                     ToolOutput::error(format!(
                         "Not executed: at most {MAX_CALLS_PER_TURN} tool calls run per turn. Repeat the remaining calls in your next turn."
@@ -541,7 +931,7 @@ impl<'a> Agent<'a> {
                 && let Some(command) = &self.config.verify_command
                 && verify_failures < MAX_VERIFY_ROUNDS
             {
-                let (ok, out) = crate::hooks::run_check(&self.config.shell, command, &self.config.workspace, 300);
+                let (ok, out) = crate::hooks::run_check(&self.config.shell, command, &self.config.workspace, 300, true);
                 if ok {
                     verify_failures = 0;
                 } else {
@@ -576,7 +966,7 @@ impl<'a> Agent<'a> {
             if let Some(window) = self.config.context_window
                 && context_used > window * 8 / 10
             {
-                self.compact(session, task, &system, &mut usage, emit);
+                self.compact(session, task, &system, &mut usage, emit, depth);
             }
         }
         let turns = self.config.max_turns;
@@ -600,6 +990,19 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// Compact now, at the user's request (GRAFT-0076, after Claude Code's `/compact`).
+    /// Returns false if there was nothing to compact or the summary failed.
+    pub fn compact_session(&self, session: &mut Session, emit: &mut dyn FnMut(&Event)) -> bool {
+        if session.messages.len() < 2 {
+            return false;
+        }
+        let task = session.messages.iter().find(|m| m.role == Role::User).map(Message::text).unwrap_or_default();
+        let before = session.compactions;
+        let mut usage = Usage::default();
+        self.compact(session, &task, &self.system_prompt(), &mut usage, emit, 0);
+        session.compactions > before
+    }
+
     /// Context compaction (GRAFT-0023, after Pi, OpenCode and Claude Code): ask the model
     /// for a handover summary, archive the old messages, and continue from the summary.
     /// The history is never edited in place, so provider-specific blocks stay valid.
@@ -610,7 +1013,10 @@ impl<'a> Agent<'a> {
         system: &str,
         usage: &mut Usage,
         emit: &mut dyn FnMut(&Event),
+        depth: u32,
     ) {
+        // Summarise with the model that produced this history (review fix).
+        let (provider, model) = self.backend(depth);
         let mut messages = session.messages.clone();
         messages.push(Message::user(
             "Context is nearly full. Write a handover summary for yourself so you can continue in a fresh context: \
@@ -618,19 +1024,20 @@ impl<'a> Agent<'a> {
              problems, and the exact next steps. Do not call tools.",
         ));
         let request = CompletionRequest {
-            model: self.config.model.clone(),
+            model: model.to_string(),
             system: system.to_string(),
             messages,
             tools: Vec::new(),
             max_tokens: self.config.max_tokens,
         };
         let summary =
-            complete_with_retries(self.provider, &request, &self.config.retry, &|d| (self.sleep)(d), &mut |_, _, _| {})
-                .map(|c| {
+            complete_with_retries(provider, &request, &self.config.retry, &|d| (self.sleep)(d), &mut |_, _, _| {}).map(
+                |c| {
                     usage.add(c.usage);
-                    session.usage.add(c.usage);
+                    session.add_usage(model, c.usage);
                     Message::assistant(c.content).text()
-                });
+                },
+            );
         let summary = match summary {
             Ok(s) if !s.trim().is_empty() => s,
             Ok(_) | Err(_) => {
@@ -662,9 +1069,10 @@ impl<'a> Agent<'a> {
         if name == "task" && state.depth == 0 && self.config.subagents {
             return self.subagent(session, input);
         }
-        let visible = state.depth == 0 || SUBAGENT_TOOLS.contains(&name);
+        let visible = state.depth == 0 || subagent_may_use(name, state.tools.as_deref());
         let Some(tool) = self.tools.iter().find(|t| visible && t.spec(edit).name == name) else {
-            let names: Vec<String> = self.specs(state.depth).into_iter().map(|s| s.name).collect();
+            let names: Vec<String> =
+                self.specs(state.depth, state.tools.as_deref()).into_iter().map(|s| s.name).collect();
             return ToolOutput::error(format!("unknown tool `{name}`; available tools: {}", names.join(", ")));
         };
 
@@ -686,7 +1094,7 @@ impl<'a> Agent<'a> {
         let input_json = input.to_string();
         for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PreTool, name)) {
             match hook.run(&self.config.shell, &self.config.workspace, HookEvent::PreTool, name, &input_json, None) {
-                HookResult::Ok => {}
+                HookResult::Ok | HookResult::Context(_) => {}
                 HookResult::Feedback(reason) => {
                     emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
                     return ToolOutput::error(format!("Blocked by a pre_tool hook: {reason}"));
@@ -740,7 +1148,7 @@ impl<'a> Agent<'a> {
             // "always" answer can fast-path changes to agent config, CI or git internals.
             Decision::Allow | Decision::Ask if protected => Decision::Ask,
             // Risky commands (GRAFT-0042) are asked about every time.
-            Decision::Ask if state.always.contains(name) && fresh.is_none() => Decision::Allow,
+            Decision::Ask if fresh.is_none() && always_covers(&state.always, name, &action.resource) => Decision::Allow,
             d => d,
         };
         match decision {
@@ -766,8 +1174,14 @@ impl<'a> Agent<'a> {
                             "The user declined this action. Do not retry it; choose another approach or explain what you need.",
                         );
                     }
+                    Answer::NoWith(feedback) => {
+                        emit(&Event::ApprovalResolved { id: id.into(), decision: "ask_declined".into() });
+                        return ToolOutput::error(format!(
+                            "The user declined this action and said: {feedback}\nFollow their guidance; do not retry the same action."
+                        ));
+                    }
                     Answer::Always => {
-                        state.always.insert(name.to_string());
+                        state.always.extend(always_keys(name, &action.resource));
                     }
                     Answer::Yes => {}
                 }
@@ -797,7 +1211,7 @@ impl<'a> Agent<'a> {
                 &input_json,
                 Some(&output.content),
             ) {
-                HookResult::Ok => {}
+                HookResult::Ok | HookResult::Context(_) => {}
                 HookResult::Feedback(feedback) => {
                     output.content.push_str(&format!("\n\nFeedback from a post_tool hook:\n{feedback}"));
                 }
@@ -847,6 +1261,15 @@ impl<'a> Agent<'a> {
             {
                 emit(&Event::Warning { message: msg });
             }
+        }
+        // What the run changed (GRAFT-0063), for headless consumers and evaluations.
+        if let Some(start) = session.run_start.take()
+            && let (Some(first), Some(last)) = (session.checkpoints.get(start), session.checkpoints.last())
+            && first.commit != last.commit
+            && let Ok(cp) = crate::checkpoint::Checkpoints::open(&self.config.workspace)
+            && let Ok(files) = cp.changed_files(&first.commit, &last.commit)
+        {
+            emit(&Event::FilesChanged { files });
         }
         let (ok, reason) = match &status {
             Status::Done => (true, None),

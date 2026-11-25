@@ -6,9 +6,10 @@ pub mod checkpoint;
 pub mod hooks;
 pub mod prompt;
 pub mod retry;
+pub mod schema;
 pub mod session;
 
-pub use agent::{Agent, AgentConfig, Answer, Approver, Fixed, Outcome, Status};
+pub use agent::{Agent, AgentConfig, Answer, Approver, Fixed, Outcome, Status, SubagentType};
 pub use session::Session;
 
 use oxgraft_protocol::{Event, PROTOCOL_VERSION};

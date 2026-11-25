@@ -1,5 +1,7 @@
 //! The `oxgraft` command (SPEC-0004).
 
+mod agents;
+mod commands;
 mod config;
 mod profiles;
 mod render;
@@ -44,6 +46,20 @@ struct Common {
     /// Approval mode: read-only, suggest (default), auto-edit, full-auto.
     #[arg(long, global = true)]
     mode: Option<String>,
+    /// Extra instructions added to the system prompt for this run.
+    #[arg(long, global = true, value_name = "TEXT")]
+    append_system_prompt: Option<String>,
+    /// Allow a tool without asking for this run: `TOOL` or `TOOL:PATTERN`, e.g.
+    /// `bash:cargo *` (repeatable; deny rules still win).
+    #[arg(long = "allow-tool", global = true, value_name = "TOOL[:PATTERN]")]
+    allow_tool: Vec<String>,
+    /// Deny a tool for this run: `TOOL` or `TOOL:PATTERN` (repeatable).
+    #[arg(long = "deny-tool", global = true, value_name = "TOOL[:PATTERN]")]
+    deny_tool: Vec<String>,
+    /// Plan only: read-only mode, and the model returns a step-by-step plan
+    /// instead of changing anything. Continue with `--resume last`.
+    #[arg(long, global = true, conflicts_with = "mode")]
+    plan: bool,
     /// Workspace directory (default: current directory).
     #[arg(long, global = true)]
     cwd: Option<PathBuf>,
@@ -69,6 +85,25 @@ enum Command {
         /// keep its first N messages (N must follow a finished reply).
         #[arg(long, conflicts_with = "resume")]
         fork: Option<String>,
+        /// Print only the final answer on stdout (no streaming or tool activity);
+        /// errors still go to stderr.
+        #[arg(long, short = 'q', conflicts_with = "json")]
+        quiet: bool,
+        /// Also write the final answer to this file.
+        #[arg(long, value_name = "FILE")]
+        output_last_message: Option<PathBuf>,
+        /// Run in a new git worktree on branch `oxgraft/<id>`, leaving your checkout
+        /// untouched; merge the branch afterwards if you like the result.
+        #[arg(long, conflicts_with_all = ["resume", "fork"])]
+        worktree: bool,
+        /// The final answer must be a JSON object matching this JSON schema file;
+        /// it is printed as compact JSON (pair with --quiet for scripts).
+        #[arg(long, value_name = "FILE")]
+        output_schema: Option<PathBuf>,
+        /// Don't save the session (and take no checkpoints): nothing is written
+        /// under .oxgraft/sessions, so the run can't be resumed.
+        #[arg(long, conflicts_with = "worktree")]
+        ephemeral: bool,
     },
     /// Interactive session (the default when no command is given).
     Chat {
@@ -81,9 +116,38 @@ enum Command {
         fork: Option<String>,
     },
     /// List saved sessions in this workspace.
-    Sessions,
+    Sessions {
+        /// One JSON object per session (id, created, title, model, profile, counts).
+        #[arg(long)]
+        json: bool,
+    },
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// Show the settings in effect here, after every config layer, and where they came from.
+    Config,
+    /// What a session changed since it started, as a patch (default: the latest).
+    Diff { id: Option<String> },
+    /// Token use per model across this workspace's sessions.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete old sessions in this workspace, keeping the newest ones.
+    Prune {
+        /// How many sessions to keep.
+        #[arg(long, default_value_t = 50)]
+        keep: usize,
+        /// Only list what would be deleted.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Write a session as a Markdown transcript (default: the latest session).
+    Export {
+        id: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
     /// List a session's workspace checkpoints (default: the latest session).
     Checkpoints { id: Option<String> },
     /// Put the workspace back to checkpoint N of a session (see `oxgraft checkpoints`).
@@ -129,6 +193,16 @@ exact commands to install, build, test, lint and run (verify each one you can by
 see in the code; and anything surprising a newcomer would get wrong. If AGENTS.md already exists, read it first and \
 improve it rather than replacing good content. Keep it under 150 lines; no generic advice.";
 
+/// Plan mode instructions (GRAFT-0070, after Claude Code's plan mode).
+const PLAN_INSTRUCTIONS: &str = "PLAN MODE: do not change anything (edits and commands are disabled). Explore with \
+the read-only tools, then reply with a concise plan: the goal, the files to change and how, the risks, and how the \
+change will be verified, as numbered steps. The user will review it and continue the session to carry it out.";
+
+/// Providers that run on the user's machine, with small default context windows.
+const LOCAL_PROVIDERS: &[&str] = &["ollama", "lmstudio"];
+/// Compaction window assumed for local providers unless `context_window` is set.
+const LOCAL_CONTEXT_WINDOW: u64 = 32_768;
+
 /// Exit codes (SPEC-0004 AC2).
 const EXIT_ERROR: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -137,6 +211,84 @@ const EXIT_STOPPED: u8 = 3;
 fn available() -> Available {
     available_with(Vec::new())
 }
+
+/// A new git worktree for a run (GRAFT-0102, after Claude Code's `--worktree`):
+/// `.oxgraft/worktrees/<id>` on branch `oxgraft/<id>` from the current HEAD.
+fn create_worktree(ws: &Path) -> Result<(PathBuf, String), String> {
+    // Git for Windows mishandles `\\?\` paths from canonicalize (review fix).
+    let ws = &oxgraft_core::checkpoint::plain_path(ws);
+    let git = |args: &[&str]| -> Result<String, String> {
+        let out =
+            std::process::Command::new("git").arg("-C").arg(ws).args(args).output().map_err(|e| format!("git: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    };
+    git(&["rev-parse", "--verify", "HEAD"])
+        .map_err(|_| "--worktree needs a git repository with at least one commit".to_string())?;
+    let id = Session::new("", "", ws).id;
+    let branch = format!("oxgraft/{id}");
+    let path = ws.join(".oxgraft").join("worktrees").join(&id);
+    let path_text = path.to_string_lossy().into_owned();
+    // Keep the worktree out of the user's own `git status`.
+    let ignore = ws.join(".oxgraft").join(".gitignore");
+    if !ignore.exists() {
+        std::fs::create_dir_all(ws.join(".oxgraft")).map_err(|e| e.to_string())?;
+        std::fs::write(&ignore, "*\n").map_err(|e| e.to_string())?;
+    }
+    git(&["worktree", "add", "-q", "-b", &branch, &path_text, "HEAD"])
+        .map_err(|e| format!("git worktree add failed: {e}"))?;
+    Ok((path, branch))
+}
+
+/// Commit everything in a worktree made by `run --worktree`. Ok(false) = nothing
+/// to commit. Uses the user's git identity, falling back to a neutral one.
+fn commit_worktree(path: &Path, title: &str) -> Result<bool, String> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git").arg("-C").arg(path).args(args).output().map_err(|e| format!("git: {e}"))
+    };
+    git(&["add", "-A"])?;
+    if git(&["diff", "--cached", "--quiet"])?.status.success() {
+        return Ok(false);
+    }
+    let message = format!("oxgraft: {}", if title.trim().is_empty() { "changes" } else { title.trim() });
+    let mut out = git(&["commit", "-q", "--no-verify", "-m", &message])?;
+    if !out.status.success() {
+        // No identity configured: commit as a neutral author rather than fail.
+        out = git(&[
+            "-c",
+            "user.name=oxgraft",
+            "-c",
+            "user.email=oxgraft@localhost",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            &message,
+        ])?;
+    }
+    if out.status.success() { Ok(true) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+}
+
+/// Rules from `--allow-tool` / `--deny-tool` (GRAFT-0097, after Claude Code's
+/// `--allowedTools` / `--disallowedTools`): `TOOL` or `TOOL:PATTERN`. Added last,
+/// so they beat mode and config allows; any deny still wins over any allow.
+fn flag_rules(allow: &[String], deny: &[String]) -> Vec<oxgraft_strategies::approval::Rule> {
+    use oxgraft_seams::Decision;
+    use oxgraft_strategies::approval::Rule;
+    let parse = |spec: &str, d: Decision| {
+        let (tool, pattern) = spec.split_once(':').unwrap_or((spec, "*"));
+        // Tool names are lowercase (`bash`, `web_fetch`); accept `Bash` too.
+        let rule = Rule::new(&tool.trim().to_ascii_lowercase(), pattern.trim(), d);
+        if d == Decision::Deny { rule.because("denied for this run with --deny-tool") } else { rule }
+    };
+    allow.iter().map(|a| parse(a, Decision::Allow)).chain(deny.iter().map(|d| parse(d, Decision::Deny))).collect()
+}
+
+/// Approval modes, in order of autonomy.
+const MODES: &[&str] = &["read-only", "suggest", "auto-edit", "full-auto"];
 
 /// Rules for an approval mode (GRAFT-0052, after Codex's suggest / auto-edit /
 /// full-auto and read-only modes). They sit between the built-in defaults and the
@@ -207,10 +359,84 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork, until }) => run(&common, task, json, resume, fork, until),
-        Some(Command::Sessions) => {
+        Some(Command::Run {
+            task,
+            json,
+            resume,
+            fork,
+            until,
+            quiet,
+            output_last_message,
+            output_schema,
+            worktree,
+            ephemeral,
+        }) => {
+            let schema = match output_schema {
+                Some(path) => {
+                    let text = std::fs::read_to_string(&path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+                    Some(serde_json::from_str::<Value>(&text).map_err(|e| usage(format!("{}: {e}", path.display())))?)
+                }
+                None => None,
+            };
+            let output = RunOutput { json, quiet, last_message: output_last_message, schema, ephemeral };
+            if worktree {
+                let ws = workspace(&common)?;
+                let (path, branch) = create_worktree(&ws).map_err(|e| (EXIT_ERROR, e))?;
+                if !json && !quiet {
+                    eprintln!("working in {} on branch {branch}", path.display());
+                }
+                let mut common = common.clone();
+                common.cwd = Some(path.clone());
+                let title: String = task.join(" ").lines().next().unwrap_or("").chars().take(60).collect();
+                let result = run(&common, task, output, None, None, until);
+                // Commit what the run changed, so the branch can be merged (review fix).
+                let committed = commit_worktree(&path, &title);
+                if !json && !quiet {
+                    match committed {
+                        Ok(true) => eprintln!(
+                            "worktree {} on branch {branch}: review with `git diff HEAD...{branch}`, merge with \
+                             `git merge {branch}`, discard with `git worktree remove --force {}` and `git branch -D {branch}`",
+                            path.display(),
+                            path.display()
+                        ),
+                        Ok(false) => eprintln!(
+                            "worktree {} on branch {branch}: no changes; remove with `git worktree remove {}` and \
+                             `git branch -D {branch}`",
+                            path.display(),
+                            path.display()
+                        ),
+                        Err(e) => eprintln!(
+                            "worktree {} on branch {branch}: could not commit the changes: {e}",
+                            path.display()
+                        ),
+                    }
+                }
+                return result;
+            }
+            run(&common, task, output, resume, fork, until)
+        }
+        Some(Command::Sessions { json }) => {
             let ws = workspace(&common)?;
             let sessions = Session::list(&ws);
+            if json {
+                for s in &sessions {
+                    let line = serde_json::json!({
+                        "id": s.id,
+                        "created": s.created,
+                        "title": s.title,
+                        "model": s.model,
+                        "profile": s.profile,
+                        "messages": s.messages.len(),
+                        "files_changed": s.changed_files.len(),
+                        "checkpoints": s.checkpoints.len(),
+                        "input_tokens": s.usage.input_tokens,
+                        "output_tokens": s.usage.output_tokens,
+                        "forked_from": s.forked_from,
+                    });
+                    println!("{line}");
+                }
+                return Ok(0);
+            }
             if sessions.is_empty() {
                 println!("no sessions in {}", ws.display());
             }
@@ -237,6 +463,72 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             Ok(0)
         }
+        Some(Command::Config) => {
+            let ws = workspace(&common)?;
+            let flags = config::Flags {
+                model: common.model.as_deref(),
+                profile: common.profile.as_deref(),
+                effort: common.effort.as_deref(),
+                max_turns: common.max_turns,
+                approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
+                instructions: common.append_system_prompt.as_deref(),
+            };
+            let cfg = config::resolve(&ws, &flags).map_err(usage)?;
+            for line in describe_config(&ws, &cfg) {
+                println!("{line}");
+            }
+            Ok(0)
+        }
+        Some(Command::Diff { id }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
+            print!("{}", session_diff(&ws, &session).map_err(|e| (EXIT_ERROR, e))?);
+            Ok(0)
+        }
+        Some(Command::Stats { json }) => {
+            let ws = workspace(&common)?;
+            let rows = usage_by_model(&Session::list(&ws));
+            if json {
+                for (model, (sessions, input, output)) in &rows {
+                    println!(
+                        "{}",
+                        serde_json::json!({"model": model, "sessions": sessions, "input_tokens": input, "output_tokens": output})
+                    );
+                }
+                return Ok(0);
+            }
+            if rows.is_empty() {
+                println!("no sessions in {}", ws.display());
+            }
+            println!("{:<36} {:>8} {:>14} {:>14}", "MODEL", "SESSIONS", "INPUT TOKENS", "OUTPUT TOKENS");
+            for (model, (sessions, input, output)) in &rows {
+                println!("{model:<36} {sessions:>8} {input:>14} {output:>14}");
+            }
+            Ok(0)
+        }
+        Some(Command::Prune { keep, dry_run }) => {
+            let ws = workspace(&common)?;
+            let removed = Session::prune(&ws, keep, dry_run).map_err(|e| (EXIT_ERROR, e.to_string()))?;
+            let verb = if dry_run { "would delete" } else { "deleted" };
+            println!("{verb} {} session(s), keeping the newest {keep}", removed.len());
+            for id in removed {
+                println!("  {id}");
+            }
+            Ok(0)
+        }
+        Some(Command::Export { id, output }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
+            let text = session.to_markdown();
+            match output {
+                Some(path) => {
+                    std::fs::write(&path, text).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
+                    eprintln!("wrote {}", path.display());
+                }
+                None => print!("{text}"),
+            }
+            Ok(0)
+        }
         Some(Command::Checkpoints { id }) => {
             let ws = workspace(&common)?;
             let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
@@ -258,7 +550,10 @@ fn dispatch(cli: Cli) -> CliResult {
         }
         Some(Command::Doctor { live }) => doctor(&common, live),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
-        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None, None),
+        Some(Command::Init { json }) => {
+            let output = RunOutput { json, quiet: false, last_message: None, schema: None, ephemeral: false };
+            run(&common, vec![INIT_TASK.to_string()], output, None, None, None)
+        }
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -293,10 +588,25 @@ fn load_session(ws: &Path, id: &str) -> Result<Session, (u8, String)> {
 struct Setup {
     ws: PathBuf,
     toolkit: Toolkit,
+    /// What built `toolkit`, so chat can build one per approval mode (GRAFT-0077).
+    profile_text: String,
+    user_rules: Vec<oxgraft_strategies::approval::Rule>,
+    mode: String,
     provider: Box<dyn oxgraft_seams::Provider>,
     model: String,
     config: AgentConfig,
     tools: Vec<Box<dyn oxgraft_seams::Tool>>,
+    /// Ring the terminal bell after long tasks.
+    bell: bool,
+    /// The configured compaction window, and whether it was left at the default
+    /// (so `/model` can apply the local-model default).
+    context_window: Option<u64>,
+    context_window_default: bool,
+    /// Provider options (effort, thinking), for switching models in chat.
+    effort: Option<String>,
+    thinking: bool,
+    /// Provider and model for the `task` subagent, when `subagent_model` is set.
+    subagent: Option<(Box<dyn oxgraft_seams::Provider>, String)>,
 }
 
 fn setup(common: &Common) -> Result<Setup, (u8, String)> {
@@ -308,7 +618,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             profile: common.profile.as_deref(),
             effort: common.effort.as_deref(),
             max_turns: common.max_turns,
-            approval_mode: common.mode.as_deref(),
+            approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
+            instructions: common.append_system_prompt.as_deref(),
         },
     )
     .map_err(usage)?;
@@ -322,25 +633,36 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         )
     })?;
     let model_ref = oxgraft_providers::parse_model(&model_spec).map_err(usage)?;
-    let provider = oxgraft_providers::build(&model_ref, &oxgraft_providers::Options { effort: cfg.effort.clone() })
-        .map_err(usage)?;
+    let provider = oxgraft_providers::build(
+        &model_ref,
+        &oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking },
+    )
+    .map_err(usage)?;
     let (_, profile_text) =
         profiles::load(&ws, &profiles::resolve_auto(&cfg.profile, &model_ref.model), cfg.trusted).map_err(usage)?;
     let profile = Profile::from_toml(&profile_text).map_err(usage)?;
     let mut rules = mode_rules(&cfg.approval_mode).map_err(usage)?;
     rules.extend(cfg.rules.clone());
+    rules.extend(flag_rules(&common.allow_tool, &common.deny_tool));
     let toolkit = Toolkit::assemble(profile, available_with(rules)).map_err(usage)?;
     let mut config = AgentConfig::new(&model_ref.model, ws.clone());
     config.max_turns = cfg.max_turns;
     config.max_tokens = cfg.max_tokens;
     config.max_session_tokens = cfg.max_session_tokens;
     config.context_window = cfg.context_window;
+    // Local servers usually run far smaller windows than hosted models; compact
+    // early rather than overflow (GRAFT-0064). An explicit setting always wins.
+    if cfg.context_window_default && LOCAL_PROVIDERS.contains(&model_ref.provider.as_str()) {
+        config.context_window = Some(LOCAL_CONTEXT_WINDOW);
+    }
     config.verify_command = cfg.verify_command.clone();
     config.stream = cfg.stream;
+    config.todo_reminder = !common.plan;
     config.checkpoints = cfg.checkpoints;
     let (program, args) = oxgraft_tools::shell_program();
     config.shell = oxgraft_core::hooks::Shell { program, args };
     config.hooks = cfg.hooks.clone();
+    config.subagent_types = agents::discover(&ws, cfg.trusted);
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {
         match oxgraft_tools::mcp::connect(name, server, &ws) {
@@ -349,18 +671,61 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             Err(e) => eprintln!("oxgraft: warning: {e}"),
         }
     }
-    config.append_system = skills;
+    // Standing instructions (GRAFT-0067) go before the skills list.
+    let mut extra: Vec<String> = cfg.instructions.clone();
+    if !extra.is_empty() {
+        extra.insert(0, "Additional instructions from the user's configuration:".into());
+    }
+    if common.plan {
+        // Plan mode (GRAFT-0070): edits and commands are denied by read-only mode.
+        extra.push(PLAN_INSTRUCTIONS.into());
+    }
+    extra.extend(skills);
+    config.append_system = if extra.is_empty() { None } else { Some(extra.join("\n\n")) };
     // First Ctrl-C interrupts the current run (tools and model turns stop promptly);
     // a second one exits (GRAFT-0020).
     let cancel = config.cancel.clone();
     let _ = ctrlc::set_handler(move || {
         if cancel.swap(true, std::sync::atomic::Ordering::SeqCst) {
             eprintln!("\noxgraft: exiting");
+            // `exit` runs no destructors: stop background commands first (review fix).
+            oxgraft_tools::background::kill_all();
             std::process::exit(130);
         }
         eprintln!("\noxgraft: interrupting… (press Ctrl-C again to quit)");
     });
-    Ok(Setup { ws, toolkit, provider, model: model_spec, config, tools })
+    let subagent = match &cfg.subagent_model {
+        Some(spec) => {
+            let m =
+                oxgraft_providers::parse_model(spec).map_err(|e| usage(format!("subagent_model: {}", e.message)))?;
+            let options = oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
+            let p =
+                oxgraft_providers::build(&m, &options).map_err(|e| usage(format!("subagent_model: {}", e.message)))?;
+            Some((p, m.model))
+        }
+        None => None,
+    };
+    Ok(Setup {
+        ws,
+        effort: cfg.effort.clone(),
+        thinking: cfg.thinking,
+        bell: cfg.bell,
+        context_window: cfg.context_window,
+        context_window_default: cfg.context_window_default,
+        subagent,
+        toolkit,
+        profile_text,
+        user_rules: {
+            let mut r = cfg.rules.clone();
+            r.extend(flag_rules(&common.allow_tool, &common.deny_tool));
+            r
+        },
+        mode: cfg.approval_mode.clone(),
+        provider,
+        model: model_spec,
+        config,
+        tools,
+    })
 }
 
 fn status_code(status: &Status) -> u8 {
@@ -391,14 +756,31 @@ fn open_session(s: &Setup, resume: Option<String>, fork: Option<String>) -> Resu
     }
 }
 
+/// How `run` reports (GRAFT-0075 for quiet and last-message).
+struct RunOutput {
+    json: bool,
+    quiet: bool,
+    last_message: Option<PathBuf>,
+    /// `--output-schema` (GRAFT-0101).
+    schema: Option<Value>,
+    /// `--ephemeral` (GRAFT-0108).
+    ephemeral: bool,
+}
+
 fn run(
     common: &Common,
     task: Vec<String>,
-    json: bool,
+    output: RunOutput,
     resume: Option<String>,
     fork: Option<String>,
     until: Option<String>,
 ) -> CliResult {
+    let _stop_background = oxgraft_tools::background::StopOnDrop;
+    let json = output.json;
+    if let Some(path) = &output.last_message {
+        // Cleared first, so a run that fails early never leaves an old answer behind.
+        std::fs::write(path, "").map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
+    }
     let mut task = task.join(" ");
     if task.trim().is_empty() {
         if std::io::stdin().is_terminal() {
@@ -414,30 +796,412 @@ fn run(
     if task.trim().is_empty() {
         return Err(usage("the task is empty"));
     }
+    let looks_like_command =
+        task.trim_start().strip_prefix('/').and_then(|rest| rest.split_whitespace().next()).is_some_and(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+    if looks_like_command {
+        let ws = workspace(common)?;
+        match commands::expand(&ws, &task) {
+            Some(expanded) => task = expanded,
+            None if !task.trim().contains(char::is_whitespace) => {
+                let names: Vec<String> = commands::discover(&ws).into_iter().map(|c| format!("/{}", c.name)).collect();
+                return Err(usage(format!(
+                    "unknown command `{}` (available: {})",
+                    task.trim(),
+                    if names.is_empty() { "none; add .agents/commands/<name>.md".into() } else { names.join(", ") }
+                )));
+            }
+            None => {}
+        }
+    }
     let mut s = setup(common)?;
     s.config.finish_check = until;
+    s.config.output_schema = output.schema.clone();
+    if output.ephemeral {
+        s.config.checkpoints = false;
+    }
     let mut session = open_session(&s, resume, fork)?;
+    session.ephemeral = output.ephemeral;
     let approver: Box<dyn Approver> = if common.yes || json || !std::io::stdin().is_terminal() {
         Box::new(Fixed(if common.yes { Answer::Yes } else { Answer::No }))
     } else {
         Box::new(TerminalApprover)
     };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
     let mut renderer = render::Human::default();
+    let started = std::time::Instant::now();
     let before = session.checkpoints.len();
     let outcome = agent.run(&mut session, task.trim(), &mut |e: &Event| {
         if json {
             println!("{}", e.to_jsonl());
             let _ = std::io::stdout().flush();
+        } else if output.quiet {
+            if let Event::Warning { message } = e {
+                eprintln!("oxgraft: warning: {message}");
+            }
         } else {
             renderer.event(e);
         }
     });
-    if !json {
+    // With a schema, the answer is reported as compact JSON (fences removed).
+    let answer = match &output.schema {
+        Some(_) => oxgraft_core::schema::normalise(&outcome.final_text)
+            .unwrap_or_else(|| outcome.final_text.trim().to_string()),
+        None => outcome.final_text.trim().to_string(),
+    };
+    if output.quiet {
+        if !answer.is_empty() {
+            println!("{answer}");
+        }
+        if let Status::Stopped(reason) | Status::Failed(reason) = &outcome.status {
+            eprintln!("oxgraft: stopped: {reason}");
+        }
+    } else if !json {
         change_summary(&s.ws, &session, before);
-        eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
+        ring_if_long(started, s.bell);
+        if session.ephemeral {
+            eprintln!("ephemeral run: session not saved");
+        } else {
+            eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
+        }
+    }
+    if let Some(path) = &output.last_message {
+        std::fs::write(path, &answer).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
     Ok(status_code(&outcome.status))
+}
+
+/// Read a free-text approval answer (GRAFT-0078, review fix): yes/always phrasings
+/// approve, "no, …" declines with the rest as guidance, other text of a few words
+/// is guidance. `None` = ask again.
+fn classify_answer(lower: &str, original: &str) -> Option<Answer> {
+    let first = lower.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
+    const YES: &[&str] =
+        &["y", "yes", "yeah", "yep", "ok", "okay", "sure", "allow", "approve", "approved", "go", "proceed", "fine"];
+    if first == "always" {
+        return Some(Answer::Always);
+    }
+    if YES.contains(&first) {
+        return Some(Answer::Yes);
+    }
+    if matches!(first, "n" | "no" | "nope" | "don" | "dont" | "stop") {
+        let rest = original
+            .trim_start_matches(|c: char| c.is_alphanumeric() || c == '\'')
+            .trim_start_matches([',', ':', ';', '-', '.', ' '])
+            .trim();
+        return Some(if rest.is_empty() { Answer::No } else { Answer::NoWith(rest.to_string()) });
+    }
+    (lower.chars().count() > 3).then(|| Answer::NoWith(original.to_string()))
+}
+
+/// Model-supplied text shown in a prompt: control characters (escape sequences,
+/// carriage returns) are made visible so they can't repaint the screen.
+fn printable(line: &str) -> String {
+    line.chars().map(|c| if c.is_control() && c != '\t' { '?' } else { c }).collect()
+}
+
+/// Preview of an edit or write for the approval prompt: SEARCH/REPLACE or patch
+/// text as sent; old/new_string pairs (and batched `edits`) as `- old` / `+ new`
+/// lines (GRAFT-0084); file content for writes. At most `max` lines.
+fn preview_lines(tool: &str, input: &Value, max: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let pair = |lines: &mut Vec<String>, old: &str, new: &str| {
+        lines.extend(old.lines().map(|l| format!("- {l}")));
+        lines.extend(new.lines().map(|l| format!("+ {l}")));
+    };
+    match tool {
+        "edit" if input.get("edit").is_some() => {
+            lines.extend(input["edit"].as_str().unwrap_or("").lines().map(str::to_string));
+        }
+        "edit" if input.get("edits").is_some() => {
+            for (i, e) in input["edits"].as_array().into_iter().flatten().enumerate() {
+                if i > 0 {
+                    lines.push("···".into());
+                }
+                pair(&mut lines, e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""));
+            }
+        }
+        "edit" => {
+            pair(&mut lines, input["old_string"].as_str().unwrap_or(""), input["new_string"].as_str().unwrap_or(""))
+        }
+        "write" => lines.extend(input["content"].as_str().unwrap_or("").lines().map(str::to_string)),
+        _ => {}
+    }
+    if lines.len() > max {
+        let more = lines.len() - max;
+        lines.truncate(max);
+        lines.push(format!("… {more} more lines"));
+    }
+    lines
+}
+
+/// Read one chat message (GRAFT-0082): a line; lines ending in `\\` continue; a
+/// line that is just `"""` starts a block that runs until the next `"""`. `None`
+/// at end of input.
+fn read_message(input: &mut dyn BufRead) -> std::io::Result<Option<String>> {
+    let mut first = String::new();
+    if input.read_line(&mut first)? == 0 {
+        return Ok(None);
+    }
+    if first.trim() == "\"\"\"" {
+        let mut text = String::new();
+        loop {
+            let mut line = String::new();
+            if input.read_line(&mut line)? == 0 || line.trim() == "\"\"\"" {
+                return Ok(Some(text.trim_end().to_string()));
+            }
+            text.push_str(&line);
+        }
+    }
+    let mut text = first.trim_end_matches(['\r', '\n']).to_string();
+    while text.ends_with('\\') {
+        text.pop();
+        text.push('\n');
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            break;
+        }
+        text.push_str(line.trim_end_matches(['\r', '\n']));
+    }
+    Ok(Some(text))
+}
+
+/// Run a command the user typed with `!` in chat (GRAFT-0058): the user's own
+/// action, so no approval; same shell as the bash tool; 5-minute limit.
+fn run_user_command(ws: &Path, command: &str) -> (bool, String) {
+    let (program, args) = oxgraft_tools::shell_program();
+    oxgraft_core::hooks::run_check(&oxgraft_core::hooks::Shell { program, args }, command, ws, 300, false)
+}
+
+/// Ring the terminal bell when a task took long enough that the user may have
+/// looked away (GRAFT-0085). Only on a terminal; `bell = false` turns it off.
+fn ring_if_long(started: std::time::Instant, enabled: bool) {
+    if enabled && started.elapsed() >= std::time::Duration::from_secs(30) && std::io::stderr().is_terminal() {
+        eprint!("\x07");
+        let _ = std::io::stderr().flush();
+    }
+}
+
+/// The resolved configuration as `key  value` lines (GRAFT-0089).
+fn describe_config(ws: &Path, cfg: &config::Config) -> Vec<String> {
+    let or = |v: Option<String>, d: &str| v.unwrap_or_else(|| d.to_string());
+    let mut out = vec![
+        format!("{:<20} {}", "workspace", ws.display()),
+        format!(
+            "{:<20} {}",
+            "trusted",
+            if cfg.trusted { "yes" } else { "no (repo hooks, MCP, rules, model, profile ignored)" }
+        ),
+        format!("{:<20} {}", "model", or(cfg.model.clone(), "(none)")),
+        format!("{:<20} {}", "subagent_model", or(cfg.subagent_model.clone(), "(same as model)")),
+        format!("{:<20} {}", "profile", cfg.profile),
+        format!("{:<20} {}", "approval_mode", cfg.approval_mode),
+        format!("{:<20} {}", "effort", or(cfg.effort.clone(), "(provider default)")),
+        format!("{:<20} {}", "thinking", cfg.thinking),
+        format!("{:<20} {}", "stream", cfg.stream),
+        format!("{:<20} {}", "checkpoints", cfg.checkpoints),
+        format!("{:<20} {}", "bell", cfg.bell),
+        format!("{:<20} {}", "max_turns", cfg.max_turns),
+        format!("{:<20} {}", "max_tokens", cfg.max_tokens),
+        format!("{:<20} {}", "max_session_tokens", cfg.max_session_tokens.map_or("(none)".into(), |v| v.to_string())),
+        format!(
+            "{:<20} {}{}",
+            "context_window",
+            cfg.context_window.map_or("off".into(), |v| v.to_string()),
+            if cfg.context_window_default { " (default; 32768 for local models)" } else { "" }
+        ),
+        format!("{:<20} {}", "verify_command", or(cfg.verify_command.clone(), "(none)")),
+        format!("{:<20} {}", "instructions", cfg.instructions.len()),
+        format!("{:<20} {}", "hooks", cfg.hooks.len()),
+        format!(
+            "{:<20} {}",
+            "mcp_servers",
+            if cfg.mcp_servers.is_empty() {
+                "(none)".into()
+            } else {
+                cfg.mcp_servers.keys().cloned().collect::<Vec<_>>().join(", ")
+            }
+        ),
+        format!("{:<20} {}", "rules", cfg.rules.len()),
+        format!(
+            "{:<20} {}",
+            "sources",
+            if cfg.sources.is_empty() { "defaults only".into() } else { cfg.sources.join(", ") }
+        ),
+        format!(
+            "{:<20} {}",
+            "user config",
+            config::user_config_path().map_or("(none)".into(), |p| p.display().to_string())
+        ),
+        format!(
+            "{:<20} {}",
+            "data dir",
+            oxgraft_core::checkpoint::data_dir().map_or("(none)".into(), |p| p.display().to_string())
+        ),
+    ];
+    out.extend(cfg.warnings.iter().map(|w| format!("{:<20} {w}", "warning")));
+    out
+}
+
+/// `/commit` (GRAFT-0103, after Aider's /commit): commit the staged changes, or
+/// when nothing is staged, changes to tracked files plus the new files this
+/// session created (other untracked files, such as a stray `.env`, are listed but
+/// never staged or sent to the model). The user's git identity is used;
+/// attribution lines are never added. If anything fails after Oxgraft staged
+/// files, the index is put back as it was (review fix).
+fn commit_with_message(
+    ws: &Path,
+    provider: &dyn oxgraft_seams::Provider,
+    model: &str,
+    session_files: &[PathBuf],
+) -> Result<String, String> {
+    let git = |args: &[&str]| -> Result<std::process::Output, String> {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(oxgraft_core::checkpoint::plain_path(ws))
+            .args(args)
+            .output()
+            .map_err(|e| format!("git: {e}"))
+    };
+    if !git(&["rev-parse", "--is-inside-work-tree"])?.status.success() {
+        return Err("not a git repository".into());
+    }
+    // `diff --quiet` exits 0 (no changes) or 1 (changes); anything else is an error.
+    let has_staged = |git_out: std::process::Output| match git_out.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(format!("git diff failed: {}", String::from_utf8_lossy(&git_out.stderr).trim())),
+    };
+    let mut left_out: Vec<String> = Vec::new();
+    let we_staged = !has_staged(git(&["diff", "--cached", "--quiet"])?)?;
+    if we_staged {
+        let untracked = String::from_utf8_lossy(&git(&["ls-files", "--others", "--exclude-standard", "-z"])?.stdout)
+            .split('\0')
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let ours: Vec<&String> = untracked
+            .iter()
+            .filter(|f| session_files.iter().any(|p| p.ends_with(f.as_str()) || ws.join(f.as_str()) == *p))
+            .collect();
+        left_out = untracked.iter().filter(|f| !ours.contains(f)).cloned().collect();
+        git(&["add", "-u"])?;
+        if !ours.is_empty() {
+            let mut args = vec!["add", "--"];
+            args.extend(ours.iter().map(|f| f.as_str()));
+            git(&args)?;
+        }
+    }
+    let result = commit_staged(&git, provider, model);
+    if result.is_err() && we_staged {
+        let _ = git(&["reset", "-q"]);
+    }
+    let mut summary = result?;
+    if !left_out.is_empty() {
+        let shown: Vec<&str> = left_out.iter().take(10).map(String::as_str).collect();
+        summary.push_str(&format!(
+            "\nnot included (untracked; add them with git first): {}{}",
+            shown.join(", "),
+            if left_out.len() > 10 { ", …" } else { "" }
+        ));
+    }
+    Ok(summary)
+}
+
+fn commit_staged(
+    git: &dyn Fn(&[&str]) -> Result<std::process::Output, String>,
+    provider: &dyn oxgraft_seams::Provider,
+    model: &str,
+) -> Result<String, String> {
+    use oxgraft_seams::{CompletionRequest, Message};
+    if git(&["diff", "--cached", "--quiet"])?.status.code() == Some(0) {
+        return Err("nothing to commit".into());
+    }
+    let files = String::from_utf8_lossy(&git(&["diff", "--cached", "--name-only"])?.stdout).trim().to_string();
+    let diff: String = String::from_utf8_lossy(&git(&["diff", "--cached", "--no-ext-diff", "--no-color"])?.stdout)
+        .chars()
+        .take(30_000)
+        .collect();
+    let request = CompletionRequest {
+        model: model.to_string(),
+        system: "Write a git commit message for the diff the user sends: a subject line under 72 characters in the \
+                 imperative mood (Conventional Commits style if the history suggests it), optionally a blank line and a \
+                 short body. Reply with the message only. No sign-offs, trailers or attribution lines."
+            .into(),
+        messages: vec![Message::user(diff)],
+        tools: Vec::new(),
+        max_tokens: 2048,
+    };
+    let text = provider.complete(&request).map(|c| Message::assistant(c.content).text()).map_err(|e| e.to_string())?;
+    let message: String = text
+        .trim()
+        .trim_matches('`')
+        .lines()
+        .filter(|l| {
+            let l = l.trim_start().to_ascii_lowercase();
+            !(l.starts_with("co-authored-by") || l.starts_with("signed-off-by") || l.starts_with("generated with"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    if message.is_empty() {
+        return Err("the model returned an empty message; nothing committed".into());
+    }
+    let out = git(&["commit", "-q", "-m", &message])?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(format!("committed {}:\n{message}", files.lines().collect::<Vec<_>>().join(", ")))
+}
+
+/// The patch from the session's first checkpoint to the workspace as it is now
+/// (GRAFT-0088, after Aider's /diff), including changes made by shell commands.
+fn session_diff(ws: &Path, session: &Session) -> Result<String, String> {
+    let Some(first) = session.checkpoints.first() else {
+        return Ok(format!("session {} has no checkpoints, so there is nothing to diff\n", session.id));
+    };
+    let cp = oxgraft_core::checkpoint::Checkpoints::open(ws)?;
+    let now = cp.snapshot("diff")?;
+    let patch = cp.diff_patch(&first.commit, &now)?;
+    Ok(if patch.trim().is_empty() { "no changes since the session started\n".into() } else { format!("{patch}\n") })
+}
+
+/// Sessions, input and output tokens per model (GRAFT-0087), most input first.
+fn usage_by_model(sessions: &[Session]) -> Vec<(String, (usize, u64, u64))> {
+    let mut map: std::collections::BTreeMap<String, (usize, u64, u64)> = std::collections::BTreeMap::new();
+    for s in sessions {
+        if s.usage_by_model.is_empty() {
+            // Sessions saved before per-model accounting.
+            let e = map.entry(s.model.clone()).or_default();
+            e.0 += 1;
+            e.1 += s.usage.input_tokens;
+            e.2 += s.usage.output_tokens;
+        }
+        for (model, u) in &s.usage_by_model {
+            let e = map.entry(model.clone()).or_default();
+            e.0 += 1;
+            e.1 += u.input_tokens;
+            e.2 += u.output_tokens;
+        }
+    }
+    let mut rows: Vec<_> = map.into_iter().collect();
+    rows.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
+    rows
+}
+
+/// How full the context is (GRAFT-0099, after Claude Code's /context).
+fn context_line(used: u64, window: Option<u64>) -> String {
+    match window {
+        _ if used == 0 => "context: no requests yet".into(),
+        Some(w) if w > 0 => format!(
+            "context: {used} of {w} tokens ({}%); compaction at 80%, or /compact now",
+            used.saturating_mul(100) / w
+        ),
+        _ => format!("context: {used} tokens (no window set, so no automatic compaction)"),
+    }
 }
 
 /// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.
@@ -512,11 +1276,27 @@ fn change_summary(ws: &Path, session: &Session, before: usize) {
 }
 
 fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliResult {
+    let _stop_background = oxgraft_tools::background::StopOnDrop;
     let s = setup(common)?;
     let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> =
         if common.yes { Box::new(Fixed(Answer::Yes)) } else { Box::new(TerminalApprover) };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    // One toolkit per approval mode, so `/mode` can switch without restarting.
+    let mode_toolkits: Vec<Toolkit> = MODES
+        .iter()
+        .map(|m| {
+            let mut rules = mode_rules(m).map_err(usage)?;
+            rules.extend(s.user_rules.clone());
+            let profile = Profile::from_toml(&s.profile_text).map_err(usage)?;
+            Toolkit::assemble(profile, available_with(rules)).map_err(usage)
+        })
+        .collect::<Result<_, _>>()?;
+    let (effort, thinking, bell) = (s.effort.clone(), s.thinking, s.bell);
+    let (context_window, context_window_default) = (s.context_window, s.context_window_default);
+    let mut current_spec = s.model.clone();
+    let mut mode = s.mode.clone();
+    let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    agent.subagent = s.subagent.as_ref().map(|(p, m)| (p.as_ref(), m.clone()));
     eprintln!(
         "oxgraft · {} · profile {} · {}\nType a task, or /help for commands.",
         s.model,
@@ -525,16 +1305,37 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
     );
     let stdin = std::io::stdin();
     let mut last = 0;
+    // Output of `!command` lines, passed to the model with the next message.
+    let mut shell_context = String::new();
     loop {
         eprint!("\n> ");
         let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line).map_err(usage)? == 0 {
-            break;
-        }
-        let line = line.trim();
+        let Some(input) = read_message(&mut stdin.lock()).map_err(usage)? else { break };
+        let line = input.trim();
+        // `/init` (GRAFT-0032 in chat): write or improve AGENTS.md.
+        let line = if line == "/init" { INIT_TASK } else { line };
         match line {
             "" => continue,
+            bang if bang.starts_with('!') => {
+                let command = bang[1..].trim();
+                if command.is_empty() {
+                    eprintln!(
+                        "usage: !<command> (runs it in the workspace; the output goes to the model with your next message)"
+                    );
+                    continue;
+                }
+                let (ok, output) = run_user_command(&s.ws, command);
+                eprintln!("{output}");
+                if !ok {
+                    eprintln!("(command failed)");
+                }
+                let tail: String = {
+                    let chars: Vec<char> = output.chars().collect();
+                    chars[chars.len().saturating_sub(8_000)..].iter().collect()
+                };
+                shell_context.push_str(&format!("[I ran `{command}` myself; its output:]\n{tail}\n\n"));
+                continue;
+            }
             "/exit" | "/quit" => break,
             "/undo" => {
                 for l in session.undo() {
@@ -550,6 +1351,46 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            e if e == "/export" || e.starts_with("/export ") => {
+                // GRAFT-0066 in chat: the conversation as Markdown.
+                let name = e.trim_start_matches("/export").trim();
+                let path =
+                    if name.is_empty() { s.ws.join(format!("oxgraft-{}.md", session.id)) } else { s.ws.join(name) };
+                match std::fs::write(&path, session.to_markdown()) {
+                    Ok(()) => eprintln!("wrote {}", path.display()),
+                    Err(err) => eprintln!("export: {}: {err}", path.display()),
+                }
+                continue;
+            }
+            r if r.starts_with("/resume") => {
+                // GRAFT-0100: switch to a saved session (the current one is already saved).
+                let id = r.trim_start_matches("/resume").trim();
+                let id = if id.is_empty() { "last" } else { id };
+                match load_session(&s.ws, id) {
+                    Ok(other) if other.id == session.id => eprintln!("already in session {}", session.id),
+                    Ok(other) => {
+                        session = other;
+                        let last = session
+                            .messages
+                            .iter()
+                            .rev()
+                            .find(|m| m.role == oxgraft_seams::Role::Assistant && !m.text().trim().is_empty())
+                            .map(|m| m.text().chars().take(200).collect::<String>())
+                            .unwrap_or_default();
+                        eprintln!(
+                            "resumed session {}: {} ({} messages)",
+                            session.id,
+                            session.title,
+                            session.messages.len()
+                        );
+                        if !last.is_empty() {
+                            eprintln!("last reply: {}", render::plain(&last));
+                        }
+                    }
+                    Err((_, e)) => eprintln!("resume: {e}"),
+                }
+                continue;
+            }
             "/cost" | "/usage" => {
                 eprintln!(
                     "session {}: {} input + {} output tokens, {} messages, {} files changed, {} compactions",
@@ -560,6 +1401,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                     session.changed_files.len(),
                     session.compactions
                 );
+                eprintln!("{}", context_line(session.context_tokens, agent.config.context_window));
                 continue;
             }
             "/checkpoints" => {
@@ -579,21 +1421,133 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            m if m == "/model" || m.starts_with("/model ") => {
+                // GRAFT-0083: switch model mid-conversation; history is kept.
+                let wanted = m.trim_start_matches("/model").trim();
+                if wanted.is_empty() {
+                    eprintln!(
+                        "model: {} (switch with /model <provider/model> or an alias like sonnet)",
+                        agent.config.model
+                    );
+                    continue;
+                }
+                let built = oxgraft_providers::parse_model(wanted).and_then(|r| {
+                    oxgraft_providers::build(
+                        &r,
+                        &oxgraft_providers::Options { effort: effort.clone(), no_thinking: !thinking },
+                    )
+                    .map(|p| (r, p))
+                });
+                match built {
+                    Ok((r, provider)) => {
+                        // Thinking blocks are bound to the model that wrote them, and tool
+                        // ids differ between APIs: hand over through a summary written by
+                        // the current model, so the new one gets plain text (review fix).
+                        let foreign = session.messages.iter().flat_map(|m| &m.content).any(|b| {
+                            matches!(b, oxgraft_seams::Block::Opaque { .. } | oxgraft_seams::Block::ToolUse { .. })
+                        });
+                        if foreign {
+                            let mut renderer = render::Human::default();
+                            agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e));
+                        }
+                        // The agent borrows its provider for the whole chat; a switched-to
+                        // provider lives until exit (a few bytes per switch).
+                        agent.provider = Box::leak(provider);
+                        agent.config.model = r.model.clone();
+                        agent.config.context_window =
+                            if context_window_default && LOCAL_PROVIDERS.contains(&r.provider.as_str()) {
+                                Some(LOCAL_CONTEXT_WINDOW)
+                            } else {
+                                context_window
+                            };
+                        current_spec = format!("{}/{}", r.provider, r.model);
+                        session.model = current_spec.clone();
+                        eprintln!("model: {} via {} (the edit format chosen at startup stays)", r.model, r.provider);
+                    }
+                    Err(e) => eprintln!("cannot switch to `{wanted}`: {}", e.message),
+                }
+                continue;
+            }
+            m if m == "/mode" || m.starts_with("/mode ") => {
+                let wanted = m.trim_start_matches("/mode").trim();
+                if wanted.is_empty() {
+                    eprintln!("mode: {mode} (choose one of: {})", MODES.join(", "));
+                } else if let Some(i) = MODES.iter().position(|x| *x == wanted) {
+                    agent.toolkit = &mode_toolkits[i];
+                    mode = wanted.to_string();
+                    eprintln!("mode: {mode} (risky commands and protected paths still ask)");
+                } else {
+                    eprintln!("unknown mode `{wanted}`; choose one of: {}", MODES.join(", "));
+                }
+                continue;
+            }
+            "/commit" => {
+                let session_files: Vec<PathBuf> = session.changed_files.iter().map(|r| r.path.clone()).collect();
+                match commit_with_message(&s.ws, agent.provider, &agent.config.model, &session_files) {
+                    Ok(summary) => eprintln!("{summary}"),
+                    Err(e) => eprintln!("commit: {e}"),
+                }
+                continue;
+            }
+            "/diff" => {
+                match session_diff(&s.ws, &session) {
+                    Ok(patch) => {
+                        let lines: Vec<&str> = patch.lines().collect();
+                        for l in lines.iter().take(400) {
+                            eprintln!("{}", printable(l));
+                        }
+                        if lines.len() > 400 {
+                            eprintln!("… {} more lines (oxgraft diff {} for all)", lines.len() - 400, session.id);
+                        }
+                    }
+                    Err(e) => eprintln!("diff: {e}"),
+                }
+                continue;
+            }
+            "/compact" => {
+                let mut renderer = render::Human::default();
+                if agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e)) {
+                    eprintln!("context compacted: {} messages summarised so far", session.archived_messages);
+                } else {
+                    eprintln!("nothing to compact");
+                }
+                continue;
+            }
             "/clear" | "/new" => {
-                session = Session::new(&s.model, &s.toolkit.profile.name, &s.ws);
+                session = Session::new(&current_spec, &s.toolkit.profile.name, &s.ws);
                 eprintln!("started a new session {}", session.id);
+                continue;
+            }
+            "/agents" => {
+                // Named subagents (GRAFT-0106) the model can start with `task`.
+                let types = &agent.config.subagent_types;
+                if types.is_empty() {
+                    eprintln!(
+                        "no named subagents; add .agents/agents/<name>.md (or .claude/agents/) with a description \
+                         and instructions"
+                    );
+                }
+                for t in types {
+                    let tools = if t.tools.is_empty() { "all read-only tools".to_string() } else { t.tools.join(", ") };
+                    eprintln!("{:<16} {} [{tools}]", t.name, t.description);
+                }
                 continue;
             }
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n\
-                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/commit    commit staged changes (or tracked + session files) with a model-written message\n/agents    list named subagents\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
+                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n/export F  write this conversation as Markdown (default oxgraft-<id>.md)\n\
+                     !cmd       run a shell command yourself; output goes with your next message\n\
+                     \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
                 );
+                for c in commands::discover(&s.ws) {
+                    eprintln!("/{:<10} {}", c.name, c.description);
+                }
                 continue;
             }
-            other if other.starts_with('/') && !other.contains(' ') => {
+            other if other.starts_with('/') && commands::expand(&s.ws, other).is_none() && !other.contains(' ') => {
                 eprintln!("unknown command {other}; try /help");
                 continue;
             }
@@ -601,11 +1555,17 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         }
         agent.config.cancel.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut renderer = render::Human::default();
+        let started = std::time::Instant::now();
         let before = session.checkpoints.len();
-        let outcome = agent.run(&mut session, line, &mut |e: &Event| renderer.event(e));
+        // Custom commands (GRAFT-0057): `/name args` expands to the command's prompt.
+        let task = commands::expand(&s.ws, line).unwrap_or_else(|| line.to_string());
+        let task = format!("{}{task}", std::mem::take(&mut shell_context));
+        let outcome = agent.run(&mut session, &task, &mut |e: &Event| renderer.event(e));
         change_summary(&s.ws, &session, before);
+        ring_if_long(started, bell);
         last = status_code(&outcome.status);
     }
+    oxgraft_tools::background::kill_all();
     eprintln!("session {} saved", session.id);
     Ok(last)
 }
@@ -620,19 +1580,8 @@ impl Approver for TerminalApprover {
             _ => action.resource.clone(),
         };
         // Show what will change before asking (GRAFT-0029, as Cline and Claude Code do).
-        let preview = match tool {
-            "edit" => input["edit"].as_str().or(input["new_string"].as_str()),
-            "write" => input["content"].as_str(),
-            _ => None,
-        };
-        if let Some(text) = preview {
-            let lines: Vec<&str> = text.lines().collect();
-            for line in lines.iter().take(40) {
-                eprintln!("    │ {line}");
-            }
-            if lines.len() > 40 {
-                eprintln!("    │ … {} more lines", lines.len() - 40);
-            }
+        for line in preview_lines(tool, input, 40) {
+            eprintln!("    │ {}", printable(&line));
         }
         // Risk rails (GRAFT-0042): say why, and don't offer "always".
         let risk = if tool == "bash" { oxgraft_strategies::approval::shell_risk(&action.resource) } else { None };
@@ -641,9 +1590,26 @@ impl Approver for TerminalApprover {
         }
         loop {
             if risk.is_some() {
-                eprint!("  allow {tool}: {detail}? [y]es / [n]o: ");
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o, or say what to do instead: ");
             } else {
-                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {tool}: ");
+                let scope = match tool {
+                    "bash" => {
+                        let keys = oxgraft_core::agent::always_keys(tool, &action.resource);
+                        if keys.is_empty() {
+                            "this exact command".to_string()
+                        } else {
+                            keys.iter()
+                                .map(|k| format!("`{}`", k.trim_start_matches("bash:")))
+                                .collect::<Vec<_>>()
+                                .join(" + ")
+                        }
+                    }
+                    "web_fetch" => oxgraft_core::agent::always_keys(tool, &action.resource)
+                        .first()
+                        .map_or("this URL".to_string(), |k| k.trim_start_matches("web_fetch:").to_string()),
+                    _ => format!("all {tool}"),
+                };
+                eprint!("  allow {tool}: {detail}? [y]es / [n]o / [a]lways for {scope}, or say what to do instead: ");
             }
             let _ = std::io::stderr().flush();
             let mut answer = String::new();
@@ -654,7 +1620,10 @@ impl Approver for TerminalApprover {
                 "y" | "yes" => return Answer::Yes,
                 "n" | "no" | "" => return Answer::No,
                 "a" | "always" => return Answer::Always,
-                _ => continue,
+                text => match classify_answer(text, answer.trim()) {
+                    Some(a) => return a,
+                    None => continue,
+                },
             }
         }
     }
@@ -670,13 +1639,21 @@ fn live_checks(provider: &dyn oxgraft_seams::Provider, model: &str) -> Vec<(bool
         system: "You are a connectivity check. Answer with exactly one word.".into(),
         messages: vec![Message::user("Reply with the word: ready")],
         tools: Vec::new(),
-        max_tokens: 1024,
+        max_tokens: 4096,
     };
     let start = std::time::Instant::now();
     let mut deltas = 0usize;
     match provider.stream(&plain, &mut |_| deltas += 1) {
         Ok(c) => {
             let text = Message::assistant(c.content).text();
+            if text.trim().is_empty() {
+                out.push((
+                    false,
+                    "live reply",
+                    "the model returned no text (raise max_tokens, or set thinking = false)".into(),
+                ));
+                return out;
+            }
             let shown: String = text.trim().chars().take(60).collect();
             out.push((
                 true,
@@ -703,7 +1680,7 @@ fn live_checks(provider: &dyn oxgraft_seams::Provider, model: &str) -> Vec<(bool
             description: "Echo text back.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
         }],
-        max_tokens: 1024,
+        max_tokens: 4096,
     };
     match provider.complete(&tools) {
         Ok(c) => {
@@ -746,7 +1723,8 @@ fn doctor(common: &Common, live: bool) -> CliResult {
         profile: common.profile.as_deref(),
         effort: common.effort.as_deref(),
         max_turns: common.max_turns,
-        approval_mode: common.mode.as_deref(),
+        approval_mode: if common.plan { Some("read-only") } else { common.mode.as_deref() },
+        instructions: common.append_system_prompt.as_deref(),
     };
     let cfg = match config::resolve(&ws, &flags) {
         Ok(c) => {
@@ -772,8 +1750,17 @@ fn doctor(common: &Common, live: bool) -> CliResult {
             {
                 Ok(m) => {
                     line(true, "model", format!("{spec} (credentials found for `{}`)", m.provider));
+                    if m.provider == "ollama" {
+                        println!(
+                            "warn {:<14} Ollama's default context is small and it silently drops the start of long \
+                             prompts. Start the server with OLLAMA_CONTEXT_LENGTH=32768 (or more) and pick a model \
+                             that supports tool calling; `oxgraft doctor --live` checks tools.",
+                            "ollama"
+                        );
+                    }
                     if live {
-                        let options = oxgraft_providers::Options { effort: cfg.effort.clone() };
+                        let options =
+                            oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
                         match oxgraft_providers::build(&m, &options) {
                             Ok(provider) => {
                                 for (ok, what, detail) in live_checks(provider.as_ref(), &m.model) {
@@ -786,6 +1773,14 @@ fn doctor(common: &Common, live: bool) -> CliResult {
                 }
                 Err(e) => line(false, "model", format!("{spec}: {}", e.message)),
             },
+        }
+        // The subagent's model needs working credentials too.
+        if let Some(spec) = &cfg.subagent_model {
+            let options = oxgraft_providers::Options { effort: cfg.effort.clone(), no_thinking: !cfg.thinking };
+            match oxgraft_providers::parse_model(spec).and_then(|m| oxgraft_providers::build(&m, &options).map(|_| m)) {
+                Ok(m) => line(true, "subagent", format!("{spec} (credentials found for `{}`)", m.provider)),
+                Err(e) => line(false, "subagent", format!("{spec}: {}", e.message)),
+            }
         }
         match profiles::load(
             &ws,
@@ -843,6 +1838,18 @@ fn doctor(common: &Common, live: bool) -> CliResult {
                 "not trusted: this repo's hooks, MCP servers, rules, model and profile are ignored".into()
             },
         );
+        // Named subagents (GRAFT-0106): which loaded, and whether the repo's were skipped.
+        let loaded = agents::discover(&ws, cfg.trusted);
+        let in_repo = agents::repo_files(&ws);
+        let mut text = if loaded.is_empty() {
+            "none".to_string()
+        } else {
+            loaded.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+        };
+        if !cfg.trusted && in_repo > 0 {
+            text.push_str(&format!(" ({in_repo} in this repo ignored: not trusted)"));
+        }
+        line(true, "agents", text);
         match mode_rules(&cfg.approval_mode) {
             Ok(_) => line(true, "approvals", format!("mode `{}` (risky commands always ask)", cfg.approval_mode)),
             Err(e) => line(false, "approvals", e),
@@ -865,4 +1872,57 @@ fn doctor(common: &Common, live: bool) -> CliResult {
     }
     println!("\n{}", if problems == 0 { "ready".to_string() } else { format!("{problems} problem(s) found") });
     Ok(if problems == 0 { 0 } else { EXIT_USAGE })
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::read_message;
+
+    #[test]
+    fn context_usage_lines() {
+        assert_eq!(super::context_line(0, Some(100)), "context: no requests yet");
+        assert!(super::context_line(50_000, Some(200_000)).starts_with("context: 50000 of 200000 tokens (25%)"));
+        assert!(super::context_line(10, None).contains("no automatic compaction"));
+    }
+
+    #[test]
+    fn approval_answers_are_read_generously() {
+        use oxgraft_core::Answer;
+        let a = |t: &str| super::classify_answer(&t.to_ascii_lowercase(), t);
+        for yes in ["yes please", "okay", "Sure!", "allow", "ok go"] {
+            assert_eq!(a(yes), Some(Answer::Yes), "{yes}");
+        }
+        assert_eq!(a("always please"), Some(Answer::Always));
+        assert_eq!(a("no thanks"), Some(Answer::NoWith("thanks".into())));
+        assert_eq!(a("no, use cargo check instead"), Some(Answer::NoWith("use cargo check instead".into())));
+        assert_eq!(a("nope"), Some(Answer::No));
+        assert_eq!(a("use the read tool"), Some(Answer::NoWith("use the read tool".into())));
+        assert_eq!(a("xy"), None);
+        assert_eq!(super::printable("a\x1b[2Jb\rc"), "a?[2Jb?c");
+    }
+
+    #[test]
+    fn edit_previews_show_old_and_new() {
+        let p = super::preview_lines(
+            "edit",
+            &serde_json::json!({"path": "a", "old_string": "x = 1", "new_string": "x = 2"}),
+            40,
+        );
+        assert_eq!(p, vec!["- x = 1", "+ x = 2"]);
+        let batch = serde_json::json!({"edits": [{"old_string": "a", "new_string": "b"}, {"old_string": "c", "new_string": "d"}]});
+        assert_eq!(super::preview_lines("edit", &batch, 40), vec!["- a", "+ b", "···", "- c", "+ d"]);
+        let long = serde_json::json!({"content": "1\n2\n3\n4"});
+        assert_eq!(super::preview_lines("write", &long, 2), vec!["1", "2", "… 2 more lines"]);
+        assert!(super::preview_lines("bash", &serde_json::json!({"command": "ls"}), 40).is_empty());
+    }
+
+    #[test]
+    fn multi_line_messages() {
+        let mut input = std::io::Cursor::new("one line\nfirst \\\nsecond\n\"\"\"\nblock a\n\nblock b\n\"\"\"\nlast");
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("one line"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("first \nsecond"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("block a\n\nblock b"));
+        assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("last"));
+        assert_eq!(read_message(&mut input).unwrap(), None);
+    }
 }

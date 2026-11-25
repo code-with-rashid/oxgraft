@@ -547,6 +547,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
+ "url",
  "wait-timeout",
 ]
 
@@ -595,7 +596,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "toml",
  "ureq",
+ "url",
  "wait-timeout",
 ]
 

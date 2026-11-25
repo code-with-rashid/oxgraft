@@ -25,6 +25,13 @@ pub struct Session {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub usage: Usage,
+    /// Size of the last top-level request (input + output tokens): how full the
+    /// context is (GRAFT-0099).
+    #[serde(default)]
+    pub context_tokens: u64,
+    /// The same tokens split by model (subagents and `/model` switches use others).
+    #[serde(default)]
+    pub usage_by_model: std::collections::BTreeMap<String, Usage>,
     #[serde(default)]
     pub changed_files: Vec<UndoRecord>,
     /// How many times the context was compacted, and how many messages were summarised away.
@@ -35,9 +42,32 @@ pub struct Session {
     /// Workspace checkpoints taken during the session (GRAFT-0046), oldest first.
     #[serde(default)]
     pub checkpoints: Vec<CheckpointRecord>,
+    /// Index in `checkpoints` of the current run's starting state (not saved).
+    #[serde(skip)]
+    pub run_start: Option<usize>,
+    /// Never written to disk (`run --ephemeral`, GRAFT-0108).
+    #[serde(skip)]
+    pub ephemeral: bool,
     /// The session this one was forked from (GRAFT-0049).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
+}
+
+/// Sessions hold prompts, file contents and command output: on Unix, make the
+/// file readable by its owner only and the folder private (GRAFT-0095).
+#[cfg(unix)]
+fn private(file: &Path, dir: Option<&Path>) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))?;
+    if let Some(dir) = dir {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn private(_file: &Path, _dir: Option<&Path>) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// One workspace checkpoint: the state after `label`.
@@ -68,11 +98,15 @@ impl Session {
             title: String::new(),
             messages: Vec::new(),
             usage: Usage::default(),
+            usage_by_model: Default::default(),
+            context_tokens: 0,
             changed_files: Vec::new(),
             compactions: 0,
             archived_messages: 0,
             checkpoints: Vec::new(),
             forked_from: None,
+            run_start: None,
+            ephemeral: false,
         }
     }
 
@@ -91,6 +125,9 @@ impl Session {
 
     /// Atomic save: write a temp file, then rename over the old one.
     pub fn save(&self) -> std::io::Result<()> {
+        if self.ephemeral {
+            return Ok(());
+        }
         let path = self.path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -105,6 +142,7 @@ impl Session {
         let tmp = path.with_extension("json.tmp");
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(&tmp, json)?;
+        let _ = private(&tmp, path.parent()); // best effort: some filesystems refuse chmod
         std::fs::rename(&tmp, &path)
     }
 
@@ -116,6 +154,35 @@ impl Session {
     }
 
     /// All sessions in a workspace, newest first.
+    /// Delete all but the `keep` newest sessions (and their undo backups) in a
+    /// workspace (GRAFT-0074). Files that aren't sessions are left alone. Returns
+    /// the ids removed (or that would be, with `dry_run`).
+    pub fn prune(workspace: &Path, keep: usize, dry_run: bool) -> std::io::Result<Vec<String>> {
+        let dir = Self::dir(workspace);
+        let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+        let mut ids: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .filter(|p| {
+                std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Session>(&t).ok()).is_some()
+            })
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        ids.sort_by(|a, b| b.cmp(a));
+        let old: Vec<String> = ids.into_iter().skip(keep).collect();
+        if !dry_run {
+            for id in &old {
+                std::fs::remove_file(dir.join(format!("{id}.json")))?;
+                let backups = dir.join(id);
+                if backups.is_dir() {
+                    std::fs::remove_dir_all(backups)?;
+                }
+            }
+        }
+        Ok(old)
+    }
+
     pub fn list(workspace: &Path) -> Vec<Session> {
         let Ok(entries) = std::fs::read_dir(Self::dir(workspace)) else { return Vec::new() };
         let mut sessions: Vec<Session> = entries
@@ -128,6 +195,58 @@ impl Session {
             .collect();
         sessions.sort_by(|a, b| b.id.cmp(&a.id));
         sessions
+    }
+
+    /// Count tokens used by `model` in this session.
+    pub fn add_usage(&mut self, model: &str, usage: Usage) {
+        self.usage.add(usage);
+        self.usage_by_model.entry(model.to_string()).or_default().add(usage);
+    }
+
+    /// A readable Markdown transcript (GRAFT-0066): task, replies, tool calls and
+    /// shortened results. Provider-specific blocks (thinking) are left out.
+    pub fn to_markdown(&self) -> String {
+        use oxgraft_seams::{Block, Role};
+        let short = |s: &str, n: usize| -> String {
+            let t: String = s.chars().take(n).collect();
+            if s.chars().count() > n { format!("{t}\n… ({} more characters)", s.chars().count() - n) } else { t }
+        };
+        let mut out = format!(
+            "# {}\n\nSession `{}` · {} · model `{}` · profile `{}` · {} in / {} out tokens\n",
+            if self.title.is_empty() { "Oxgraft session" } else { &self.title },
+            self.id,
+            self.created,
+            self.model,
+            self.profile,
+            self.usage.input_tokens,
+            self.usage.output_tokens
+        );
+        if let Some(from) = &self.forked_from {
+            out.push_str(&format!("\nForked from `{from}`.\n"));
+        }
+        for m in &self.messages {
+            for b in &m.content {
+                match (m.role, b) {
+                    (Role::User, Block::Text { text }) => out.push_str(&format!("\n## User\n\n{}\n", text.trim())),
+                    (Role::Assistant, Block::Text { text }) if !text.trim().is_empty() => {
+                        out.push_str(&format!("\n## Oxgraft\n\n{}\n", text.trim()))
+                    }
+                    (_, Block::ToolUse { name, input, .. }) => {
+                        let input = serde_json::to_string(input).unwrap_or_default();
+                        out.push_str(&format!("\n**→ {name}** `{}`\n", short(&input, 300).replace('`', "'")));
+                    }
+                    (_, Block::ToolResult { content, is_error, .. }) => {
+                        let mark = if *is_error { "✗" } else { "✓" };
+                        out.push_str(&format!(
+                            "\n{mark}\n\n```text\n{}\n```\n",
+                            short(content.trim(), 1_500).replace("```", "~~~")
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 
     /// Message counts at which the history can be cut for a fork: right after a
@@ -194,7 +313,9 @@ impl Session {
 
     /// Record a file's original content before its first change in this session.
     pub fn record_original(&mut self, path: &Path, original: Option<&[u8]>) -> std::io::Result<()> {
-        if self.changed_files.iter().any(|r| r.path == path) {
+        // An ephemeral session leaves nothing on disk, so it keeps no undo backups
+        // (copies of edited files could hold secrets; review fix).
+        if self.ephemeral || self.changed_files.iter().any(|r| r.path == path) {
             return Ok(());
         }
         let backup = match original {
@@ -301,5 +422,56 @@ mod fork_tests {
         let err = s.fork(Some(2)).unwrap_err();
         assert!(err.contains("fork points") && err.contains("4, 6"), "{err}");
         assert_eq!(s.messages.len(), 6, "the original is unchanged");
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    // SPEC-0004 AC16 (GRAFT-0074)
+    #[test]
+    fn prune_keeps_the_newest_sessions() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..4 {
+            let mut s = Session::new("m", "default", &ws);
+            s.id = format!("20261125-00000{i}-aaaa");
+            s.save().unwrap();
+            std::fs::create_dir_all(s.backup_dir()).unwrap();
+            ids.push(s.id);
+        }
+        std::fs::write(Session::dir(&ws).join("notes.json"), "not a session").unwrap();
+        let would = Session::prune(&ws, 2, true).unwrap();
+        assert_eq!(would, vec![ids[1].clone(), ids[0].clone()]);
+        assert_eq!(Session::list(&ws).len(), 4, "dry run deletes nothing");
+        Session::prune(&ws, 2, false).unwrap();
+        let left: Vec<String> = Session::list(&ws).into_iter().map(|s| s.id).collect();
+        assert_eq!(left, vec![ids[3].clone(), ids[2].clone()]);
+        assert!(!Session::dir(&ws).join(&ids[0]).exists(), "backups go too");
+        assert!(Session::dir(&ws).join("notes.json").exists(), "non-session files stay");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    // GRAFT-0095
+    #[test]
+    fn session_files_are_private() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        let s = Session::new("m", "default", &ws);
+        s.save().unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&s.path()), 0o600);
+        assert_eq!(mode(&Session::dir(&ws)), 0o700);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 }

@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072, GRAFT-0079, GRAFT-0081, GRAFT-0093, GRAFT-0098]
 ---
 
 # SPEC-0005: Extensions
@@ -37,3 +37,25 @@ scripts) without letting a cloned repository run code unasked.
   `.oxgraft/config.toml` is ignored with a warning, and its `profiles/*.toml`
   files are not used for name lookup (built-in profiles are), since a profile
   selects the approval policy. `--profile` and `OXGRAFT_PROFILE` still apply.
+- **AC8** `user_prompt` hooks run before a task reaches the model (task in
+  `OXGRAFT_PROMPT`): stdout is appended to the task as context, exit 2 stops the
+  run with the hook's message. `stop` hooks run when the model wants to finish
+  (reply in `OXGRAFT_FINAL_MESSAGE`): exit 2 sends stderr back to the model and
+  the run continues, at most 3 times per run.
+- **AC9** An MCP server may be given by `url` (Streamable HTTP) instead of
+  `command`: messages are POSTed as JSON, replies may be JSON or SSE, the
+  `Mcp-Session-Id` from the server is sent back on later requests, `headers`
+  are added (with `${VAR}` from the environment). Setting both or neither of
+  `command` and `url` is an error for that server.
+- **AC10** `verify_command = "auto"` resolves, in trusted workspaces only, to
+  the project's own quick check by marker file (Cargo.toml, go.mod, a
+  package.json typecheck/check/lint script, Python project files); otherwise no
+  verify command runs and a warning says why.
+- **AC11** With `subagent_model` set, the `task` subagent runs on that model
+  (and its provider); the main run is unaffected. Untrusted workspaces can't
+  set it.
+- **AC12** Hook feedback passed to the model is at most its last 20,000
+  characters, with a note saying how much was left out.
+- **AC13** `session_start` hooks run once, before the first task of a new
+  session; their stdout is added to that task as context and exit 2 stops the
+  run.

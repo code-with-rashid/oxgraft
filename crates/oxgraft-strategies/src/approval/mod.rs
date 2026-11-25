@@ -162,6 +162,7 @@ impl Default for OrderedRules {
                 Rule::new("grep", "*", Decision::Allow),
                 Rule::new("glob", "*", Decision::Allow),
                 Rule::new("map", "*", Decision::Allow),
+                Rule::new("bash_output", "*", Decision::Allow),
                 Rule::new("todo", "*", Decision::Allow),
                 Rule::new("skill", "*", Decision::Allow),
                 Rule::new("edit", "*", Decision::Ask),

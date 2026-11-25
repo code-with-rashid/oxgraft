@@ -3,7 +3,11 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–76._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–155._
+
+**Branches:** `main` has iterations 1–77 (being tried against a real model by the
+maintainer). Iterations 78–155 are on `next`, in draft PR #1, until that
+feedback is in. Items below marked (next) are only on that branch.
 
 ## Current milestone
 
@@ -15,9 +19,13 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets, `mock:`.
   **Streaming** (SSE) for both, with `text_delta` events; retries with backoff
   and `retry-after`. `auto` profile picks the edit format by model family.
+  (next) Adaptive thinking on supporting Claude models; aliases `opus`/`sonnet`/
+  `haiku`/`fable`; 32k compaction window by default for Ollama and LM Studio.
 - **Tools**: read, write, edit (4 formats, old/new_string, batched `edits`), ls,
   glob, grep, `map` (ranked repo outline), bash (POSIX sh, Git Bash or PowerShell
   on Windows), todo, web_fetch, skill, MCP (stdio), read-only `task` subagent.
+  (next) MCP over Streamable HTTP; `@file` mentions; grep `context`; long shell
+  output saved in full to `.oxgraft/outputs/`.
 - **Safety**: workspace path confinement (symlinks included); deny-wins rules with
   per-part shell checks, justifications and self-testing `match`/`not_match`
   examples; **risk rails** (pipe-to-shell, `rm -rf`, raw disk, mkfs, sudo always
@@ -26,7 +34,9 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   (`fewer-prompts` profile); OS sandbox profile (fails closed); fail-closed
   pre_tool hooks; trusted-workspace gate for hooks, MCP, rules, model, profile,
   approval mode, verify_command and the repo's own `profiles/`; `@imports`
-  confined to the workspace; web/MCP output fenced as `<untrusted>`.
+  confined to the workspace; web/MCP output fenced as `<untrusted>`. (next)
+  "always" scoped to the command prefix (bash) or host (web_fetch); web_fetch
+  refuses cloud-metadata and link-local destinations on every redirect hop.
 - **Recovery**: per-turn **checkpoints** in a private repo under the user data dir (captures
   shell changes; never touches the user's `.git`), `oxgraft checkpoints`,
   `oxgraft restore N` (undoable), change summary after each run, `oxgraft undo`.
@@ -35,13 +45,46 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   handling, compaction, Ctrl-C, crash-safe sessions with repair, fuzz-tested
   strategies, verify_command loop, `run --until <check>`.
 - **CLI**: chat, run (`--json`, `--resume`, `--fork ID@N`, `--until`), init,
-  doctor, sessions, checkpoints, restore, undo, models, strategies, profile.
+  doctor (`--live` sends a real reply and a tool call), sessions, checkpoints,
+  restore, undo, models, strategies, profile. (next) custom commands
+  (`.agents/commands/*.md`), chat `!command`, `--plan`, `--append-system-prompt`
+  and `instructions`, `export` (Markdown), `prune`, `user_prompt`/`stop` hooks,
+  `files_changed` event, todo reminder, failure hints, `run --quiet` and
+  `--output-last-message`, `sessions --json`, `stats`, bell after long tasks;
+  in chat `/compact`, `/mode`, `/model`, `/init`, multi-line `"""` input,
+  decline-with-guidance at approval prompts, diff-style edit previews;
+  `subagent_model`, `verify_command = "auto"`, whitespace-tolerant `old_string`.
+  (next, 126–155) `run --worktree`, `--output-schema`, `--allow-tool`/`--deny-tool`,
+  `--ephemeral`; chat `/diff`, `/commit`, `/resume`, `/export`, `/cost`, `/agents`;
+  background shell commands with `bash_output` (filter, stop; never outlive
+  Oxgraft); named subagents from `.agents/agents` / `.claude/agents`;
+  `AGENTS.local.md` / `CLAUDE.local.md`; JSON/TOML syntax notes after edits;
+  `read` on a directory lists it; `doctor` reports named agents.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 55 graft records; 76 logged iterations; specs SPEC-0001..0006;
+  archived); 109 graft records; 155 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
 
+- **Two independent reviews of iterations 126–145 found 14 problems; all are
+  fixed** (136–139, 146–151). The serious ones: secret scrubbing could be read
+  around through `/proc` during verify; background commands could outlive
+  Oxgraft (double Ctrl-C, `server &`, Windows process trees); `--ephemeral`
+  still wrote undo backups; a symlinked nested `AGENTS.md` could pull an outside
+  file into the prompt; `/commit` staged stray untracked files such as `.env`.
+- **A third independent review (iterations 103–116) found 8 problems; all are
+  fixed** (117–118): subagent compaction used the main model, `/model` kept
+  stale state, `stats` booked tokens to the wrong model, approval answers like
+  "okay" were read as a decline.
+- goose v1.61.0 and Claude Code v2.1.332 were reviewed from their release notes
+  (iterations 122–125): empty/thinking-only replies, terminal control codes,
+  named pipes and huge hook output are now handled.
+- **A second independent review (iterations 77–97, on `next`) found 12 problems;
+  all are fixed** (iterations 98–101). The serious ones: URL hosts were parsed
+  differently from the HTTP client (`https://evil.com\@docs.rs/`), which could
+  bypass the metadata guard and per-host "always"; "always" for a harmless bash
+  command also covered redirections and `<(…)`; custom commands and saved output
+  followed planted symlinks; `@.env` ignored the deny rule.
 - **An independent review of iterations 53–72 found 9 problems; all are fixed**
   (iterations 73–76), including two security holes: a checkpoint repo planted
   by a cloned repository could run code, and the risk rails missed commands
@@ -66,7 +109,8 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
 2. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats
    (GRAFT-0001/0015/0024/0038) and `fewer-prompts` vs default.
 3. Remaining backlog (ROADMAP): egress proxy allowlist, LSP diagnostics,
-   worktree-isolated writing subagents, sandbox expansion on denial.
+   worktree-isolated writing subagents, sandbox expansion on denial, parallel
+   read-only tool calls, image input.
 
 ## Known problems
 

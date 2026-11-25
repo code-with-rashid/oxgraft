@@ -72,13 +72,15 @@ impl Tool for Bash {
             description: format!(
                 "Run a shell command ({shell}) in the workspace directory. Returns the exit code, stdout and \
                  stderr. Non-interactive: no prompts, no pagers. Default timeout {DEFAULT_TIMEOUT_SECS}s, max \
-                 {MAX_TIMEOUT_SECS}s. Prefer the read/grep/glob tools for looking at files."
+                 {MAX_TIMEOUT_SECS}s. Use `background: true` for servers and watchers. Prefer the read/grep/glob tools \
+                 for looking at files."
             ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The command line"},
-                    "timeout_secs": {"type": "integer", "description": "Timeout in seconds", "minimum": 1}
+                    "timeout_secs": {"type": "integer", "description": "Timeout in seconds", "minimum": 1},
+                    "background": {"type": "boolean", "description": "Start it and return at once (dev servers, watchers); read its output with bash_output"}
                 },
                 "required": ["command"]
             }),
@@ -123,10 +125,31 @@ impl Tool for Bash {
             .env("NO_COLOR", "1")
             .env("TERM", "dumb")
             .env("OXGRAFT", "1");
+        // Secrets stay out of model-run commands (GRAFT-0094, after Codex's
+        // shell_environment_policy): `env | curl …` can't leak your API keys.
+        for name in secret_env_names() {
+            cmd.env_remove(name);
+        }
+        let background = input.get("background").and_then(Value::as_bool).unwrap_or(false);
+        // A background command gets its own process group, so stopping it also stops
+        // whatever it started (a dev server under `npm run dev`, for example).
+        #[cfg(unix)]
+        if background {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return ToolOutput::error(format!("could not start shell: {e}")),
         };
+        if background && input.get("background").and_then(Value::as_bool).unwrap_or(false) {
+            return match crate::background::start(child, command) {
+                Ok(id) => ToolOutput::ok(format!(
+                    "started background command {id}; read its output with bash_output {{\"id\": {id}}} (it is stopped when the run ends)"
+                )),
+                Err(e) => ToolOutput::error(e),
+            };
+        }
 
         // Read pipes on threads so a chatty process can't deadlock us.
         let (tx, rx) = mpsc::channel::<(u8, Vec<u8>)>();
@@ -194,9 +217,74 @@ impl Tool for Bash {
         {
             out.push_str(hint);
         }
-        let out = truncate(&out, ctx.max_output_chars);
+        let out = if out.chars().count() > ctx.max_output_chars {
+            // Keep the whole output where the model can read or grep it (GRAFT-0060).
+            let saved = save_full_output(ctx.workspace, &out);
+            let mut short = truncate(&out, ctx.max_output_chars);
+            if let Some(rel) = saved {
+                short.push_str(&format!("\n[full output saved to {rel}; use `read` or `grep` on it]\n"));
+            }
+            short
+        } else {
+            out
+        };
         if status.is_none() { ToolOutput::error(out) } else { ToolOutput::ok(out) }
     }
+}
+
+/// Environment variables hidden from commands the model runs: names containing
+/// KEY, TOKEN, SECRET, PASSWORD, PASSWD or CREDENTIAL (any case), except those
+/// listed in `OXGRAFT_SHELL_ENV_KEEP` (comma-separated), e.g. `GITHUB_TOKEN`.
+pub fn secret_env_names() -> Vec<String> {
+    let keep: Vec<String> = std::env::var("OXGRAFT_SHELL_ENV_KEEP")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| is_secret_name(k) && !keep.contains(&k.to_ascii_uppercase()))
+        .collect()
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"].iter().any(|p| n.contains(p))
+}
+
+/// Write `text` to `.oxgraft/outputs/<n>.log` in the workspace, keeping the 20
+/// newest files. Returns the workspace-relative path.
+fn save_full_output(workspace: &std::path::Path, text: &str) -> Option<String> {
+    const KEEP: usize = 20;
+    let dir = workspace.join(".oxgraft").join("outputs");
+    // A repository could make these symlinks to elsewhere: refuse to follow them.
+    for p in [workspace.join(".oxgraft"), dir.clone()] {
+        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+            return None;
+        }
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    let real = dir.canonicalize().ok()?;
+    if !real.starts_with(workspace.canonicalize().ok()?) {
+        return None;
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let name = format!("bash-{stamp}.log");
+    std::fs::write(dir.join(&name), text).ok()?;
+    let mut logs: Vec<_> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("bash-") && n.ends_with(".log"))
+        })
+        .collect();
+    logs.sort();
+    for old in logs.iter().take(logs.len().saturating_sub(KEEP)) {
+        let _ = std::fs::remove_file(old);
+    }
+    Some(format!(".oxgraft/outputs/{name}"))
 }
 
 /// When a sandboxed command fails in a way the sandbox causes, say so, so the
@@ -234,6 +322,70 @@ pub fn sandbox_hint(stderr: &str, network: bool) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::testing::Fixture;
+
+    // SPEC-0002 AC13 (GRAFT-0060): long output is cut, and saved in full.
+    #[test]
+    fn long_output_is_saved_in_full() {
+        if !matches!(shell_kind(), ShellKind::Posix(_)) {
+            return; // the loop below is POSIX sh
+        }
+        let f = Fixture::new("longout");
+        let cmd = "i=0; while [ $i -lt 1500 ]; do echo line$i; i=$((i+1)); done";
+        let out = f.run(&Bash, json!({"command": cmd}));
+        assert!(
+            out.content.contains("truncated") && out.content.contains("full output saved to .oxgraft/outputs/"),
+            "{}",
+            out.content
+        );
+        let rel = out.content.split("saved to ").nth(1).unwrap().split(';').next().unwrap();
+        let full = f.read(rel);
+        assert!(full.contains("line0") && full.contains("line777") && full.contains("line1499"));
+        let short = f.run(&Bash, json!({"command": "echo short"}));
+        assert!(!short.content.contains("saved to"));
+
+        // A planted symlink is never followed, and other .log files are never deleted.
+        #[cfg(unix)]
+        {
+            let elsewhere = f.dir.with_extension("elsewhere");
+            std::fs::create_dir_all(&elsewhere).unwrap();
+            std::fs::write(elsewhere.join("keep.log"), "precious").unwrap();
+            let g = Fixture::new("longout-planted");
+            std::fs::create_dir_all(g.dir.join(".oxgraft")).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, g.dir.join(".oxgraft/outputs")).unwrap();
+            let out = g.run(&Bash, json!({"command": cmd}));
+            assert!(!out.content.contains("saved to"), "{}", out.content);
+            assert!(elsewhere.join("keep.log").exists());
+            assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 1);
+            let _ = std::fs::remove_dir_all(&elsewhere);
+        }
+    }
+
+    // GRAFT-0094
+    #[test]
+    fn secret_looking_variables_are_hidden() {
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "github_token",
+            "AWS_SECRET_ACCESS_KEY",
+            "DB_PASSWORD",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ] {
+            assert!(is_secret_name(name), "{name}");
+        }
+        for name in ["PATH", "HOME", "LANG", "CARGO_HOME", "MONKEY_ISLAND_PATH_X"] {
+            // (MONKEY contains KEY: hidden too; conservative by design)
+            assert_eq!(is_secret_name(name), name.contains("KEY"), "{name}");
+        }
+        // The test process has PATH; a secret-looking variable in it is never passed on.
+        if let Some(path) = std::env::vars().find(|(k, _)| is_secret_name(k)).map(|(k, _)| k) {
+            assert!(secret_env_names().contains(&path));
+        }
+        let f = Fixture::new("envscrub");
+        if matches!(shell_kind(), ShellKind::Posix(_)) {
+            let out = f.run(&Bash, json!({"command": "env"}));
+            assert!(!out.content.lines().any(|l| l.split('=').next().is_some_and(is_secret_name)), "{}", out.content);
+        }
+    }
 
     // SPEC-0006 AC7
     #[test]

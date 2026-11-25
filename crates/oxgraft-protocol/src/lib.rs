@@ -50,6 +50,11 @@ pub enum Event {
         ok: bool,
         output: String,
     },
+    /// A request to the model is about to be sent (GRAFT-0080); UIs can show that
+    /// the model is working until text or a tool call arrives.
+    TurnStarted {
+        turn: u32,
+    },
     /// Assistant text as it streams in (ADR 0007). The full text follows in `message`.
     TextDelta {
         text: String,
@@ -76,6 +81,11 @@ pub enum Event {
     /// A non-fatal problem worth surfacing (guard tripped, config note).
     Warning {
         message: String,
+    },
+    /// Files the run changed, from its first to its last workspace checkpoint
+    /// (GRAFT-0063). Emitted just before `session_finished` when checkpoints are on.
+    FilesChanged {
+        files: Vec<String>,
     },
     SessionFinished {
         ok: bool,
@@ -133,6 +143,8 @@ mod tests {
             Event::Retrying { attempt: 1, wait_ms: 1000, message: "429".into() },
             Event::Warning { message: "w".into() },
             Event::TextDelta { text: "par".into() },
+            Event::TurnStarted { turn: 1 },
+            Event::FilesChanged { files: vec!["src/a.rs".into()] },
             Event::SessionFinished { ok: true, reason: None, turns: 2, input_tokens: 5, output_tokens: 6 },
         ];
         for event in events {

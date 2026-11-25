@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101, GRAFT-0102, GRAFT-0103, GRAFT-0108, GRAFT-0103]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -69,3 +69,53 @@ otherwise an error explaining how to choose one.
   write and bash allowed). Mode rules sit between the defaults and user rules.
   Protected paths and risk rails still ask in every mode; an unknown mode is a
   usage error; an untrusted workspace can't set the mode.
+- **AC11** A Markdown file `<name>.md` in `.agents/commands/` or
+  `.claude/commands/` (workspace, then home; names of letters, digits, `-`,
+  `_`) is a custom command: `/name args` in chat or `oxgraft run /name args`
+  runs its body with `$ARGUMENTS` replaced (or the arguments appended). An
+  unknown `/name` in `run` is a usage error listing the available commands.
+- **AC12** A run that changed the workspace emits `files_changed` with the
+  changed paths (workspace-relative, from the run's checkpoints) just before
+  `session_finished`; a run that changed nothing emits none.
+- **AC13** `oxgraft export [ID] [-o FILE]` writes the session as Markdown:
+  title, model and token counts, each user and assistant message, tool calls,
+  and tool results shortened to 1,500 characters; thinking blocks are omitted.
+- **AC14** `instructions` from the user config, the workspace config and
+  `--append-system-prompt` are all appended to the system prompt, in that order.
+- **AC15** `--plan` runs in read-only mode with an instruction to return a
+  numbered plan instead of changing anything; it cannot be combined with
+  `--mode`.
+- **AC16** `oxgraft prune [--keep N] [--dry-run]` deletes all but the newest N
+  sessions (default 50) and their undo backups; other files are untouched.
+- **AC17** `run --quiet` prints only the final answer on stdout (warnings and the
+  stop reason on stderr); `--output-last-message FILE` also writes it to FILE;
+  `--quiet` cannot be combined with `--json`.
+- **AC18** In chat, `/mode X` switches the approval mode for the following
+  messages; `/mode` shows the current mode; an unknown mode is reported and
+  changes nothing.
+- **AC19** In chat, a line that is just `"""` starts a multi-line message that
+  ends at the next `"""`, and a line ending in a backslash continues on the next
+  line.
+- **AC20** In chat, `/model M` switches the model for the following messages,
+  keeping the conversation; an invalid model is reported and changes nothing.
+- **AC21** `oxgraft diff [ID]` (and `/diff` in chat) prints the patch from the
+  session's first checkpoint to the current workspace.
+- **AC22** `oxgraft config` prints the resolved settings, their sources, the
+  trust state and all config warnings, using the same layering as a run.
+- **AC23** `--allow-tool TOOL[:PATTERN]` and `--deny-tool TOOL[:PATTERN]`
+  (repeatable) add allow/deny rules for the run, after mode and config rules;
+  a deny always wins.
+- **AC24** In chat, `/resume [ID]` (default `last`) continues a saved session;
+  an unknown id is reported and changes nothing.
+- **AC25** With `--output-schema FILE`, a final answer that is not a JSON object
+  matching the schema (type, required, properties, items, enum) is sent back
+  with the problems, up to 3 times; a valid answer is printed as compact JSON.
+- **AC26** `run --worktree` runs the task in a new git worktree on branch
+  `oxgraft/<id>` from HEAD; the original checkout is not modified and the
+  worktree is ignored by the user's git status.
+- **AC27** In chat, `/commit` commits staged changes (or all changes if none are
+  staged) with a model-written message from which attribution trailers are
+  removed; outside a git repository or with nothing to commit it says so.
+- **AC28** `run --ephemeral` writes no session file and takes no checkpoints.
+- **AC29** `/commit` never stages untracked files the session didn't create,
+  and leaves the index as it was when it fails.

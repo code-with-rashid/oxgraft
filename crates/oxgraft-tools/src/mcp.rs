@@ -1,6 +1,7 @@
-//! Minimal MCP client over stdio (GRAFT-0022, after goose's MCP-first design and
-//! Claude Code's MCP support). Newline-delimited JSON-RPC 2.0; every request has a
-//! timeout so a broken server can never hang the agent.
+//! Minimal MCP client (GRAFT-0022, after goose's MCP-first design and Claude Code's
+//! MCP support): stdio (newline-delimited JSON-RPC 2.0) or Streamable HTTP
+//! (GRAFT-0072: POST per message, JSON or SSE replies, `Mcp-Session-Id`). Every
+//! request has a timeout so a broken server can never hang the agent.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -17,23 +18,34 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub struct ServerConfig {
+    /// Program to start for a stdio server.
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// URL of a Streamable HTTP server (instead of `command`).
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Extra HTTP headers, e.g. `Authorization`. Values may name env vars as `${VAR}`.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 type Pending = Arc<Mutex<HashMap<u64, Sender<Result<Value, String>>>>>;
 
-/// A running MCP server.
+enum Transport {
+    Stdio { child: Mutex<Child>, stdin: Mutex<ChildStdin>, pending: Pending },
+    Http { url: String, headers: Vec<(String, String)>, session: Mutex<Option<String>> },
+}
+
+/// A connected MCP server.
 pub struct Client {
     name: String,
-    child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
-    pending: Pending,
+    transport: Transport,
     next_id: Mutex<u64>,
 }
 
@@ -45,11 +57,27 @@ impl std::fmt::Debug for Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if let Ok(mut child) = self.child.lock() {
+        if let Transport::Stdio { child, .. } = &self.transport
+            && let Ok(mut child) = child.lock()
+        {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
+}
+
+/// `${VAR}` in a header value is replaced by that environment variable.
+fn expand_env(value: &str) -> String {
+    let mut out = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        let Some(end) = rest[start..].find('}') else { break };
+        out.push_str(&rest[..start]);
+        out.push_str(&std::env::var(&rest[start + 2..start + end]).unwrap_or_default());
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 impl Client {
@@ -68,9 +96,11 @@ impl Client {
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let client = Arc::new(Self {
             name: name.into(),
-            child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
-            pending: pending.clone(),
+            transport: Transport::Stdio {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                pending: pending.clone(),
+            },
             next_id: Mutex::new(1),
         });
 
@@ -107,7 +137,28 @@ impl Client {
             }
         });
 
-        client.request(
+        client.initialize()?;
+        Ok(client)
+    }
+
+    /// Connect to a Streamable HTTP server (GRAFT-0072).
+    pub fn connect_http(name: &str, url: &str, headers: &HashMap<String, String>) -> Result<Arc<Self>, String> {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(format!("MCP server `{name}`: url must start with http:// or https://"));
+        }
+        let mut headers: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.clone(), expand_env(v))).collect();
+        headers.sort();
+        let client = Arc::new(Self {
+            name: name.into(),
+            transport: Transport::Http { url: url.into(), headers, session: Mutex::new(None) },
+            next_id: Mutex::new(1),
+        });
+        client.initialize()?;
+        Ok(client)
+    }
+
+    fn initialize(&self) -> Result<(), String> {
+        self.request(
             "initialize",
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
@@ -116,13 +167,73 @@ impl Client {
             }),
             INIT_TIMEOUT,
         )?;
-        client.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
-        Ok(client)
+        self.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
     }
 
     fn send(&self, msg: &Value) -> Result<(), String> {
-        let mut stdin = self.stdin.lock().map_err(|_| "stdin poisoned")?;
-        writeln!(stdin, "{msg}").and_then(|_| stdin.flush()).map_err(|e| format!("MCP server `{}`: {e}", self.name))
+        match &self.transport {
+            Transport::Stdio { stdin, .. } => {
+                let mut stdin = stdin.lock().map_err(|_| "stdin poisoned")?;
+                writeln!(stdin, "{msg}")
+                    .and_then(|_| stdin.flush())
+                    .map_err(|e| format!("MCP server `{}`: {e}", self.name))
+            }
+            Transport::Http { .. } => self.http_post(msg, INIT_TIMEOUT).map(|_| ()),
+        }
+    }
+
+    /// POST one JSON-RPC message; returns the response for `msg`'s id, if any.
+    fn http_post(&self, msg: &Value, timeout: Duration) -> Result<Option<Value>, String> {
+        let Transport::Http { url, headers, session } = &self.transport else { return Ok(None) };
+        // No redirects: auth headers must never be replayed to another host.
+        let agent =
+            ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout(timeout).redirects(0).build();
+        let mut req = agent
+            .post(url)
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .set("MCP-Protocol-Version", PROTOCOL_VERSION);
+        for (k, v) in headers {
+            req = req.set(k, v);
+        }
+        if let Some(id) = session.lock().map_err(|_| "session poisoned")?.as_deref() {
+            req = req.set("Mcp-Session-Id", id);
+        }
+        let resp = match req.send_string(&msg.to_string()) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, r)) => {
+                let body: String = r.into_string().unwrap_or_default().chars().take(300).collect();
+                return Err(format!("MCP server `{}`: HTTP {code}: {body}", self.name));
+            }
+            Err(e) => return Err(format!("MCP server `{}`: {e}", self.name)),
+        };
+        if let Some(id) = resp.header("Mcp-Session-Id") {
+            *session.lock().map_err(|_| "session poisoned")? = Some(id.to_string());
+        }
+        let want = msg.get("id").cloned();
+        if want.is_none() {
+            return Ok(None); // a notification: 202 Accepted, no body
+        }
+        let is_sse = resp.content_type().starts_with("text/event-stream");
+        let body = resp.into_string().map_err(|e| format!("MCP server `{}`: {e}", self.name))?;
+        let candidates: Vec<Value> = if is_sse {
+            body.split("\n\n")
+                .filter_map(|event| {
+                    let data: Vec<&str> = event
+                        .lines()
+                        .filter_map(|l| l.strip_prefix("data:").map(|d| d.strip_prefix(' ').unwrap_or(d)))
+                        .collect();
+                    serde_json::from_str(&data.join("\n")).ok()
+                })
+                .collect()
+        } else {
+            vec![serde_json::from_str(&body).map_err(|e| format!("MCP server `{}`: bad JSON: {e}", self.name))?]
+        };
+        let found = candidates
+            .into_iter()
+            .flat_map(|v| if let Value::Array(a) = v { a } else { vec![v] })
+            .find(|m| m.get("id") == want.as_ref());
+        Ok(found)
     }
 
     pub fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
@@ -131,13 +242,31 @@ impl Client {
             *n += 1;
             *n
         };
+        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        let pending = match &self.transport {
+            Transport::Stdio { pending, .. } => pending,
+            Transport::Http { .. } => {
+                let reply = self
+                    .http_post(&msg, timeout)?
+                    .ok_or_else(|| format!("MCP server `{}`: {method}: no response in the reply", self.name))?;
+                return match (reply.get("result"), reply.get("error")) {
+                    (Some(r), _) => Ok(r.clone()),
+                    (_, Some(e)) => Err(format!(
+                        "MCP server `{}`: {method}: {}",
+                        self.name,
+                        e.get("message").and_then(Value::as_str).unwrap_or("error")
+                    )),
+                    _ => Err(format!("MCP server `{}`: {method}: malformed response", self.name)),
+                };
+            }
+        };
         let (tx, rx) = channel();
-        self.pending.lock().map_err(|_| "pending poisoned")?.insert(id, tx);
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
+        pending.lock().map_err(|_| "pending poisoned")?.insert(id, tx);
+        self.send(&msg)?;
         match rx.recv_timeout(timeout) {
             Ok(r) => r.map_err(|e| format!("MCP server `{}`: {method}: {e}", self.name)),
             Err(_) => {
-                if let Ok(mut p) = self.pending.lock() {
+                if let Ok(mut p) = pending.lock() {
                     p.remove(&id);
                 }
                 Err(format!("MCP server `{}`: {method} timed out after {}s", self.name, timeout.as_secs()))
@@ -186,7 +315,12 @@ pub fn tool_name(server: &str, tool: &str) -> String {
 /// Start a server and wrap its tools. Errors are returned, not panicked, so one
 /// broken server never stops the session from starting.
 pub fn connect(name: &str, config: &ServerConfig, cwd: &std::path::Path) -> Result<Vec<Box<dyn Tool>>, String> {
-    let client = Client::spawn(name, config, cwd)?;
+    let client = match (&config.url, config.command.trim().is_empty()) {
+        (Some(url), true) => Client::connect_http(name, url, &config.headers)?,
+        (None, false) => Client::spawn(name, config, cwd)?,
+        (Some(_), false) => return Err(format!("MCP server `{name}`: set either `command` or `url`, not both")),
+        (None, true) => return Err(format!("MCP server `{name}`: needs a `command` (stdio) or a `url` (HTTP)")),
+    };
     let tools = client.list_tools()?;
     Ok(tools
         .into_iter()
@@ -260,7 +394,17 @@ pub fn serve_fixture() {
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
-        let Some(id) = msg.get("id").cloned() else { continue };
+        if let Some(reply) = fixture_reply(&msg) {
+            let _ = writeln!(out, "{reply}");
+            let _ = out.flush();
+        }
+    }
+}
+
+/// The fixture server's reply to one message (`None` for notifications).
+pub fn fixture_reply(msg: &Value) -> Option<Value> {
+    {
+        let id = msg.get("id").cloned()?;
         let result = match msg.get("method").and_then(Value::as_str) {
             Some("initialize") => {
                 json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}, "serverInfo": {"name": "fixture", "version": "1"}})
@@ -276,17 +420,9 @@ pub fn serve_fixture() {
                 }
                 _ => json!({"content": [{"type": "text", "text": "it failed"}], "isError": true}),
             },
-            _ => {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "unknown"}})
-                );
-                continue;
-            }
+            _ => return Some(json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "unknown"}})),
         };
-        let _ = writeln!(out, "{}", json!({"jsonrpc": "2.0", "id": id, "result": result}));
-        let _ = out.flush();
+        Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
     }
 }
 
@@ -302,11 +438,82 @@ mod tests {
 
     #[test]
     fn missing_server_is_an_error_not_a_panic() {
-        let cfg =
-            ServerConfig { command: "definitely-not-a-real-binary-oxgraft".into(), args: vec![], env: HashMap::new() };
+        let cfg = ServerConfig { command: "definitely-not-a-real-binary-oxgraft".into(), ..Default::default() };
         match connect("x", &cfg, &std::env::temp_dir()) {
             Err(e) => assert!(e.contains("cannot start"), "{e}"),
             Ok(_) => panic!("expected an error"),
         }
+    }
+
+    /// Serve the fixture over HTTP: JSON for most replies, SSE for tools/list, and a
+    /// session id that later requests must send back.
+    fn http_fixture() -> (String, std::sync::mpsc::Receiver<Vec<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(6) {
+                let Ok(mut stream) = stream else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = Vec::new();
+                let mut len = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let line = line.trim_end().to_string();
+                    if line.is_empty() {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                    headers.push(line);
+                }
+                let mut body = vec![0; len];
+                reader.read_exact(&mut body).unwrap();
+                let _ = tx.send(headers);
+                let msg: Value = serde_json::from_slice(&body).unwrap();
+                let reply = fixture_reply(&msg);
+                let (status, ctype, text) = match (&reply, msg.get("method").and_then(Value::as_str)) {
+                    (None, _) => ("202 Accepted", "application/json", String::new()),
+                    (Some(r), Some("tools/list")) => {
+                        ("200 OK", "text/event-stream", format!("event: message\ndata: {r}\n\n"))
+                    }
+                    (Some(r), _) => ("200 OK", "application/json", r.to_string()),
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\ncontent-type: {ctype}\r\nmcp-session-id: s-123\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                    text.len()
+                );
+            }
+        });
+        (url, rx)
+    }
+
+    // SPEC-0005 AC9 (GRAFT-0072)
+    #[test]
+    fn http_servers_work_with_json_and_sse_replies() {
+        let (url, rx) = http_fixture();
+        let config = ServerConfig {
+            url: Some(url),
+            headers: HashMap::from([("Authorization".to_string(), "Bearer t0ken".to_string())]),
+            ..Default::default()
+        };
+        let tools = connect("remote", &config, std::path::Path::new(".")).unwrap();
+        let names: Vec<String> = tools.iter().map(|t| t.spec(&oxgraft_strategies::edit::SearchReplace).name).collect();
+        assert_eq!(names, vec!["mcp__remote__echo", "mcp__remote__fail"]);
+        let seen: Vec<Vec<String>> = rx.try_iter().collect();
+        assert!(seen[0].iter().any(|h| h == "Authorization: Bearer t0ken"), "{seen:?}");
+        assert!(!seen[0].iter().any(|h| h.to_ascii_lowercase().starts_with("mcp-session-id")), "no session yet");
+        assert!(seen[1].iter().any(|h| h.eq_ignore_ascii_case("mcp-session-id: s-123")), "{seen:?}");
+        let path = std::env::var("PATH").unwrap_or_default();
+        assert_eq!(expand_env("a${PATH}b"), format!("a{path}b"));
+        assert_eq!(expand_env("${OXGRAFT_SURELY_UNSET_VAR}x"), "x");
+        let bad = ServerConfig { url: Some("ftp://x".into()), ..Default::default() };
+        assert!(connect("x", &bad, std::path::Path::new(".")).is_err());
+        let both = ServerConfig { url: Some("http://x".into()), command: "y".into(), ..Default::default() };
+        assert!(connect("x", &both, std::path::Path::new(".")).err().is_some_and(|e| e.contains("not both")));
     }
 }

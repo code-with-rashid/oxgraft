@@ -2,8 +2,11 @@
 
 use std::path::Path;
 
-/// Files harnesses use for project instructions, in priority order.
-pub const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md"];
+/// Files harnesses use for project instructions, in priority order. The
+/// `.local.md` files are personal, usually git-ignored notes (Claude Code's
+/// `CLAUDE.local.md`, GRAFT-0107); they come last so they can refine the shared ones.
+pub const INSTRUCTION_FILES: &[&str] =
+    &["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".github/copilot-instructions.md", "AGENTS.local.md", "CLAUDE.local.md"];
 const MAX_INSTRUCTIONS_CHARS: usize = 40_000;
 
 const BASE: &str = "You are Oxgraft, an autonomous coding agent working in a local repository through tools.
@@ -76,7 +79,16 @@ pub fn git_summary(workspace: &Path) -> Option<String> {
 pub fn project_instructions(workspace: &Path) -> String {
     let mut seen = Vec::<String>::new();
     let mut out = String::new();
+    let root = workspace.canonicalize().ok();
     for name in INSTRUCTION_FILES {
+        // A symlinked instruction file must not pull in a file from outside the workspace.
+        let inside = match (workspace.join(name).canonicalize(), &root) {
+            (Ok(file), Some(root)) => file.starts_with(root),
+            _ => false,
+        };
+        if !inside {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(workspace.join(name)) else { continue };
         let expanded = expand_imports(workspace, &text, &mut seen);
         if seen.contains(&name.to_string()) || expanded.trim().is_empty() {
@@ -155,7 +167,9 @@ pub fn nested_instructions(
     while dir.starts_with(&root) && dir != root {
         for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] {
             let candidate = dir.join(name);
-            if candidate.is_file() && shown.insert(candidate.clone()) {
+            // Symlinks out of the workspace are skipped, as for the root files (review fix).
+            let inside = candidate.canonicalize().is_ok_and(|real| real.starts_with(&root) && real.is_file());
+            if inside && shown.insert(candidate.clone()) {
                 found.push(candidate);
             }
         }
@@ -184,6 +198,36 @@ mod tests {
         assert_eq!(civil_date(0), "1970-01-01");
         assert_eq!(civil_date(951_782_400), "2000-02-29");
         assert_eq!(civil_date(1_795_564_800), "2026-11-25");
+    }
+
+    // GRAFT-0107
+    #[test]
+    fn local_instruction_files_come_last_and_symlinks_out_are_ignored() {
+        let dir = std::env::temp_dir().join(format!("oxgraft-prompt-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        let ws = dir.join("ws");
+        std::fs::write(ws.join("AGENTS.md"), "Shared rule.").unwrap();
+        std::fs::write(ws.join("CLAUDE.local.md"), "My own rule.").unwrap();
+        let text = project_instructions(&ws);
+        let (shared, local) = (text.find("Shared rule.").unwrap(), text.find("My own rule.").unwrap());
+        assert!(shared < local, "{text}");
+        assert!(text.contains("<file path=\"CLAUDE.local.md\">"));
+        #[cfg(unix)]
+        {
+            std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), ws.join("AGENTS.local.md")).unwrap();
+            assert!(!project_instructions(&ws).contains("TOP SECRET"));
+            // Nested instruction files get the same check.
+            std::fs::create_dir_all(ws.join("docs")).unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), ws.join("docs/AGENTS.md")).unwrap();
+            std::fs::write(ws.join("docs/readme.txt"), "x").unwrap();
+            let mut shown = std::collections::HashSet::new();
+            let ws = ws.canonicalize().unwrap();
+            let nested = nested_instructions(&ws, &ws.join("docs/readme.txt"), &mut shown);
+            assert!(nested.is_none_or(|t| !t.contains("TOP SECRET")));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -215,6 +259,86 @@ mod tests {
         let text = project_instructions(&ws);
         assert!(!text.contains("TOP SECRET"), "{text}");
         assert!(text.contains("ok"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+/// Files attached through `@path` mentions in a task (GRAFT-0056, after Claude
+/// Code's and Gemini CLI's `@file`): the task text with the files' contents
+/// appended, and the attached paths (so the model may edit them without a read).
+/// Only regular text files inside the workspace are attached; anything else
+/// (emails, `@decorators`, missing or outside paths) is left as plain text.
+pub fn expand_mentions(
+    workspace: &Path,
+    task: &str,
+    may_read: &dyn Fn(&str) -> bool,
+) -> (String, Vec<std::path::PathBuf>) {
+    const MAX_FILES: usize = 10;
+    const MAX_BYTES: u64 = 200_000;
+    const MAX_CHARS: usize = 20_000;
+    let Ok(root) = workspace.canonicalize() else { return (task.to_string(), Vec::new()) };
+    let mut attached: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+    for word in task.split_whitespace() {
+        let Some(rel) = word.strip_prefix('@') else { continue };
+        let rel = rel.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '"', '\'', '`']);
+        if rel.is_empty() || attached.len() >= MAX_FILES || attached.iter().any(|(r, _, _)| r == rel) {
+            continue;
+        }
+        // Paths the approval policy denies reading (e.g. `*.env`) are never attached.
+        if !may_read(rel) {
+            continue;
+        }
+        let Ok(full) = workspace.join(rel).canonicalize() else { continue };
+        if !full.starts_with(&root) || !full.is_file() || full.metadata().map_or(true, |m| m.len() > MAX_BYTES) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&full) else { continue };
+        if bytes.iter().take(8_000).any(|b| *b == 0) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let mut body: String = text.chars().take(MAX_CHARS).collect();
+        if text.chars().count() > MAX_CHARS {
+            body.push_str("\n[… truncated; use `read` with an offset for the rest]");
+        }
+        attached.push((rel.to_string(), full, body));
+    }
+    if attached.is_empty() {
+        return (task.to_string(), Vec::new());
+    }
+    let mut out = format!("{task}\n\n[Files mentioned with @, attached:]");
+    for (rel, _, body) in &attached {
+        out.push_str(&format!("\n<file path=\"{rel}\">\n{body}\n</file>"));
+    }
+    (out, attached.into_iter().map(|(_, p, _)| p).collect())
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::*;
+
+    // SPEC-0003 AC12
+    #[test]
+    fn mentions_attach_workspace_files_only() {
+        let base = std::env::temp_dir().join(format!("oxgraft-mention-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(ws.join("src")).unwrap();
+        std::fs::write(ws.join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+        std::fs::write(ws.join("bin.dat"), [0u8, 1, 2]).unwrap();
+        std::fs::write(base.join("secret.txt"), "TOP SECRET").unwrap();
+        let task =
+            "Fix @src/lib.rs, and @src/lib.rs again. Mail me@example.com about @missing.rs, @bin.dat, @../secret.txt";
+        let (text, paths) = expand_mentions(&ws, task, &|_| true);
+        assert!(text.starts_with(task));
+        assert_eq!(text.matches("<file path=\"src/lib.rs\">").count(), 1, "{text}");
+        assert!(text.contains("pub fn answer()"));
+        assert!(!text.contains("TOP SECRET") && !text.contains("bin.dat\">"), "{text}");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(expand_mentions(&ws, "no mentions here", &|_| true).0, "no mentions here");
+        std::fs::write(ws.join(".env"), "SECRET=1").unwrap();
+        let (text, _) = expand_mentions(&ws, "see @.env", &|p| !p.ends_with(".env"));
+        assert!(!text.contains("SECRET"), "denied paths are not attached");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

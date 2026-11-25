@@ -440,6 +440,69 @@ fn subagent_explores_read_only_and_reports() {
     assert_eq!(events.iter().filter(|e| matches!(e, Event::SessionFinished { .. })).count(), 1);
 }
 
+/// Records the first message and tool names of every request (GRAFT-0106 test).
+struct Recording {
+    inner: Mock,
+    seen: std::sync::Mutex<Vec<(String, Vec<String>, serde_json::Value)>>,
+}
+
+impl oxgraft_seams::Provider for Recording {
+    fn id(&self) -> &str {
+        "mock"
+    }
+
+    fn complete(
+        &self,
+        req: &oxgraft_seams::CompletionRequest,
+    ) -> Result<oxgraft_seams::Completion, oxgraft_seams::ProviderError> {
+        let task = req.tools.iter().find(|t| t.name == "task").map(|t| t.input_schema.clone()).unwrap_or_default();
+        self.seen.lock().unwrap().push((
+            req.messages.first().map(|m| m.text()).unwrap_or_default(),
+            req.tools.iter().map(|t| t.name.clone()).collect(),
+            task,
+        ));
+        self.inner.complete(req)
+    }
+}
+
+// GRAFT-0106
+#[test]
+fn named_subagents_get_their_instructions_and_tools() {
+    let ws = Ws::new("named-sub");
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [
+            {"name": "task", "input": {"prompt": "x", "agent": "nope"}},
+            {"name": "task", "input": {"prompt": "find the config", "agent": "finder"}}
+        ]},
+        {"text": "REPORT: config is in a.toml"},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let provider = Recording { inner: Mock::new(script), seen: Default::default() };
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    config.subagent_types = vec![oxgraft_core::SubagentType {
+        name: "finder".into(),
+        description: "finds files".into(),
+        instructions: "FINDER RULES: only grep.".into(),
+        tools: vec!["grep".into(), "write".into()],
+    }];
+    let mut agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    agent.sleep = |_| {};
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    let outcome = agent.run(&mut session, "task", &mut |e| events.push(e.clone()));
+    assert_eq!(outcome.status, Status::Done);
+    let results = tool_results(&events);
+    assert!(!results[0].0 && results[0].1.contains("unknown agent `nope`") && results[0].1.contains("finder"));
+    assert!(results[1].0 && results[1].1.contains("REPORT"), "{:?}", results[1]);
+    let seen = provider.seen.lock().unwrap();
+    assert_eq!(seen[0].2["properties"]["agent"]["enum"], json!(["finder"]));
+    assert!(seen[1].0.starts_with("FINDER RULES") && seen[1].0.contains("find the config"), "{}", seen[1].0);
+    assert_eq!(seen[1].1, vec!["grep".to_string()], "write is never offered to a subagent");
+}
+
 #[test]
 fn subagent_sessions_are_not_listed() {
     let ws = Ws::new("sublist");
@@ -667,4 +730,284 @@ fn finish_check_sends_failures_back_until_it_passes() {
     std::fs::remove_file(ws.0.join("done.txt")).unwrap();
     let (status, _) = run_with(check, json!([{"text": "done"}, {"text": "done"}, {"text": "done"}, {"text": "done"}]));
     assert!(matches!(status, Status::Stopped(ref r) if r.contains("still failing")), "{status:?}");
+}
+
+// SPEC-0003 AC12 (GRAFT-0056): @mentioned files are attached and count as read.
+#[test]
+fn mentioned_files_are_attached_and_editable() {
+    let ws = Ws::new("mention");
+    std::fs::write(ws.0.join("greet.txt"), "hello world\n").unwrap();
+    let edit = "<<<<<<< SEARCH\nhello world\n=======\nhello mention\n>>>>>>> REPLACE";
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [{"name": "edit", "input": {"path": "greet.txt", "edit": edit}}]},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let agent =
+        Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, AgentConfig::new("mock", ws.0.clone()));
+    let mut session = Session::new("mock", "test", &ws.0);
+    let mut events = Vec::new();
+    agent.run(&mut session, "Change the greeting in @greet.txt.", &mut |e| events.push(e.clone()));
+    let first = serde_json::to_string(&session.messages[0]).unwrap();
+    assert!(first.contains("<file path=\\\"greet.txt\\\">") && first.contains("hello world"), "{first}");
+    assert_eq!(std::fs::read_to_string(ws.0.join("greet.txt")).unwrap(), "hello mention\n");
+}
+
+// SPEC-0003 AC13 (GRAFT-0059): finishing with open todo items gets one reminder.
+#[test]
+fn unfinished_todo_items_get_one_reminder() {
+    let ws = Ws::new("todo");
+    let (status, events, session) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "todo", "input": {"items": [
+                {"text": "write code", "status": "done"},
+                {"text": "write tests", "status": "pending"}
+            ]}}]},
+            {"text": "all done"},
+            {"text": "tests not needed after all"}
+        ]}),
+        6,
+    );
+    assert_eq!(status, Status::Done);
+    assert_eq!(
+        events.iter().filter(|e| matches!(e, Event::Warning { message } if message.contains("todo item"))).count(),
+        1
+    );
+    let history = serde_json::to_string(&session.messages).unwrap();
+    assert!(history.contains("write tests") && history.contains("not marked done"), "{history}");
+}
+
+// SPEC-0005 AC8 (GRAFT-0062): user_prompt hooks add context or block; stop hooks
+// can send the model back before it finishes.
+#[test]
+fn user_prompt_and_stop_hooks() {
+    use oxgraft_core::hooks::{Hook, HookEvent};
+    let ws = Ws::new("hookevents");
+    let run_with = |hooks: Vec<Hook>, turns: serde_json::Value| {
+        let script: Script = serde_json::from_value(json!({ "turns": turns })).unwrap();
+        let provider = Mock::new(script);
+        let toolkit = toolkit("allow_all");
+        let approver = Fixed(Answer::Yes);
+        let mut config = AgentConfig::new("mock", ws.0.clone());
+        config.hooks = hooks;
+        let agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+        let mut session = Session::new("mock", "test", &ws.0);
+        let outcome = agent.run(&mut session, "the task", &mut |_| {});
+        (outcome.status, session)
+    };
+    let hook = |event, command: &str| Hook { event, tools: vec![], command: command.into(), timeout_secs: 10 };
+
+    let (status, session) = run_with(vec![hook(HookEvent::UserPrompt, "echo extra-context")], json!([{"text": "ok"}]));
+    assert_eq!(status, Status::Done);
+    assert!(serde_json::to_string(&session.messages[0]).unwrap().contains("extra-context"));
+
+    let (status, _) =
+        run_with(vec![hook(HookEvent::UserPrompt, "echo not today 1>&2 && exit 2")], json!([{"text": "ok"}]));
+    assert!(matches!(status, Status::Stopped(ref r) if r.contains("not today")), "{status:?}");
+
+    if cfg!(unix) {
+        let stop = "test -f .stop-seen || { touch .stop-seen; echo run the tests first 1>&2; exit 2; }";
+        let (status, session) =
+            run_with(vec![hook(HookEvent::Stop, stop)], json!([{"text": "done"}, {"text": "tests pass, done"}]));
+        assert_eq!(status, Status::Done);
+        assert!(serde_json::to_string(&session.messages).unwrap().contains("run the tests first"));
+    }
+}
+
+// SPEC-0003 AC14 (GRAFT-0069): "always" for bash covers the command prefix, per part.
+#[test]
+fn always_for_bash_is_scoped_to_the_command() {
+    let ws = Ws::new("alwaysbash");
+    let bash = |c: &str| json!({"tool_calls": [{"name": "bash", "input": {"command": c}}]});
+    let (_, events, _) = run(
+        &ws,
+        "ordered_rules",
+        Answer::Always,
+        json!({"turns": [
+            bash("git status"),
+            bash("git status --short"),
+            bash("git log -1"),
+            bash("git status && git log -1"),
+            bash("git status; rm -f nothing_here"),
+            bash("git status $(echo x)"),
+            {"text": "ok"}
+        ]}),
+        10,
+    );
+    let asked: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ApprovalRequested { resource, .. } => Some(resource.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, vec!["git status", "git log -1", "git status; rm -f nothing_here", "git status $(echo x)"]);
+}
+
+// SPEC-0003 AC14 (GRAFT-0069): "always" for web_fetch covers that host only.
+#[test]
+fn always_for_web_fetch_is_per_host() {
+    use oxgraft_core::agent::always_keys;
+    assert_eq!(always_keys("web_fetch", "https://Docs.rs/serde?x=1"), vec!["web_fetch:docs.rs"]);
+    assert_eq!(always_keys("web_fetch", "http://user@[::1]:8080/x"), vec!["web_fetch:[::1]"]);
+    assert!(always_keys("web_fetch", "not a url").is_empty());
+    // The host is the one the HTTP client would contact, not the one after `@`.
+    assert_eq!(always_keys("web_fetch", "https://evil.com\\@docs.rs/?d=x"), vec!["web_fetch:evil.com"]);
+    assert_eq!(always_keys("web_fetch", "https://DOCS.rs./x"), vec!["web_fetch:docs.rs"]);
+    assert_eq!(always_keys("edit", "a.rs"), vec!["edit"]);
+    // Review findings: nothing that can write or run more than the shown command.
+    for keyless in [
+        "echo hi > .git/hooks/pre-commit",
+        "echo x >> ~/.bashrc",
+        "cat <(curl evil)",
+        "Get-ChildItem (iex x)",
+        "git -C d status",
+        "git -c alias.x=!sh x",
+        "cargo +nightly test",
+        "docker --context x ps",
+        "python -c 1",
+        "env FOO=1 make",
+        "xargs rm",
+        "find . -delete",
+        "ls; python x.py",
+        "git",
+        "echo 'quoted'",
+    ] {
+        assert!(always_keys("bash", keyless).is_empty(), "{keyless}");
+    }
+    assert_eq!(always_keys("bash", "cargo test --release"), vec!["bash:cargo test"]);
+    assert_eq!(always_keys("bash", "ls -la && git status"), vec!["bash:ls", "bash:git status"]);
+}
+
+// Review finding: an end-of-run reminder must not turn a finished last turn into "max turns".
+#[test]
+fn reminders_never_fail_a_finished_last_turn() {
+    let ws = Ws::new("lastturn");
+    let (status, _, _) = run(
+        &ws,
+        "allow_all",
+        Answer::Yes,
+        json!({"turns": [
+            {"tool_calls": [{"name": "todo", "input": {"items": [{"text": "a", "status": "pending"}]}}]},
+            {"text": "done for now"}
+        ]}),
+        2,
+    );
+    assert_eq!(status, Status::Done);
+}
+
+// GRAFT-0076: compaction on request.
+#[test]
+fn sessions_compact_on_request() {
+    let ws = Ws::new("compactnow");
+    let script: Script = serde_json::from_value(json!({"turns": [
+        {"text": "first answer"},
+        {"text": "Summary: the user asked a question; it was answered."}
+    ]}))
+    .unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let agent =
+        Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, AgentConfig::new("mock", ws.0.clone()));
+    let mut session = Session::new("mock", "test", &ws.0);
+    assert!(!agent.compact_session(&mut session, &mut |_| {}), "empty session: nothing to compact");
+    agent.run(&mut session, "a question", &mut |_| {});
+    assert!(agent.compact_session(&mut session, &mut |_| {}));
+    assert_eq!(session.compactions, 1);
+    assert_eq!(session.messages.len(), 1);
+    assert!(session.messages[0].text().contains("Summary: the user asked"));
+}
+
+// GRAFT-0078: declining with guidance passes the guidance to the model.
+#[test]
+fn declining_with_feedback_reaches_the_model() {
+    let ws = Ws::new("nowith");
+    let (_, events, _) = run(
+        &ws,
+        "ordered_rules",
+        Answer::NoWith("use cargo check instead".into()),
+        json!({"turns": [
+            {"tool_calls": [{"name": "bash", "input": {"command": "cargo build"}}]},
+            {"text": "ok"}
+        ]}),
+        3,
+    );
+    let results = tool_results(&events);
+    assert!(!results[0].0 && results[0].1.contains("said: use cargo check instead"), "{results:?}");
+}
+
+// GRAFT-0081: the `task` subagent can use its own (cheaper) model.
+#[test]
+fn subagent_uses_its_own_model() {
+    let ws = Ws::new("submodel");
+    let main: Script = serde_json::from_value(json!({"turns": [
+        {"tool_calls": [{"name": "task", "input": {"prompt": "find the config"}}]},
+        {"text": "done"}
+    ]}))
+    .unwrap();
+    let sub: Script = serde_json::from_value(json!({"turns": [{"text": "report from the small model"}]})).unwrap();
+    let (main, sub) = (Mock::new(main), Mock::new(sub));
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut agent =
+        Agent::new(&toolkit, &main, oxgraft_tools::builtin(), &approver, AgentConfig::new("big", ws.0.clone()));
+    agent.subagent = Some((&sub, "small".into()));
+    let mut session = Session::new("big", "test", &ws.0);
+    let mut events = Vec::new();
+    let outcome = agent.run(&mut session, "x", &mut |e| events.push(e.clone()));
+    assert_eq!(outcome.status, Status::Done);
+    let results = tool_results(&events);
+    assert!(results[0].0 && results[0].1.contains("report from the small model"), "{results:?}");
+    // Tokens are booked to the model that used them (review fix).
+    assert!(
+        session.usage_by_model.contains_key("small") && session.usage_by_model.contains_key("big"),
+        "{:?}",
+        session.usage_by_model
+    );
+    let sub_session = Session::list(&ws.0);
+    assert!(sub_session.iter().all(|s| s.model == "big"), "subagent sessions are hidden from the list");
+}
+
+// GRAFT-0090: an empty (e.g. thinking-only) reply is not taken as the answer.
+#[test]
+fn empty_replies_are_not_final_answers() {
+    let ws = Ws::new("emptyreply");
+    let (status, events, session) =
+        run(&ws, "allow_all", Answer::Yes, json!({"turns": [{}, {"text": "the answer"}]}), 4);
+    assert_eq!(status, Status::Done);
+    assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("without text"))));
+    assert_eq!(session.messages.last().unwrap().text(), "the answer");
+}
+
+// GRAFT-0098: session_start hooks add context to a new session's first task only.
+#[test]
+fn session_start_hooks_run_once_per_session() {
+    use oxgraft_core::hooks::{Hook, HookEvent};
+    let ws = Ws::new("sessstart");
+    let script: Script = serde_json::from_value(json!({"turns": [{"text": "one"}, {"text": "two"}]})).unwrap();
+    let provider = Mock::new(script);
+    let toolkit = toolkit("allow_all");
+    let approver = Fixed(Answer::Yes);
+    let mut config = AgentConfig::new("mock", ws.0.clone());
+    config.hooks = vec![Hook {
+        event: HookEvent::SessionStart,
+        tools: vec![],
+        command: "echo ticket-42".into(),
+        timeout_secs: 10,
+    }];
+    let agent = Agent::new(&toolkit, &provider, oxgraft_tools::builtin(), &approver, config);
+    let mut session = Session::new("mock", "test", &ws.0);
+    agent.run(&mut session, "first task", &mut |_| {});
+    agent.run(&mut session, "second task", &mut |_| {});
+    let texts: Vec<String> =
+        session.messages.iter().filter(|m| m.role == oxgraft_seams::Role::User).map(|m| m.text()).collect();
+    assert!(texts[0].contains("ticket-42") && texts[0].contains("session_start"), "{texts:?}");
+    assert!(!texts[1].contains("ticket-42"), "{texts:?}");
 }

@@ -1,0 +1,320 @@
+//! Background shell commands (GRAFT-0104, after Claude Code's `run_in_background`
+//! with BashOutput/KillShell): dev servers and watchers keep running while the
+//! agent works; `bash_output` reads what they printed since the last look, or
+//! stops them. Everything still running is stopped when the run ends.
+
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::process::Child;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use oxgraft_seams::{Action, EditFormat, Tool, ToolContext, ToolOutput, ToolSpec};
+use serde_json::{Value, json};
+
+/// Output kept per process; older output is dropped.
+const MAX_BUFFER: usize = 1_000_000;
+const MAX_PROCESSES: usize = 8;
+
+struct Process {
+    child: Child,
+    output: Arc<Mutex<Buffer>>,
+    /// Total bytes (including dropped ones) already shown to the model.
+    shown: usize,
+    command: String,
+}
+
+/// The newest output of a process. Trimmed by the reader threads as output
+/// arrives (review fix), so a chatty watcher can't grow it without limit.
+#[derive(Default)]
+struct Buffer {
+    data: Vec<u8>,
+    /// Bytes dropped from the front so far.
+    dropped: usize,
+}
+
+impl Buffer {
+    fn push(&mut self, bytes: &[u8]) {
+        self.data.extend_from_slice(bytes);
+        // Trim in chunks, so the copy happens once per quarter-buffer of output.
+        if self.data.len() > MAX_BUFFER + MAX_BUFFER / 4 {
+            let drop = self.data.len() - MAX_BUFFER;
+            self.data.drain(..drop);
+            self.dropped += drop;
+        }
+    }
+}
+
+fn registry() -> &'static Mutex<BTreeMap<u32, Process>> {
+    static R: OnceLock<Mutex<BTreeMap<u32, Process>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Register a spawned child whose stdout/stderr are piped; returns its id.
+pub fn start(mut child: Child, command: &str) -> Result<u32, String> {
+    let mut reg = registry().lock().map_err(|_| "background registry poisoned")?;
+    let running = reg.values_mut().filter_map(|p| p.child.try_wait().ok()).filter(Option::is_none).count();
+    if running >= MAX_PROCESSES {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("at most {MAX_PROCESSES} background processes; stop one with bash_output kill"));
+    }
+    let output = Arc::new(Mutex::new(Buffer::default()));
+    let pipes: Vec<Box<dyn Read + Send>> = [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for mut pipe in pipes {
+        let out = output.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut o) = out.lock() {
+                    o.push(&buf[..n]);
+                }
+            }
+        });
+    }
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    reg.insert(id, Process { child, output, shown: 0, command: command.to_string() });
+    Ok(id)
+}
+
+/// Send `signal` to the process group led by `child` (Unix). The group is
+/// signalled even when the shell itself has exited, since commands like
+/// `server &` leave the real work running in the group.
+#[cfg(unix)]
+fn signal_group(child: &Child, signal: &str) {
+    let _ = std::process::Command::new("kill")
+        .args(["-s", signal, "--", &format!("-{}", child.id())])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Stop background processes and everything they started (review fix): on Unix
+/// the process group gets TERM, then KILL after a short grace period; on Windows
+/// the process tree is ended with `taskkill /T` while the shell still runs (once
+/// it has exited, its pid may belong to something else).
+fn stop_all(children: &mut [&mut Child]) {
+    #[cfg(unix)]
+    {
+        for c in children.iter() {
+            signal_group(c, "TERM");
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline && children.iter_mut().any(|c| matches!(c.try_wait(), Ok(None))) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for c in children.iter() {
+            signal_group(c, "KILL");
+        }
+    }
+    #[cfg(windows)]
+    for c in children.iter_mut() {
+        if matches!(c.try_wait(), Ok(None)) {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &c.id().to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    for c in children.iter_mut() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+/// Stop every background process (called when a run or chat ends, and on exit).
+pub fn kill_all() {
+    // A poisoned lock still holds the children; stop them anyway.
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut children: Vec<&mut Child> = reg.values_mut().map(|p| &mut p.child).collect();
+    stop_all(&mut children);
+    reg.clear();
+}
+
+/// Stops every background process when dropped, so early returns and panics
+/// in a run or chat don't leave them running.
+#[derive(Debug)]
+pub struct StopOnDrop;
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        kill_all();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BashOutput;
+
+impl Tool for BashOutput {
+    fn spec(&self, _: &dyn EditFormat) -> ToolSpec {
+        ToolSpec {
+            name: "bash_output".into(),
+            description: "Read new output from a background command started with `bash` and `background: true`, \
+                or stop it with `kill: true`. Without `id`, lists background commands."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "Background command id"},
+                    "kill": {"type": "boolean", "description": "Stop the command"},
+                    "filter": {"type": "string", "description": "Regex: return only new lines that match (the rest are still marked read)"}
+                },
+                "required": []
+            }),
+        }
+    }
+
+    fn action(&self, input: &Value) -> Action {
+        Action { tool: "bash_output".into(), resource: input.get("id").map(Value::to_string).unwrap_or_default() }
+    }
+
+    fn run(&self, input: &Value, ctx: &ToolContext<'_>) -> ToolOutput {
+        // GRAFT-0109 (after Claude Code's BashOutput `filter`): only matching lines.
+        let filter = match input.get("filter").and_then(Value::as_str).filter(|f| !f.is_empty()) {
+            None => None,
+            Some(f) => match regex::RegexBuilder::new(f).size_limit(1 << 20).build() {
+                Ok(re) => Some(re),
+                Err(e) => return ToolOutput::error(format!("invalid filter regex: {e}")),
+            },
+        };
+        let Ok(mut reg) = registry().lock() else { return ToolOutput::error("background registry poisoned") };
+        let Some(id) = input.get("id").and_then(Value::as_u64) else {
+            if reg.is_empty() {
+                return ToolOutput::ok("no background commands");
+            }
+            let lines: Vec<String> =
+                reg.iter_mut().map(|(id, p)| format!("{id}: {} ({})", p.command, status(&mut p.child))).collect();
+            return ToolOutput::ok(lines.join("\n"));
+        };
+        let Some(p) = reg.get_mut(&(id as u32)) else {
+            return ToolOutput::error(format!("no background command {id}"));
+        };
+        if input.get("kill").and_then(Value::as_bool).unwrap_or(false) {
+            stop_all(&mut [&mut p.child]);
+        }
+        let state = status(&mut p.child);
+        let new = {
+            let Ok(out) = p.output.lock() else { return ToolOutput::error("output buffer poisoned") };
+            let skipped = out.dropped.saturating_sub(p.shown);
+            let start = p.shown.saturating_sub(out.dropped).min(out.data.len());
+            let mut text = String::from_utf8_lossy(&out.data[start..]).into_owned();
+            if skipped > 0 {
+                text = format!("[… {skipped} earlier bytes dropped]\n{text}");
+            }
+            p.shown = out.dropped + out.data.len();
+            text
+        };
+        let new = match &filter {
+            Some(re) => {
+                let total = new.lines().count();
+                let kept: Vec<&str> = new.lines().filter(|l| re.is_match(l)).collect();
+                if kept.is_empty() && total > 0 {
+                    format!("(none of {total} new lines matched)")
+                } else {
+                    kept.join("\n")
+                }
+            }
+            None => new,
+        };
+        let body = if new.trim().is_empty() { "(no new output)".to_string() } else { new };
+        ToolOutput::ok(crate::util::truncate(&format!("[{id}: {state}]\n{body}"), ctx.max_output_chars))
+    }
+}
+
+fn status(child: &mut Child) -> String {
+    match child.try_wait() {
+        Ok(None) => "running".into(),
+        Ok(Some(s)) => format!("exited with {}", s.code().map_or("a signal".into(), |c| c.to_string())),
+        Err(e) => format!("unknown ({e})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Fixture;
+
+    // GRAFT-0104
+    #[test]
+    fn background_commands_run_report_and_stop() {
+        if !matches!(crate::shell_kind(), crate::ShellKind::Posix(_)) {
+            return;
+        }
+        let f = Fixture::new("background");
+        let out = f.run(&crate::Bash, json!({"command": "echo started; sleep 30", "background": true}));
+        assert!(!out.is_error && out.content.contains("started background command"), "{}", out.content);
+        let id: u64 = out.content.split_whitespace().nth(3).unwrap().trim_end_matches(';').parse().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let first = f.run(&BashOutput, json!({"id": id}));
+        assert!(first.content.contains("running") && first.content.contains("started"), "{}", first.content);
+        let again = f.run(&BashOutput, json!({"id": id}));
+        assert!(again.content.contains("(no new output)"), "{}", again.content);
+        let stopped = f.run(&BashOutput, json!({"id": id, "kill": true}));
+        assert!(stopped.content.contains("exited"), "{}", stopped.content);
+        assert!(f.run(&BashOutput, json!({"id": 999_999})).is_error);
+        assert!(f.run(&BashOutput, json!({})).content.contains("echo started"));
+    }
+
+    // GRAFT-0109
+    #[test]
+    fn output_can_be_filtered() {
+        if !matches!(crate::shell_kind(), crate::ShellKind::Posix(_)) {
+            return;
+        }
+        let f = Fixture::new("background-filter");
+        let out = f.run(
+            &crate::Bash,
+            json!({"command": "echo ok one; echo ERROR two; echo ok three; sleep 30", "background": true}),
+        );
+        let id: u64 = out.content.split_whitespace().nth(3).unwrap().trim_end_matches(';').parse().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let got = f.run(&BashOutput, json!({"id": id, "filter": "ERROR"}));
+        assert!(got.content.contains("ERROR two") && !got.content.contains("ok one"), "{}", got.content);
+        assert!(f.run(&BashOutput, json!({"id": id, "filter": "("})).is_error);
+        f.run(&BashOutput, json!({"id": id, "kill": true}));
+    }
+
+    // Review fix: output is capped as it arrives, and dropped bytes are reported.
+    #[test]
+    fn buffer_is_capped_as_output_arrives() {
+        let mut b = Buffer::default();
+        for _ in 0..300 {
+            b.push(&[b'x'; 8192]);
+        }
+        assert!(b.data.len() <= MAX_BUFFER + MAX_BUFFER / 4, "{}", b.data.len());
+        assert_eq!(b.dropped + b.data.len(), 300 * 8192);
+    }
+
+    // Review fix: a child the shell left running in the group is stopped too.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_ends_the_whole_process_group() {
+        let f = Fixture::new("background-group");
+        let marker = f.dir.join("pid");
+        let cmd = format!("sleep 30 & echo $! > {}; echo spawned", marker.display());
+        let out = f.run(&crate::Bash, json!({"command": cmd, "background": true}));
+        let id: u64 = out.content.split_whitespace().nth(3).unwrap().trim_end_matches(';').parse().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let pid = std::fs::read_to_string(&marker).unwrap().trim().to_string();
+        f.run(&BashOutput, json!({"id": id, "kill": true}));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let alive = std::process::Command::new("kill").args(["-0", &pid]).status().unwrap().success();
+        assert!(!alive, "the backgrounded sleep {pid} was left running");
+    }
+}

@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073, GRAFT-0086, GRAFT-0092, GRAFT-0104, GRAFT-0105, GRAFT-0104, GRAFT-0109, GRAFT-0110]
 ---
 
 # SPEC-0002: Built-in tools
@@ -66,3 +66,29 @@ tools beat many overlapping ones) that is safe by default.
   dropped), `<pre>` fenced with whitespace kept, table cells separated by `|`,
   named and numeric entities decoded; script, style, head, nav, footer, forms
   and comments removed. Arbitrary input never panics.
+- **AC13** When `bash` output is longer than the output limit, the full output
+  is written to `.oxgraft/outputs/` (the 20 newest are kept) and the truncated
+  result names that file.
+- **AC14** `grep` with `context: N` (0-5) shows N lines around each match:
+  matches as `path:N: text`, context as `path-N- text`, separate groups split
+  by `--`, overlapping groups merged.
+- **AC15** `web_fetch` refuses URLs whose host is a cloud metadata name or
+  resolves to a link-local, unspecified or known metadata address, on the first
+  request and on every redirect (at most 5). Loopback and private addresses are
+  allowed.
+- **AC16** If `old_string` is not found exactly, `edit` replaces a unique run of
+  whole lines that matches after ignoring trailing whitespace and a uniform
+  extra indentation, indenting `new_string` the same way; ambiguous matches
+  fail.
+- **AC17** `read`, `edit` and `write` refuse paths that are not regular files
+  (named pipes, sockets, devices) with an error instead of blocking.
+- **AC18** `bash` with `background: true` starts the command and returns an id
+  at once; `bash_output` returns its new output and status or stops it
+  (`kill: true`); all background commands stop when the run ends.
+- **AC19** After `write` or `edit` changes a `.json` or `.toml` file that no
+  longer parses, the result includes a warning with the parser's error.
+- **AC20** Stopping a background command (or leaving the run or chat in any
+  way, including a second Ctrl-C) also stops the processes it started.
+- **AC21** `bash_output` with `filter` returns only the new lines matching the
+  regex; an invalid regex is an error.
+- **AC22** `read` on a directory returns the directory's listing.

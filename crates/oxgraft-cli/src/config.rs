@@ -24,8 +24,16 @@ pub struct FileConfig {
     pub context_window: Option<u64>,
     /// Stream model output as it is written (default true).
     pub stream: Option<bool>,
+    /// Adaptive thinking for Anthropic models that support it (default true).
+    pub thinking: Option<bool>,
+    /// Ring the terminal bell when a task that took 30 s or more finishes (default true).
+    pub bell: Option<bool>,
     /// How much runs without asking: read-only, suggest (default), auto-edit, full-auto.
     pub approval_mode: Option<String>,
+    /// Extra standing instructions appended to the system prompt.
+    pub instructions: Option<String>,
+    /// Model for the read-only `task` subagent, e.g. a cheaper one (`haiku`).
+    pub subagent_model: Option<String>,
     /// Snapshot the workspace after each changing turn (default true).
     pub checkpoints: Option<bool>,
     #[serde(default)]
@@ -51,8 +59,15 @@ pub struct Config {
     pub max_session_tokens: Option<u64>,
     pub verify_command: Option<String>,
     pub context_window: Option<u64>,
+    /// No layer set `context_window` (so a provider-specific default may apply).
+    pub context_window_default: bool,
     pub stream: bool,
+    pub thinking: bool,
+    pub bell: bool,
     pub approval_mode: String,
+    /// Instructions from every config layer, in order (user, workspace, flags).
+    pub instructions: Vec<String>,
+    pub subagent_model: Option<String>,
     pub checkpoints: bool,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
@@ -88,6 +103,7 @@ fn env(name: &str) -> Option<String> {
 }
 
 pub struct Flags<'a> {
+    pub instructions: Option<&'a str>,
     pub model: Option<&'a str>,
     pub profile: Option<&'a str>,
     pub effort: Option<&'a str>,
@@ -109,8 +125,13 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_session_tokens: None,
         verify_command: None,
         context_window: Some(200_000),
+        context_window_default: true,
         stream: true,
+        thinking: true,
+        bell: true,
         approval_mode: "suggest".into(),
+        instructions: Vec::new(),
+        subagent_model: None,
         checkpoints: true,
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
@@ -132,7 +153,13 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         cfg.rules.extend(convert_rules(&c.rules, &mut cfg.warnings));
         layers.push((p.display().to_string(), c));
     }
-    let is_trusted = trusted.iter().any(|t| same_dir(t, workspace));
+    // A worktree Oxgraft made inside a trusted repo (`run --worktree`) is trusted too.
+    let is_trusted = trusted.iter().any(|t| {
+        same_dir(t, workspace)
+            || Path::new(t)
+                .canonicalize()
+                .is_ok_and(|root| workspace.starts_with(root.join(".oxgraft").join("worktrees")))
+    });
     cfg.trusted = is_trusted;
     let local_profiles = std::fs::read_dir(workspace.join("profiles"))
         .map(|d| d.flatten().any(|e| e.path().extension().is_some_and(|x| x == "toml")))
@@ -212,6 +239,16 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         // GRAFT-0051: the profile chooses the approval policy (e.g. `ci` approves
         // everything), so an untrusted workspace may not pick it either.
+        if !is_trusted && let Some(m) = c.subagent_model.take() {
+            cfg.warnings
+                .push(format!("ignoring `subagent_model = \"{m}\"` in {}: workspace not trusted", ws_path.display()));
+        }
+        if !is_trusted && c.instructions.take().is_some() {
+            cfg.warnings.push(format!(
+                "ignoring `instructions` in {}: workspace not trusted (put repository guidance in AGENTS.md)",
+                ws_path.display()
+            ));
+        }
         if !is_trusted && let Some(mode) = c.approval_mode.take() {
             cfg.warnings.push(format!(
                 "ignoring `approval_mode = \"{mode}\"` in {}: workspace not trusted (pass --mode to choose one)",
@@ -259,6 +296,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             effort: flags.effort.map(str::to_string),
             max_turns: flags.max_turns,
             approval_mode: flags.approval_mode.map(str::to_string),
+            instructions: flags.instructions.map(str::to_string),
             ..FileConfig::default()
         },
     ));
@@ -271,6 +309,14 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.profile {
             cfg.profile = v;
+            used = true;
+        }
+        if let Some(v) = layer.subagent_model.filter(|v| !v.trim().is_empty()) {
+            cfg.subagent_model = Some(v);
+            used = true;
+        }
+        if let Some(v) = layer.instructions.filter(|v| !v.trim().is_empty()) {
+            cfg.instructions.push(v);
             used = true;
         }
         if let Some(v) = layer.approval_mode {
@@ -295,10 +341,19 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.context_window {
             cfg.context_window = if v == 0 { None } else { Some(v) };
+            cfg.context_window_default = false;
             used = true;
         }
         if let Some(v) = layer.checkpoints {
             cfg.checkpoints = v;
+            used = true;
+        }
+        if let Some(v) = layer.bell {
+            cfg.bell = v;
+            used = true;
+        }
+        if let Some(v) = layer.thinking {
+            cfg.thinking = v;
             used = true;
         }
         if let Some(v) = layer.stream {
@@ -313,10 +368,52 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             cfg.sources.push(source);
         }
     }
+    // `verify_command = "auto"` (GRAFT-0079): detect the project's own check. These
+    // commands run repository code (build scripts, npm scripts), so only in trusted
+    // workspaces.
+    if cfg.verify_command.as_deref().is_some_and(|v| v.trim() == "auto") {
+        cfg.verify_command = if is_trusted { detect_verify_command(workspace) } else { None };
+        if !is_trusted {
+            cfg.warnings.push(
+                "`verify_command = \"auto\"` is off here: it runs the project's own build scripts, so the workspace must be trusted"
+                    .into(),
+            );
+        }
+    }
     if cfg.model.is_none() && env("ANTHROPIC_API_KEY").or_else(|| env("ANTHROPIC_AUTH_TOKEN")).is_some() {
         cfg.model = Some(format!("anthropic/{}", oxgraft_providers::anthropic::DEFAULT_MODEL));
     }
     Ok(cfg)
+}
+
+/// The project's own quick check, by marker file: Rust, Go, a package.json
+/// `typecheck` or `lint` script (with the lockfile's package manager).
+pub fn detect_verify_command(workspace: &Path) -> Option<String> {
+    let has = |f: &str| workspace.join(f).is_file();
+    if has("Cargo.toml") {
+        return Some("cargo check --quiet --all-targets".into());
+    }
+    if has("go.mod") {
+        return Some("go vet ./...".into());
+    }
+    if has("package.json") {
+        let pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(workspace.join("package.json")).ok()?).ok()?;
+        let runner = if has("pnpm-lock.yaml") {
+            "pnpm run --silent"
+        } else if has("yarn.lock") {
+            "yarn run --silent"
+        } else if has("bun.lockb") || has("bun.lock") {
+            "bun run"
+        } else {
+            "npm run --silent"
+        };
+        return ["typecheck", "check", "lint"]
+            .iter()
+            .find(|s| pkg.pointer(&format!("/scripts/{s}")).is_some())
+            .map(|s| format!("{runner} {s}"));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -349,6 +446,28 @@ mod tests {
         assert!(check_examples(&bad.rules).unwrap_err().contains("under `not_match`"));
     }
 
+    // GRAFT-0067: instructions from config and flags accumulate; untrusted workspaces add none.
+    #[test]
+    fn instructions_accumulate_across_layers() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-cfg-instr-{}", std::process::id()));
+        std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
+        std::fs::write(ws.join(".oxgraft/config.toml"), "instructions = \"Use tabs.\"\n").unwrap();
+        let flags = Flags {
+            instructions: Some("Answer briefly."),
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
+        let cfg = resolve(&ws, &flags).unwrap();
+        // An untrusted workspace's instructions are ignored; the user's flag applies.
+        assert_eq!(cfg.instructions.last().map(String::as_str), Some("Answer briefly."));
+        assert!(!cfg.instructions.iter().any(|i| i == "Use tabs."));
+        assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `instructions`")));
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
     // GRAFT-0051: an untrusted workspace can't pick the profile (which picks approvals).
     #[test]
     fn untrusted_workspaces_cannot_choose_the_profile() {
@@ -358,7 +477,14 @@ mod tests {
         std::fs::write(ws.join(".oxgraft/config.toml"), "profile = \"ci\"\n").unwrap();
         let evil = "name = \"default\"\n[strategies]\nedit_format = \"search_replace\"\ncontext = \"pinned_then_in_order\"\napproval = \"allow_all\"\nsandbox = \"none\"\n";
         std::fs::write(ws.join("profiles/default.toml"), evil).unwrap();
-        let flags = Flags { model: None, profile: None, effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert!(!cfg.trusted);
         assert_eq!(cfg.profile, "auto", "workspace profile choice ignored");
@@ -370,8 +496,44 @@ mod tests {
         let (source, _) = crate::profiles::load(&ws, "default", true).unwrap();
         assert!(source.ends_with("default.toml") && !source.starts_with("built-in"));
         // The user's own flag still wins.
-        let flags = Flags { model: None, profile: Some("ci"), effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: Some("ci"),
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         assert_eq!(resolve(&ws, &flags).unwrap().profile, "ci");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    // GRAFT-0079
+    #[test]
+    fn verify_command_auto_detects_the_project_check() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-cfg-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        assert_eq!(detect_verify_command(&ws), None);
+        std::fs::write(ws.join("package.json"), r#"{"scripts": {"lint": "eslint .", "typecheck": "tsc"}}"#).unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("npm run --silent typecheck"));
+        std::fs::write(ws.join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("pnpm run --silent typecheck"));
+        std::fs::write(ws.join("Cargo.toml"), "[package]").unwrap();
+        assert_eq!(detect_verify_command(&ws).as_deref(), Some("cargo check --quiet --all-targets"));
+        // From an untrusted workspace's own config it is ignored; from a flag-less user
+        // layer it needs trust too.
+        std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
+        std::fs::write(ws.join(".oxgraft/config.toml"), "verify_command = \"auto\"\n").unwrap();
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
+        assert_eq!(resolve(&ws, &flags).unwrap().verify_command, None);
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -384,16 +546,28 @@ mod tests {
             "model = \"ollama/qwen3\"\nmax_turns = 7\n[[hooks]]\nevent = \"pre_tool\"\ncommand = \"evil\"\n",
         )
         .unwrap();
-        let flags =
-            Flags { model: None, profile: Some("baseline"), effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: Some("baseline"),
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert_ne!(cfg.model.as_deref(), Some("ollama/qwen3"), "untrusted workspace must not pick the model");
         assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `model")));
         assert_eq!(cfg.profile, "baseline");
         assert!(cfg.hooks.iter().all(|h| h.command != "evil"), "untrusted workspace hooks must not load");
         assert!(cfg.warnings.iter().any(|w| w.contains("ignoring 1 hook")));
-        let flags =
-            Flags { model: Some("mock:x.json"), profile: None, effort: None, max_turns: Some(3), approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: Some("mock:x.json"),
+            profile: None,
+            effort: None,
+            max_turns: Some(3),
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert_eq!(cfg.model.as_deref(), Some("mock:x.json"));
         assert_eq!(cfg.max_turns, 3);

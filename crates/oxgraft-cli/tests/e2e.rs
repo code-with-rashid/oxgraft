@@ -242,11 +242,15 @@ fn doctor_reports_problems_and_readiness() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(text.contains("FAIL model"), "{text}");
     let model = ws.script(json!([]));
+    std::fs::create_dir_all(ws.0.join(".claude/agents")).unwrap();
+    std::fs::write(ws.0.join(".claude/agents/helper.md"), "---\ndescription: helps\n---\nHelp.\n").unwrap();
     let out = ws.oxgraft(&["doctor", "--model", &model]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("ready"));
-    for expect in ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming"] {
+    for expect in
+        ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming", "1 in this repo ignored"]
+    {
         assert!(text.contains(expect), "missing {expect}:\n{text}");
     }
     assert!(!ws.data().exists(), "doctor creates nothing");
@@ -515,4 +519,570 @@ fn doctor_live_checks_reply_and_tool_calling() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(text.contains("FAIL live tools") && text.contains("may not support tool calling"), "{text}");
+}
+
+// SPEC-0004 AC11 (GRAFT-0057): custom commands from .agents/commands.
+#[test]
+fn custom_commands_expand_in_run() {
+    let ws = Ws::new("commands");
+    std::fs::create_dir_all(ws.0.join(".agents/commands")).unwrap();
+    std::fs::write(ws.0.join(".agents/commands/explain.md"), "Explain $ARGUMENTS in two sentences.\n").unwrap();
+    let model = ws.script(json!([{"text": "It greets."}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "/explain", "main.rs"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let id = events(&out)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session_id, .. } => session_id,
+            _ => None,
+        })
+        .unwrap();
+    let saved = ws.read(&format!(".oxgraft/sessions/{id}.json"));
+    assert!(saved.contains("Explain main.rs in two sentences."), "{saved}");
+
+    let out = ws.oxgraft(&["run", "--model", &model, "/nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("available: /explain"));
+}
+
+// Chat `!command` (GRAFT-0058): runs without the model; output goes with the next message.
+#[test]
+fn chat_bang_runs_a_command_and_passes_its_output_on() {
+    use std::io::Write as _;
+    let ws = Ws::new("bang");
+    let model = ws.script(json!([{"text": "noted"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"!echo bang-output\nwhat did it print?\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("bang-output"), "{err}");
+    let sessions = std::fs::read_dir(ws.0.join(".oxgraft/sessions")).unwrap();
+    let file = sessions.flatten().find(|e| e.path().extension().is_some_and(|x| x == "json")).unwrap();
+    let saved = std::fs::read_to_string(file.path()).unwrap();
+    assert!(saved.contains("I ran `echo bang-output` myself") && saved.contains("what did it print?"), "{saved}");
+}
+
+// SPEC-0004 AC12 (GRAFT-0063): headless runs report the files they changed.
+#[test]
+fn json_runs_report_changed_files() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("fileschanged");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "src/new.rs", "content": "fn x() {}\n"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo hi > from_shell.txt"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let events = events(&out);
+    let files = events
+        .iter()
+        .find_map(|e| match e {
+            Event::FilesChanged { files } => Some(files.clone()),
+            _ => None,
+        })
+        .expect("a files_changed event");
+    assert!(files.contains(&"src/new.rs".to_string()) && files.contains(&"from_shell.txt".to_string()), "{files:?}");
+    let pos = |f: fn(&Event) -> bool| events.iter().position(f).unwrap();
+    assert!(pos(|e| matches!(e, Event::FilesChanged { .. })) < pos(|e| matches!(e, Event::SessionFinished { .. })));
+
+    // Nothing changed: no event.
+    let model = ws.script(json!([{"text": "nothing to do"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "look"]);
+    assert!(!self::events(&out).iter().any(|e| matches!(e, Event::FilesChanged { .. })));
+}
+
+// GRAFT-0064: doctor warns about Ollama's small default context.
+#[test]
+fn doctor_warns_about_ollama_context() {
+    let ws = Ws::new("ollamawarn");
+    let out = ws.oxgraft(&["doctor", "--model", "ollama/qwen3"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("OLLAMA_CONTEXT_LENGTH"), "{text}");
+}
+
+// SPEC-0004 AC13 (GRAFT-0066): export a session as Markdown.
+#[test]
+fn sessions_export_as_markdown() {
+    let ws = Ws::new("export");
+    std::fs::write(ws.0.join("a.txt"), "alpha\n").unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"text": "The file says alpha."}
+    ]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "what is in a.txt?"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["export"]);
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(md.starts_with("# what is in a.txt?"), "{md}");
+    for expect in ["## User", "**→ read**", "alpha", "## Oxgraft", "The file says alpha."] {
+        assert!(md.contains(expect), "missing {expect}:\n{md}");
+    }
+    let file = ws.0.join("t.md");
+    assert_eq!(ws.oxgraft(&["export", "-o", file.to_str().unwrap()]).status.code(), Some(0));
+    assert!(std::fs::read_to_string(file).unwrap().contains("The file says alpha."));
+}
+
+// SPEC-0004 AC15 (GRAFT-0070): --plan is read-only.
+#[test]
+fn plan_mode_changes_nothing() {
+    let ws = Ws::new("plan");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "x.txt", "content": "x"}}]},
+        {"text": "1. Create x.txt."}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--plan", "--model", &model, "add x.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!ws.0.join("x.txt").exists());
+    assert!(
+        events(&out)
+            .iter()
+            .any(|e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("read-only")))
+    );
+    assert_eq!(ws.oxgraft(&["run", "--plan", "--mode", "full-auto", "--model", &model, "x"]).status.code(), Some(2));
+}
+
+// Review finding: a task that is just an absolute path is a task, not a custom command.
+#[test]
+fn absolute_path_tasks_are_not_commands() {
+    let ws = Ws::new("abspath");
+    let model = ws.script(json!([{"text": "looked"}]));
+    let out = ws.oxgraft(&["run", "--model", &model, "/tmp/notes.txt"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+// `sessions --json`: one object per session, for scripts.
+#[test]
+fn sessions_list_as_json() {
+    let ws = Ws::new("sessionsjson");
+    let model = ws.script(json!([{"text": "hi"}]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "say hi"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["sessions", "--json"]);
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or_default().to_string();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["title"], "say hi");
+    assert_eq!(v["messages"], 2);
+}
+
+// GRAFT-0075: --quiet prints only the final answer; --output-last-message saves it.
+#[test]
+fn quiet_runs_print_only_the_answer() {
+    let ws = Ws::new("quiet");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "ls", "input": {}}]},
+        {"text": "The answer is 42."}
+    ]));
+    let file = ws.0.join("answer.txt");
+    let out = ws.oxgraft(&["run", "-q", "--output-last-message", file.to_str().unwrap(), "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "The answer is 42.\n");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("→ ls"));
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "The answer is 42.");
+    assert_eq!(ws.oxgraft(&["run", "-q", "--json", "--model", &model, "x"]).status.code(), Some(2));
+}
+
+// GRAFT-0108: --ephemeral runs leave no session file behind.
+#[test]
+fn ephemeral_runs_save_no_session() {
+    let ws = Ws::new("ephemeral");
+    std::fs::write(ws.0.join("a.txt"), "secret original\n").unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "task", "input": {"prompt": "look around"}}]},
+        {"tool_calls": [{"name": "ls", "input": {}}]},
+        {"text": "REPORT: one file"},
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"tool_calls": [{"name": "write", "input": {"path": "a.txt", "content": "changed\n"}}]},
+        {"text": "listed"}
+    ]));
+    let out = ws.oxgraft(&["run", "--ephemeral", "--yes", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("session not saved"));
+    let dir = ws.0.join(".oxgraft/sessions");
+    let saved = std::fs::read_dir(&dir)
+        .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count());
+    assert_eq!(saved.unwrap_or(0), 0, "no session file is written");
+    assert_eq!(ws.read("a.txt"), "changed\n");
+    let leftovers: Vec<_> = walk(&dir);
+    assert!(leftovers.is_empty(), "nothing under .oxgraft/sessions: {leftovers:?}");
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else if p.file_name().is_none_or(|n| n != ".gitignore") {
+            out.push(p);
+        }
+    }
+    out
+}
+
+// GRAFT-0106: /agents lists the user's named subagents.
+#[test]
+fn chat_lists_named_agents() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatagents");
+    let home = ws.0.join("home");
+    std::fs::create_dir_all(home.join(".agents/agents")).unwrap();
+    std::fs::write(
+        home.join(".agents/agents/reviewer.md"),
+        "---\ndescription: Reviews diffs\ntools: Read, Grep\n---\nYou review code.\n",
+    )
+    .unwrap();
+    let model = ws.script(json!([{"text": "unused"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"/agents\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("reviewer") && err.contains("Reviews diffs") && err.contains("read, grep"), "{err}");
+}
+
+// GRAFT-0077: /mode switches approval mode inside chat.
+#[test]
+fn chat_mode_switches_approvals() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatmode");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "made.txt", "content": "x"}}]},
+        {"text": "written"}
+    ]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"/mode\n/mode yolo\n/mode auto-edit\nmake the file\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("mode: suggest") && err.contains("unknown mode `yolo`") && err.contains("mode: auto-edit"),
+        "{err}"
+    );
+    assert!(ws.0.join("made.txt").exists(), "auto-edit allowed the write without a prompt: {err}");
+}
+
+// GRAFT-0083: /model switches the model mid-chat.
+#[test]
+fn chat_model_switches_provider() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatmodel");
+    let first = ws.script(json!([{"text": "from the first model"}]));
+    let second_path = ws.0.join("second.json");
+    std::fs::write(&second_path, json!({"turns": [{"text": "from the second model"}]}).to_string()).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &first])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = format!("hello\n/model nope/x\n/model mock:{}\nhello again\n/exit\n", second_path.display());
+    child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("from the first model") && stdout.contains("from the second model"), "{stdout}\n{stderr}");
+    assert!(stderr.contains("cannot switch to `nope/x`"), "{stderr}");
+}
+
+// GRAFT-0087: token use per model across sessions.
+#[test]
+fn stats_sum_usage_per_model() {
+    let ws = Ws::new("stats");
+    let model = ws.script(json!([{"text": "a"}]));
+    for _ in 0..2 {
+        assert_eq!(ws.oxgraft(&["run", "--json", "--model", &model, "x"]).status.code(), Some(0));
+    }
+    let out = ws.oxgraft(&["stats", "--json"]);
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or_default().to_string();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["sessions"], 2);
+    assert!(v["input_tokens"].as_u64().unwrap() > 0);
+    assert!(String::from_utf8_lossy(&ws.oxgraft(&["stats"]).stdout).contains("SESSIONS"));
+}
+
+// doctor checks subagent_model credentials too.
+#[test]
+fn doctor_checks_the_subagent_model() {
+    let ws = Ws::new("doctorsub");
+    let model = ws.script(json!([]));
+    let user = ws.0.join("no-user-config").join("oxgraft");
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::write(user.join("config.toml"), "subagent_model = \"nope/x\"\n").unwrap();
+    let out = ws.oxgraft(&["doctor", "--model", &model]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("FAIL subagent"), "{text}");
+}
+
+// GRAFT-0088: `oxgraft diff` shows what a session changed, shell changes included.
+#[test]
+fn diff_shows_session_changes() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("diff");
+    std::fs::write(ws.0.join("a.txt"), "one\n").unwrap();
+    let edit = "<<<<<<< SEARCH\none\n=======\ntwo\n>>>>>>> REPLACE";
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "read", "input": {"path": "a.txt"}}]},
+        {"tool_calls": [{"name": "edit", "input": {"path": "a.txt", "edit": edit}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo made > b.txt"}}]},
+        {"text": "done"}
+    ]));
+    assert_eq!(ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "x"]).status.code(), Some(0));
+    let out = ws.oxgraft(&["diff"]);
+    let patch = String::from_utf8_lossy(&out.stdout);
+    assert!(patch.contains("-one") && patch.contains("+two") && patch.contains("+made"), "{patch}");
+}
+
+// GRAFT-0089: `oxgraft config` shows resolved settings and sources.
+#[test]
+fn config_command_shows_resolved_settings() {
+    let ws = Ws::new("configcmd");
+    std::fs::create_dir_all(ws.0.join(".oxgraft")).unwrap();
+    std::fs::write(ws.0.join(".oxgraft/config.toml"), "max_turns = 7\nprofile = \"ci\"\n").unwrap();
+    let out = ws.oxgraft(&["config", "--mode", "auto-edit"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for expect in [
+        "max_turns            7",
+        "approval_mode        auto-edit",
+        "trusted              no",
+        "profile              auto",
+        "ignoring `profile",
+    ] {
+        assert!(text.contains(expect), "missing {expect}:\n{text}");
+    }
+}
+
+// GRAFT-0097: --allow-tool / --deny-tool for one run.
+#[test]
+fn tool_flags_allow_and_deny_for_a_run() {
+    let ws = Ws::new("toolflags");
+    let turns = json!([
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo allowed"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "ls"}}]},
+        {"text": "done"}
+    ]);
+    // No --yes: asks are declined, so `echo` passing proves the allow flag.
+    let model = ws.script(turns.clone());
+    let out = ws.oxgraft(&["run", "--json", "--allow-tool", "bash:echo *", "--model", &model, "x"]);
+    let r: Vec<(bool, String)> = events(&out)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::ToolResult { ok, output, .. } => Some((ok, output)),
+            _ => None,
+        })
+        .collect();
+    assert!(r[0].0 && r[0].1.contains("allowed") && !r[1].0, "{r:?}");
+    let model = ws.script(turns);
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--deny-tool", "bash", "--model", &model, "x"]);
+    let denied = events(&out)
+        .into_iter()
+        .any(|e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("--deny-tool")));
+    assert!(denied);
+}
+
+// GRAFT-0100: /resume switches to a saved session inside chat.
+#[test]
+fn chat_resume_switches_session() {
+    use std::io::Write as _;
+    let ws = Ws::new("chatresume");
+    let model = ws.script(json!([{"text": "earlier answer"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "earlier task"]);
+    let id = events(&out)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session_id, .. } => session_id,
+            _ => None,
+        })
+        .unwrap();
+    let model = ws.script(json!([{"text": "continued"}]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = format!("/resume {id}\n/resume nope\nnext question\n/export t.md\n/exit\n");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("resumed session {id}")) && err.contains("last reply: earlier answer"), "{err}");
+    assert!(err.contains("resume: "), "{err}");
+    let saved = ws.read(&format!(".oxgraft/sessions/{id}.json"));
+    assert!(saved.contains("next question"), "the resumed session continued");
+    assert!(ws.read("t.md").contains("next question"), "/export wrote the transcript");
+}
+
+// GRAFT-0101: --output-schema makes the final answer schema-valid JSON.
+#[test]
+fn output_schema_yields_valid_json() {
+    let ws = Ws::new("schema");
+    std::fs::write(
+        ws.0.join("schema.json"),
+        r#"{"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}"#,
+    )
+    .unwrap();
+    let fenced = format!("{}json\n{}\n{}", "```", r#"{"summary": "all good"}"#, "```");
+    let model = ws.script(json!([
+        {"text": "Here is the summary: all good."},
+        {"text": fenced}
+    ]));
+    let out = ws.oxgraft(&["run", "-q", "--output-schema", "schema.json", "--model", &model, "summarise"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r#"{"summary":"all good"}"#);
+}
+
+// GRAFT-0102: --worktree leaves the checkout untouched.
+#[test]
+fn worktree_runs_leave_the_checkout_alone() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("worktree");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&ws.0)
+            .output()
+            .unwrap();
+        assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    };
+    git(&["init", "-q"]);
+    std::fs::write(ws.0.join("README.md"), "hi\n").unwrap();
+    git(&["add", "README.md"]);
+    git(&["commit", "-q", "-m", "init"]);
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "new.txt", "content": "made in worktree\n"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--yes", "--worktree", "--model", &model, "add a file"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(!ws.0.join("new.txt").exists(), "the checkout is untouched");
+    let worktrees = ws.0.join(".oxgraft/worktrees");
+    let made = std::fs::read_dir(&worktrees).unwrap().flatten().any(|e| e.path().join("new.txt").exists());
+    assert!(made, "{err}");
+    assert!(err.contains("on branch oxgraft/"), "{err}");
+    let status = Command::new("git").args(["status", "--porcelain"]).current_dir(&ws.0).output().unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(!status.contains(".oxgraft"), "the worktree is ignored in the user's repo: {status}");
+    // The run's changes are committed on the branch, so it can be merged.
+    let log = Command::new("git").args(["log", "--all", "--oneline"]).current_dir(&ws.0).output().unwrap();
+    let log = String::from_utf8_lossy(&log.stdout);
+    assert!(log.contains("oxgraft: add a file"), "{log}");
+    assert!(err.contains("merge with `git merge oxgraft/"), "{err}");
+}
+
+// Review fix: an answer that never matches the schema is a failure (exit 3), not success.
+#[test]
+fn output_schema_failure_is_not_success() {
+    let ws = Ws::new("schemafail");
+    std::fs::write(ws.0.join("schema.json"), r#"{"type": "object", "required": ["summary"]}"#).unwrap();
+    let model = ws.script(json!([{"text": "prose"}, {"text": "prose"}, {"text": "prose"}, {"text": "still prose"}]));
+    let out = ws.oxgraft(&["run", "-q", "--output-schema", "schema.json", "--model", &model, "x"]);
+    assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("doesn't match the output schema"));
+}
+
+// GRAFT-0103: /commit commits with a model-written message, minus attribution lines.
+#[test]
+fn chat_commit_writes_a_message() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    use std::io::Write as _;
+    let ws = Ws::new("chatcommit");
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&ws.0)
+            .output()
+            .unwrap()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(ws.0.join("README.md"), "hi\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "notes.txt", "content": "n\n"}}]},
+        {"text": "done"},
+        {"text": "feat: add notes\n\nCo-authored-by: Someone <x@y>"}
+    ]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oxgraft"))
+        .args(["chat", "--yes", "--model", &model])
+        .current_dir(&ws.0)
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("XDG_CONFIG_HOME", ws.0.join("no-user-config"))
+        .env("APPDATA", ws.0.join("no-user-config"))
+        .env("OXGRAFT_DATA_DIR", ws.data())
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::fs::write(ws.0.join(".env"), "TOKEN=hunter2\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"add notes\n/commit\n/exit\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("committed"), "{err}");
+    let log = String::from_utf8_lossy(&git(&["log", "-1", "--format=%B"]).stdout).to_string();
+    assert!(log.starts_with("feat: add notes") && !log.contains("Co-authored-by"), "{log}");
+    // Untracked files the session didn't create are left alone and named.
+    let committed = String::from_utf8_lossy(&git(&["show", "--name-only", "--format="]).stdout).to_string();
+    assert!(committed.contains("notes.txt") && !committed.contains(".env"), "{committed}");
+    assert!(err.contains("not included") && err.contains(".env"), "{err}");
+    let staged = String::from_utf8_lossy(&git(&["diff", "--cached", "--name-only"]).stdout).to_string();
+    assert!(staged.trim().is_empty(), "{staged}");
 }

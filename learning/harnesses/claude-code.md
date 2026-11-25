@@ -3,7 +3,7 @@ id: claude-code
 repo: anthropics/claude-code
 license: proprietary
 policy: reference
-last_reviewed: "v2.1.331"
+last_reviewed: "v2.1.332"
 status: reviewed
 ---
 
@@ -55,3 +55,4 @@ Claims without "Verified" are what the docs say.
 | Date | Upstream range | Reviewer | Summary |
 |---|---|---|---|
 | 2026-11-25 | first review at v2.1.331 | research agent for the Oxgraft build session | deny-first rules, egress allowlist proxy, worktree subagents; no Windows sandbox, file tools bypass sandbox reads |
+| 2026-11-25 | v2.1.331 → v2.1.332 (release notes) | Oxgraft build session (Claude Code) | Named-pipe reads no longer hang (→ GRAFT-0092), hook output over ~50k characters shortened (→ GRAFT-0093), shorter-summary retry when compaction is cut off, wildcard-rule matching made linear |
