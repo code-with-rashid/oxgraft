@@ -3,57 +3,80 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the autonomous build session (Claude Code)._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–68._
 
 ## Current milestone
 
-**M3 (grafts) mostly done; M4 (evidence) not started.** See `ROADMAP.md`.
+**M3 (grafts) done; M4 (evidence) not started.** See `ROADMAP.md`.
 
-## Works now (verified by tests; CI on Linux, macOS, Windows)
+## Works now (verified by tests locally on Linux/WSL; see "Not verified" for CI)
 
 - **Any model**: Anthropic native Messages API (raw HTTP, prompt caching, refusal
   fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets, `mock:`.
-  Retries with backoff and `retry-after`. `auto` profile picks the edit format by
-  model family.
-- **Tools**: read, write, edit (4 formats + old/new_string), ls, glob, grep, bash
-  (POSIX sh, Git Bash or PowerShell on Windows), todo, web_fetch, skill, MCP
-  (stdio), read-only `task` subagent.
-- **Safety**: workspace path confinement; deny-wins approval rules with per-part
-  shell command checks and justifications; `[[rules]]` config; protected paths;
-  approval previews; read-before-edit and stale-file guards; OS sandbox profile
-  (bubblewrap/Seatbelt, fails closed); fail-closed pre_tool hooks; trusted-workspace
-  gate for repo hooks, MCP servers, rules, model and verify_command; `oxgraft undo`.
-- **Stability**: loop guard, mistake breaker, max turns, token budget, per-turn call
-  cap, size caps, max_tokens handling, compaction, Ctrl-C interrupts, crash-safe
-  sessions with repair, fuzz-tested strategies, verify_command feedback loop.
-- **CLI**: chat (/help /undo /cost /clear), run (--json, --resume), init, doctor,
-  sessions, undo, models, strategies, profile.
+  **Streaming** (SSE) for both, with `text_delta` events; retries with backoff
+  and `retry-after`. `auto` profile picks the edit format by model family.
+- **Tools**: read, write, edit (4 formats, old/new_string, batched `edits`), ls,
+  glob, grep, `map` (ranked repo outline), bash (POSIX sh, Git Bash or PowerShell
+  on Windows), todo, web_fetch, skill, MCP (stdio), read-only `task` subagent.
+- **Safety**: workspace path confinement (symlinks included); deny-wins rules with
+  per-part shell checks, justifications and self-testing `match`/`not_match`
+  examples; **risk rails** (pipe-to-shell, `rm -rf`, raw disk, mkfs, sudo always
+  ask, even after "always"); protected paths; approval modes
+  (`--mode read-only|suggest|auto-edit|full-auto`); `inert_reads` strategy
+  (`fewer-prompts` profile); OS sandbox profile (fails closed); fail-closed
+  pre_tool hooks; trusted-workspace gate for hooks, MCP, rules, model, profile,
+  approval mode, verify_command and the repo's own `profiles/`; `@imports`
+  confined to the workspace; web/MCP output fenced as `<untrusted>`.
+- **Recovery**: per-turn **checkpoints** in `.oxgraft/checkpoints.git` (captures
+  shell changes; never touches the user's `.git`), `oxgraft checkpoints`,
+  `oxgraft restore N` (undoable), change summary after each run, `oxgraft undo`.
+- **Stability**: loop guard, mistake breaker, malformed tool calls re-asked out of
+  history, max turns, token budget, per-turn call cap, size caps, max_tokens
+  handling, compaction, Ctrl-C, crash-safe sessions with repair, fuzz-tested
+  strategies, verify_command loop, `run --until <check>`.
+- **CLI**: chat, run (`--json`, `--resume`, `--fork ID@N`, `--until`), init,
+  doctor, sessions, checkpoints, restore, undo, models, strategies, profile.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 41 graft records; 52 logged iterations; specs SPEC-0001..0006.
+  archived); 55 graft records; 68 logged iterations; specs SPEC-0001..0006;
+  ADRs 0001–0007.
 
 ## Not verified
 
-- **No real model has been called.** No API key or local model server was available.
-  Providers are tested against a local fake HTTP server and the mock. First human
-  task: `oxgraft doctor`, then `oxgraft run "summarise this repo"` with a real key
-  and with Ollama.
+- **CI has not run on iterations 53–68.** GitHub was unreachable from the build
+  machine for the whole session (other sites worked), so these commits are
+  local only. Push, then check the Windows and macOS jobs first: new tests use
+  git (checkpoints), Git Bash/PowerShell (`cat`, `echo`), and a Unix-only
+  symlink test.
+- **No real model has been called.** Providers are tested against a local fake
+  HTTP server (including SSE streams) and the mock. First human task:
+  `oxgraft doctor`, then `oxgraft run "summarise this repo"` with a real key and
+  with Ollama. Streaming against real servers is the riskiest untested path;
+  `OXGRAFT_STREAM=0` turns it off.
+- OpenAI-compatible streaming sends `stream_options.include_usage` only for
+  openai, openrouter and deepseek; others may report zero tokens when streaming.
 - Release workflow never run (no tag pushed). Packages not published.
 - No comparative evaluation: every graft is `trial`. The `auto` profile is a trial default.
 - macOS Seatbelt profile is exercised only by CI's test, not by a human.
 
 ## Next up
 
-1. Real-model smoke tests (Anthropic, OpenAI-compatible, Ollama); fix what breaks.
-2. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats (GRAFT-0001/0015/0024/0038).
-3. Top backlog items from reviews (ROADMAP "Backlog from reviews").
+1. Push and get CI green on all three OSes; fix anything platform-specific.
+2. Real-model smoke tests (Anthropic, OpenAI-compatible, Ollama), streaming on and off.
+3. agentic-arena adapter for `oxgraft run --json`, then evaluate edit formats
+   (GRAFT-0001/0015/0024/0038) and `fewer-prompts` vs default.
+4. Remaining backlog (ROADMAP): egress proxy allowlist, LSP diagnostics,
+   worktree-isolated writing subagents, sandbox expansion on denial.
 
 ## Known problems
 
-- No streaming output yet; long responses appear when complete.
 - `web_fetch` HTML-to-text is basic.
+- Checkpoints restore removes files that became tracked after `.gitignore`
+  changed; the pre-restore checkpoint keeps them recoverable.
 
 ## Dev notes
 
 - On the maintainer's Windows machine Rust lives in WSL Ubuntu:
   `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/rashi/dev/opensource/oxgraft && CARGO_TARGET_DIR=~/oxgraft-target cargo test --workspace"`.
 - Prefer the Edit tool over shell heredocs for Rust code containing backslashes.
+- Python on this machine defaults to cp1252: run scripts with `PYTHONUTF8=1` and
+  open files with `encoding="utf-8"`, or non-ASCII characters get corrupted.
