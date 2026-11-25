@@ -282,7 +282,7 @@ impl StreamState {
         }
         let v: Value = serde_json::from_str(data)
             .map_err(|e| ProviderError::new(provider, ErrorKind::Protocol, format!("bad stream chunk: {e}")))?;
-        if let Some(err) = v.get("error") {
+        if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
             let message = err.get("message").and_then(Value::as_str).unwrap_or("stream error").to_string();
             return Err(ProviderError::new(provider, ErrorKind::Transient, format!("stream error: {message}")));
         }
@@ -297,8 +297,21 @@ impl StreamState {
             self.text.push_str(t);
             on_text(t);
         }
-        for (pos, call) in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten().enumerate() {
-            let index = call.get("index").and_then(Value::as_u64).map_or(pos, |i| i as usize);
+        for call in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+            // Without `index`, a chunk carrying a new `id` starts a new call; one without
+            // continues the latest call (servers differ here).
+            let index = match call.get("index").and_then(Value::as_u64) {
+                Some(i) => i as usize,
+                None => {
+                    let id = call.get("id").and_then(Value::as_str);
+                    let last_id = self.calls.last().and_then(|c| c.get("id")).and_then(Value::as_str);
+                    match (id, last_id) {
+                        (Some(id), Some(last)) if id == last => self.calls.len() - 1,
+                        (Some(_), _) => self.calls.len(),
+                        (None, _) => self.calls.len().saturating_sub(1),
+                    }
+                }
+            };
             while self.calls.len() <= index {
                 self.calls.push(json!({"function": {"name": "", "arguments": ""}}));
             }
@@ -493,5 +506,18 @@ mod tests {
         assert_eq!(state.finish("x").unwrap_err().kind, ErrorKind::Transient);
         let mut state = StreamState::default();
         assert!(state.apply("x", r#"{"error":{"message":"overloaded"}}"#, &mut |_| {}).is_err());
+
+        // `"error": null` is not an error; calls without `index` are told apart by id.
+        let mut state = StreamState::default();
+        for c in [
+            r#"{"error":null,"choices":[{"delta":{"tool_calls":[{"id":"a","function":{"name":"ls","arguments":"{}"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"id":"b","function":{"name":"read","arguments":"{\"path\""}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":":\"x\"}"}}]},"finish_reason":"tool_calls"}]}"#,
+        ] {
+            state.apply("x", c, &mut |_| {}).unwrap();
+        }
+        let c = state.finish("x").unwrap();
+        assert_eq!(c.content.len(), 2, "{:?}", c.content);
+        assert_eq!(c.content[1], Block::ToolUse { id: "b".into(), name: "read".into(), input: json!({"path": "x"}) });
     }
 }

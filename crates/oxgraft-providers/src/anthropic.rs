@@ -115,6 +115,10 @@ fn messages_json(req: &CompletionRequest) -> Vec<Value> {
                     Block::Text { text } if text.is_empty() => None,
                     Block::Text { text } => Some(json!({"type": "text", "text": text})),
                     Block::ToolUse { id, name, input } => {
+                        // The API requires an object. Input that didn't parse (e.g. cut off
+                        // by max_tokens) is kept as a string in history; send it wrapped,
+                        // or every later request in the session would be rejected.
+                        let input = if input.is_object() { input.clone() } else { json!({ "unparsed_input": input }) };
                         Some(json!({"type": "tool_use", "id": id, "name": name, "input": input}))
                     }
                     Block::ToolResult { tool_use_id, content, is_error } => Some(json!({
@@ -406,6 +410,29 @@ mod tests {
         assert!(provider().request_body(&req).get("fallbacks").is_none());
         req.model = DEFAULT_MODEL.into();
         assert!(provider().request_body(&req).get("fallbacks").is_some());
+    }
+
+    // SPEC-0001 AC8: unparseable tool input (kept as a string) is sent as an object.
+    #[test]
+    fn non_object_tool_input_is_sent_wrapped() {
+        let req = CompletionRequest {
+            model: DEFAULT_MODEL.into(),
+            system: String::new(),
+            messages: vec![
+                Message::user("x"),
+                Message::assistant(vec![Block::ToolUse {
+                    id: "t".into(),
+                    name: "write".into(),
+                    input: json!("{\"path\": \"a"),
+                }]),
+            ],
+            tools: vec![],
+            max_tokens: 10,
+        };
+        let body = provider().request_body(&req);
+        let input = &body["messages"][1]["content"][0]["input"];
+        assert!(input.is_object(), "{body}");
+        assert_eq!(input["unparsed_input"], "{\"path\": \"a");
     }
 
     // SPEC-0001 AC8: the stream rebuilds the same completion as the blocking response.
