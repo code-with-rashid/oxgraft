@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -90,3 +90,6 @@ otherwise an error explaining how to choose one.
 - **AC17** `run --quiet` prints only the final answer on stdout (warnings and the
   stop reason on stderr); `--output-last-message FILE` also writes it to FILE;
   `--quiet` cannot be combined with `--json`.
+- **AC18** In chat, `/mode X` switches the approval mode for the following
+  messages; `/mode` shows the current mode; an unknown mode is reported and
+  changes nothing.

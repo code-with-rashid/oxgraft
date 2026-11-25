@@ -183,6 +183,9 @@ fn available() -> Available {
     available_with(Vec::new())
 }
 
+/// Approval modes, in order of autonomy.
+const MODES: &[&str] = &["read-only", "suggest", "auto-edit", "full-auto"];
+
 /// Rules for an approval mode (GRAFT-0052, after Codex's suggest / auto-edit /
 /// full-auto and read-only modes). They sit between the built-in defaults and the
 /// user's own rules, so explicit rules still win. Protected paths and risk rails
@@ -386,6 +389,10 @@ fn load_session(ws: &Path, id: &str) -> Result<Session, (u8, String)> {
 struct Setup {
     ws: PathBuf,
     toolkit: Toolkit,
+    /// What built `toolkit`, so chat can build one per approval mode (GRAFT-0077).
+    profile_text: String,
+    user_rules: Vec<oxgraft_strategies::approval::Rule>,
+    mode: String,
     provider: Box<dyn oxgraft_seams::Provider>,
     model: String,
     config: AgentConfig,
@@ -473,7 +480,17 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
         }
         eprintln!("\noxgraft: interrupting… (press Ctrl-C again to quit)");
     });
-    Ok(Setup { ws, toolkit, provider, model: model_spec, config, tools })
+    Ok(Setup {
+        ws,
+        toolkit,
+        profile_text,
+        user_rules: cfg.rules.clone(),
+        mode: cfg.approval_mode.clone(),
+        provider,
+        model: model_spec,
+        config,
+        tools,
+    })
 }
 
 fn status_code(status: &Status) -> u8 {
@@ -678,7 +695,18 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
     let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> =
         if common.yes { Box::new(Fixed(Answer::Yes)) } else { Box::new(TerminalApprover) };
-    let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
+    // One toolkit per approval mode, so `/mode` can switch without restarting.
+    let mode_toolkits: Vec<Toolkit> = MODES
+        .iter()
+        .map(|m| {
+            let mut rules = mode_rules(m).map_err(usage)?;
+            rules.extend(s.user_rules.clone());
+            let profile = Profile::from_toml(&s.profile_text).map_err(usage)?;
+            Toolkit::assemble(profile, available_with(rules)).map_err(usage)
+        })
+        .collect::<Result<_, _>>()?;
+    let mut mode = s.mode.clone();
+    let mut agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     eprintln!(
         "oxgraft · {} · profile {} · {}\nType a task, or /help for commands.",
         s.model,
@@ -763,6 +791,19 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            m if m == "/mode" || m.starts_with("/mode ") => {
+                let wanted = m.trim_start_matches("/mode").trim();
+                if wanted.is_empty() {
+                    eprintln!("mode: {mode} (choose one of: {})", MODES.join(", "));
+                } else if let Some(i) = MODES.iter().position(|x| *x == wanted) {
+                    agent.toolkit = &mode_toolkits[i];
+                    mode = wanted.to_string();
+                    eprintln!("mode: {mode} (risky commands and protected paths still ask)");
+                } else {
+                    eprintln!("unknown mode `{wanted}`; choose one of: {}", MODES.join(", "));
+                }
+                continue;
+            }
             "/compact" => {
                 let mut renderer = render::Human::default();
                 if agent.compact_session(&mut session, &mut |e: &Event| renderer.event(e)) {
@@ -780,7 +821,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
             "/help" => {
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
-                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n\
+                     /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n\
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."

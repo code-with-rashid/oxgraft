@@ -110,3 +110,4 @@ honestly: an iteration is only logged when its tests pass.
 | 102 | 2026-11-25 | — | `oxgraft sessions --json` (one object per session) for scripts | adopt | — | SPEC-0004 | `sessions_list_as_json` |
 | 103 | 2026-11-25 | codex, claude-code | `run --quiet` prints only the final answer; `--output-last-message FILE` saves it | adopt | GRAFT-0075 | SPEC-0004 | `quiet_runs_print_only_the_answer` |
 | 104 | 2026-11-25 | claude-code | Chat `/compact`: summarise the conversation on demand (`Agent::compact_session`) | adopt | GRAFT-0076 | SPEC-0006 | `sessions_compact_on_request` |
+| 105 | 2026-11-25 | claude-code, codex | Chat `/mode X` switches approval mode without restarting (one toolkit per mode) | adopt | GRAFT-0077 | SPEC-0004 | `chat_mode_switches_approvals` |
