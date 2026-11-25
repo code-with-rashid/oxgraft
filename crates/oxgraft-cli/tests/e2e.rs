@@ -494,3 +494,25 @@ fn chat_lists_and_restores_checkpoints() {
     assert!(err.contains("usage: /restore N"), "{err}");
     assert!(!ws.0.join("made.txt").exists(), "restored to before the task");
 }
+
+// `doctor --live` sends a plain request and a tool-call request to the model.
+#[test]
+fn doctor_live_checks_reply_and_tool_calling() {
+    let ws = Ws::new("doctorlive");
+    let model = ws.script(json!([
+        {"text": "ready"},
+        {"tool_calls": [{"name": "echo", "input": {"text": "ping"}}]}
+    ]));
+    let out = ws.oxgraft(&["doctor", "--live", "--model", &model]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("ok   live reply") && text.contains("\"ready\""), "{text}");
+    assert!(text.contains("ok   live tools") && text.contains("tool call works"), "{text}");
+
+    // A model that answers in prose instead of calling the tool is reported.
+    let model = ws.script(json!([{"text": "ready"}, {"text": "ping"}]));
+    let out = ws.oxgraft(&["doctor", "--live", "--model", &model]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("FAIL live tools") && text.contains("may not support tool calling"), "{text}");
+}
