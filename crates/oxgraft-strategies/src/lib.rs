@@ -24,7 +24,11 @@ pub fn contexts() -> Vec<Box<dyn ContextStrategy>> {
 }
 
 pub fn approvals() -> Vec<Box<dyn ApprovalPolicy>> {
-    vec![Box::new(approval::OrderedRules::default()), Box::new(approval::AllowAll)]
+    vec![
+        Box::new(approval::OrderedRules::default()),
+        Box::new(approval::InertReads::default()),
+        Box::new(approval::AllowAll),
+    ]
 }
 
 pub fn sandboxes() -> Vec<Box<dyn Sandbox>> {

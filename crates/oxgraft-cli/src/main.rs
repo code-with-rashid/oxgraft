@@ -124,7 +124,10 @@ fn available_with(rules: Vec<oxgraft_strategies::approval::Rule>) -> Available {
         edit_formats: oxgraft_strategies::edit_formats(),
         contexts: oxgraft_strategies::contexts(),
         approvals: vec![
-            Box::new(oxgraft_strategies::approval::OrderedRules::with_extra(rules)),
+            Box::new(oxgraft_strategies::approval::OrderedRules::with_extra(rules.clone())),
+            Box::new(oxgraft_strategies::approval::InertReads::new(
+                oxgraft_strategies::approval::OrderedRules::with_extra(rules),
+            )),
             Box::new(oxgraft_strategies::approval::AllowAll),
         ],
         sandboxes: oxgraft_strategies::sandboxes(),

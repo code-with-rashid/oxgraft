@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047]
 ---
 
 # SPEC-0002: Built-in tools
@@ -41,3 +41,9 @@ tools beat many overlapping ones) that is safe by default.
 - **AC7** `edit` and `write` record the file's previous content so a session
   can be undone (`oxgraft undo`), inspired by Cline checkpoints and Aider's
   git-based recovery (GRAFT-0005).
+- **AC8** Under the `inert_reads` approval strategy, a shell command runs
+  without asking only if the whole line is one known read-only command (`ls`,
+  `cat`, `grep`, `git status|diff|log|show`, `find` without -exec/-delete, …)
+  with no redirection, substitution, pipeline, chaining, glob, assignment,
+  mutating option, or path outside the workspace, and no argument the rules
+  deny reading. Deny rules still win; everything else is decided by `ordered_rules`.

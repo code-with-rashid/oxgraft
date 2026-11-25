@@ -52,7 +52,7 @@ Exit codes: `0` done, `1` provider or internal failure, `2` usage/config error,
 
 ```toml
 model = "anthropic/claude-opus-5-5"
-profile = "auto"               # auto (by model family), default, baseline, ci, tolerant, codex-like, sandboxed, or a path
+profile = "auto"               # auto (by model family), default, baseline, ci, tolerant, codex-like, sandboxed, fewer-prompts, or a path
 effort = "high"                # Anthropic effort: low, medium, high, xhigh, max, none
 max_turns = 50
 max_tokens = 16000             # per response
@@ -124,5 +124,6 @@ strategy and the harness it was learned from.
 | `tolerant` | search_replace_tolerant | none | models that mangle whitespace |
 | `codex-like` | apply_patch | none | Codex-family models |
 | `sandboxed` | search_replace | workspace_write | unattended runs on Linux/macOS |
+| `fewer-prompts` | search_replace | none | read-only shell commands (`ls`, `git status`, `grep`…) run without asking |
 | `ci` | search_replace | none (approve all) | inside an outer container |
 | `baseline` | whole_file | none | the floor every graft is measured against |

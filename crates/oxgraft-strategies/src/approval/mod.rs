@@ -1,4 +1,6 @@
+mod inert;
 mod rails;
+pub use inert::{InertReads, is_inert};
 pub use rails::shell_risk;
 
 use oxgraft_seams::{Action, ApprovalPolicy, Decision, Origin, Provenance, Seam, Strategy, StrategyInfo};
