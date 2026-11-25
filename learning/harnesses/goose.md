@@ -3,7 +3,7 @@ id: goose
 repo: aaif-goose/goose
 license: Apache-2.0
 policy: adapt
-last_reviewed: "v1.60.2"
+last_reviewed: "v1.61.0"
 status: reviewed
 ---
 
@@ -51,3 +51,4 @@ Claims without "Verified" are what the docs say.
 | Date | Upstream range | Reviewer | Summary |
 |---|---|---|---|
 | 2026-11-25 | first review at v1.60.2 | research agent for the Oxgraft build session | adversary reviewer, fork/edit sessions, MCP-first; Autonomous default, fail-open hooks |
+| 2026-11-25 | v1.60.2 → v1.61.0 (release notes) | Oxgraft build session (Claude Code) | Thinking-only turns recovered (→ GRAFT-0090), terminal controls stripped from assistant text (→ GRAFT-0091), edit no-op reported (Oxgraft already does), MCP headers treated as secrets |

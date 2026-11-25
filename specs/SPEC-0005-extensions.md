@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072, GRAFT-0079, GRAFT-0081]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072, GRAFT-0079, GRAFT-0081, GRAFT-0093]
 ---
 
 # SPEC-0005: Extensions
@@ -54,3 +54,5 @@ scripts) without letting a cloned repository run code unasked.
 - **AC11** With `subagent_model` set, the `task` subagent runs on that model
   (and its provider); the main run is unaffected. Untrusted workspaces can't
   set it.
+- **AC12** Hook feedback passed to the model is at most its last 20,000
+  characters, with a note saying how much was left out.

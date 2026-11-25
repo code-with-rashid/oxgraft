@@ -130,3 +130,4 @@ honestly: an iteration is only logged when its tests pass.
 | 122 | 2026-11-25 | goose | Replies with no text and no tool calls (e.g. thinking-only) get a continue prompt instead of ending the run silently | adopt | GRAFT-0090 | SPEC-0003 | `empty_replies_are_not_final_answers` |
 | 123 | 2026-11-25 | goose | Terminal control sequences stripped from model text and tool summaries before printing | adopt | GRAFT-0091 | SPEC-0004 | `terminal_controls_are_stripped` |
 | 124 | 2026-11-25 | claude-code | read, edit and write refuse named pipes, sockets and devices instead of blocking | avoid | GRAFT-0092 | SPEC-0002 | `special_files_are_refused` |
+| 125 | 2026-11-25 | claude-code, goose | Hook feedback capped at its last 20,000 characters; goose v1.61.0 and Claude Code v2.1.332 reviewed from release notes | adopt | GRAFT-0093 | SPEC-0005 | `long_hook_output_is_shortened` |

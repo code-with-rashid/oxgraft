@@ -156,7 +156,9 @@ impl Hook {
             }
             Err(e) => return HookResult::Failed(format!("hook `{}`: {e}", self.command)),
         };
-        let err = reader.join().unwrap_or_default().trim().to_string();
+        // Hook output goes to the model: keep the end of very long output (GRAFT-0093,
+        // after Claude Code 2.1.332 shortening hook text over ~50,000 characters).
+        let err = keep_tail(reader.join().unwrap_or_default().trim(), MAX_HOOK_OUTPUT);
         let out: String = out_reader.join().unwrap_or_default().trim().chars().take(20_000).collect();
         match status.code() {
             Some(0) if capture && !out.is_empty() => HookResult::Context(out),
@@ -167,6 +169,23 @@ impl Hook {
             code => HookResult::Failed(format!("hook `{}` exited with {code:?}: {err}", self.command)),
         }
     }
+}
+
+/// Most hook output (stderr feedback) passed to the model.
+const MAX_HOOK_OUTPUT: usize = 20_000;
+
+/// The last `max` characters of `text`, with a note when something was cut.
+fn keep_tail(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(count - max).collect();
+    format!(
+        "[… {} earlier characters of hook output omitted]
+{tail}",
+        count - max
+    )
 }
 
 /// Run a verification command (build, lint, tests) in the workspace. Returns whether it
@@ -244,5 +263,13 @@ mod tests {
         let c: C = toml::from_str("[[hooks]]\nevent = \"post_tool\"\ncommand = \"fmt\"\n").unwrap();
         assert_eq!(c.hooks[0].event, HookEvent::PostTool);
         assert_eq!(c.hooks[0].timeout_secs, 60);
+    }
+
+    #[test]
+    fn long_hook_output_is_shortened() {
+        assert_eq!(keep_tail("short", 10), "short");
+        let long = "x".repeat(30) + "END";
+        let kept = keep_tail(&long, 5);
+        assert!(kept.ends_with("xxEND") && kept.contains("28 earlier characters"), "{kept}");
     }
 }
