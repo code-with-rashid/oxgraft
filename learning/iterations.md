@@ -67,3 +67,4 @@ honestly: an iteration is only logged when its tests pass.
 | 59 | 2026-11-25 | swe-agent, cline | Change summary after each run/chat turn (diff stat from checkpoints + one-command undo) | adopt | GRAFT-0048 | SPEC-0004 | `human_runs_end_with_a_change_summary` |
 | 60 | 2026-11-25 | pi, goose | `--fork ID@N` for run and chat: new session from a copy of another's history at a finished reply | adopt | GRAFT-0049 | SPEC-0004 | `sessions_can_be_forked` |
 | 61 | 2026-11-25 | — | Hooks and verify_command run in the bash tool's shell (Git Bash or PowerShell on Windows, not cmd) | fix | — | SPEC-0005 | `hooks::tests` |
+| 62 | 2026-11-25 | pi | `edit` takes `edits: [{old_string,new_string}]`, matched against the original, all-or-nothing | adopt | GRAFT-0050 | SPEC-0002 | `batched_edits_apply_together_or_not_at_all` |

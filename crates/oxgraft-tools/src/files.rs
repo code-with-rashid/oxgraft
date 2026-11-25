@@ -170,7 +170,9 @@ impl Tool for Edit {
         ToolSpec {
             name: "edit".into(),
             description: format!(
-                "Change an existing file. Read the file first. {}\nOn failure the file is left unchanged.",
+                "Change an existing file. Read the file first. {}\nTo make several exact replacements in one \
+                 call, send `edits: [{{\"old_string\": ..., \"new_string\": ...}}, ...]` instead of `edit`; each is \
+                 matched against the original file and all apply or none do.\nOn failure the file is left unchanged.",
                 format.instructions()
             ),
             input_schema: json!({
@@ -193,7 +195,11 @@ impl Tool for Edit {
         // Models trained on other harnesses often send `old_string`/`new_string`
         // (Claude Code, OpenCode). Accept that too rather than failing (GRAFT-0014).
         let legacy = input.get("edit").is_none() && input.get("old_string").is_some();
-        let edit = if legacy { "" } else { try_tool!(str_field(input, "edit")) };
+        // Several exact replacements in one call, each matched against the original
+        // file and applied together or not at all (GRAFT-0050, after Pi's multi-edit).
+        let batch = input.get("edit").is_none() && input.get("edits").is_some();
+        let legacy = legacy && !batch;
+        let edit = if legacy || batch { "" } else { try_tool!(str_field(input, "edit")) };
         let full = try_tool!(resolve(ctx.workspace, path));
         if let Some(msg) = too_large(&full, MAX_EDIT_BYTES, path) {
             return ToolOutput::error(msg);
@@ -206,7 +212,9 @@ impl Tool for Edit {
         // Models often send \r\n-free edits for CRLF files: normalise, then restore.
         let crlf = original.contains("\r\n");
         let base = if crlf { original.replace("\r\n", "\n") } else { original.clone() };
-        let result = if legacy {
+        let result = if batch {
+            apply_batch(&base, &input["edits"])
+        } else if legacy {
             let old = try_tool!(str_field(input, "old_string")).replace("\r\n", "\n");
             let new = try_tool!(str_field(input, "new_string")).replace("\r\n", "\n");
             let all = input.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
@@ -223,15 +231,14 @@ impl Tool for Edit {
         let updated = match result {
             Ok(text) => text,
             Err(e) => {
-                let probe = if legacy { input["old_string"].as_str().unwrap_or("") } else { edit };
-                let hint = nearest_lines(&base, probe)
-                    .map(|h| {
-                        format!(
-                            "
-{h}"
-                        )
-                    })
-                    .unwrap_or_default();
+                let probe = if legacy {
+                    input["old_string"].as_str().unwrap_or("")
+                } else if batch {
+                    ""
+                } else {
+                    edit
+                };
+                let hint = nearest_lines(&base, probe).map(|h| format!("\n{h}")).unwrap_or_default();
                 return ToolOutput::error(format!("edit failed, `{path}` unchanged: {e}{hint}"));
             }
         };
@@ -248,6 +255,48 @@ impl Tool for Edit {
             Err(e) => ToolOutput::error(format!("cannot write `{path}`: {e}")),
         }
     }
+}
+
+/// Apply `[{old_string, new_string}, ...]` to `base`: every `old_string` must occur
+/// exactly once in the original text and the matches must not overlap.
+fn apply_batch(base: &str, edits: &Value) -> Result<String, String> {
+    let Some(list) = edits.as_array().filter(|l| !l.is_empty()) else {
+        return Err("`edits` must be a non-empty list of {old_string, new_string}".into());
+    };
+    let mut spans = Vec::with_capacity(list.len());
+    for (i, e) in list.iter().enumerate() {
+        let n = i + 1;
+        let (Some(old), Some(new)) = (e["old_string"].as_str(), e["new_string"].as_str()) else {
+            return Err(format!("edit {n}: needs string `old_string` and `new_string`"));
+        };
+        let old = old.replace("\r\n", "\n");
+        if old.is_empty() {
+            return Err(format!("edit {n}: `old_string` is empty"));
+        }
+        let mut found = base.match_indices(old.as_str());
+        let Some((start, _)) = found.next() else {
+            return Err(format!("edit {n}: `old_string` not found: {:?}", truncate(&old, 200)));
+        };
+        if found.next().is_some() {
+            return Err(format!("edit {n}: `old_string` matches more than once; add context to make it unique"));
+        }
+        spans.push((start, start + old.len(), new.replace("\r\n", "\n"), n));
+    }
+    spans.sort_by_key(|s| s.0);
+    for pair in spans.windows(2) {
+        if pair[1].0 < pair[0].1 {
+            return Err(format!("edits {} and {} overlap; merge them into one", pair[0].3, pair[1].3));
+        }
+    }
+    let mut out = String::with_capacity(base.len());
+    let mut at = 0;
+    for (start, end, new, _) in &spans {
+        out.push_str(&base[at..*start]);
+        out.push_str(new);
+        at = *end;
+    }
+    out.push_str(&base[at..]);
+    Ok(out)
 }
 
 // --------------------------------------------------------------------- ls
@@ -365,6 +414,43 @@ mod tests {
         let out = f.run(&Edit, json!({"path": "a.txt", "old_string": "= ", "new_string": "=", "replace_all": true}));
         assert!(!out.is_error);
         assert_eq!(f.read("a.txt"), "x =1\ny =2\n");
+    }
+
+    // SPEC-0002 AC9 (GRAFT-0050): batched edits match the original and are all-or-nothing.
+    #[test]
+    fn batched_edits_apply_together_or_not_at_all() {
+        let f = Fixture::new("batch");
+        f.file("a.rs", "fn a() { 1 }\nfn b() { 2 }\nfn c() { 3 }\n");
+        // The second edit's text only exists in the original, not after the first edit:
+        // matching against the original (not sequentially) is what makes this work.
+        let out = f.run(
+            &Edit,
+            json!({"path": "a.rs", "edits": [
+                {"old_string": "fn c() { 3 }", "new_string": "fn c() { 30 }"},
+                {"old_string": "fn a() { 1 }", "new_string": "fn a() { 10 }\nfn c() { 3 }"},
+            ]}),
+        );
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(f.read("a.rs"), "fn a() { 10 }\nfn c() { 3 }\nfn b() { 2 }\nfn c() { 30 }\n");
+
+        let before = f.read("a.rs");
+        for (edits, expect) in [
+            (
+                json!([{"old_string": "fn b() { 2 }", "new_string": "x"}, {"old_string": "missing", "new_string": "y"}]),
+                "edit 2: `old_string` not found",
+            ),
+            (json!([{"old_string": "() {", "new_string": "x"}]), "matches more than once"),
+            (
+                json!([{"old_string": "fn b()", "new_string": "x"}, {"old_string": "b() { 2", "new_string": "y"}]),
+                "overlap",
+            ),
+            (json!([]), "non-empty"),
+            (json!([{"old_string": "fn b()"}]), "needs string"),
+        ] {
+            let out = f.run(&Edit, json!({"path": "a.rs", "edits": edits}));
+            assert!(out.is_error && out.content.contains(expect), "{expect}: {}", out.content);
+            assert_eq!(f.read("a.rs"), before, "a failed batch changes nothing");
+        }
     }
 
     #[test]

@@ -141,7 +141,7 @@ fn malformed_calls(reply: &Message, specs: &[ToolSpec]) -> Vec<(String, String)>
             continue;
         };
         // `edit` also accepts old_string/new_string in place of `edit` (GRAFT-0035).
-        let alternative = name == "edit" && object.contains_key("old_string");
+        let alternative = name == "edit" && (object.contains_key("old_string") || object.contains_key("edits"));
         let missing: Vec<&str> = spec.input_schema["required"]
             .as_array()
             .into_iter()

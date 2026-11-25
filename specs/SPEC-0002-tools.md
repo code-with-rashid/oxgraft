@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050]
 ---
 
 # SPEC-0002: Built-in tools
@@ -47,3 +47,7 @@ tools beat many overlapping ones) that is safe by default.
   with no redirection, substitution, pipeline, chaining, glob, assignment,
   mutating option, or path outside the workspace, and no argument the rules
   deny reading. Deny rules still win; everything else is decided by `ordered_rules`.
+- **AC9** `edit` also accepts `edits: [{old_string, new_string}, ...]`: every
+  `old_string` must occur exactly once in the original file and no two may
+  overlap; all replacements apply together, or (on any error, naming the edit
+  number) none do.

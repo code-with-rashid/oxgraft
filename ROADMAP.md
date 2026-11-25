@@ -45,7 +45,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 7. ~~Review-on-submit~~ (change summary after each run: GRAFT-0048; a pre-finish checklist is still open)
 8. Goal mode with an independent verifier and a visible budget (qwen-code)
 9. ~~Fork a session~~ (`--fork ID@N`: GRAFT-0049; a browsable session tree is still open)
-10. Batched multi-edits matched against the original file (pi)
+10. ~~Batched multi-edits matched against the original file~~ (done: GRAFT-0050)
 11. Repo map under a token budget (aider); LSP diagnostics after edits (opencode, claude-code)
 12. Worktree-isolated writing subagents (claude-code); sandbox expansion on denial (gemini-cli)
 
