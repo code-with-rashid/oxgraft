@@ -26,6 +26,15 @@ Model strings are `provider/model`. Credentials come from environment variables.
 
 `oxgraft models` prints the full table, including base-URL override variables.
 
+### Local models (Ollama, LM Studio)
+
+- Start Ollama with a bigger context, or it silently drops the start of long
+  prompts (Oxgraft's instructions and tool list come first):
+  `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`.
+- Use a model that supports tool calling; `oxgraft doctor --live` checks.
+- For local providers Oxgraft assumes a 32k window and compacts the context
+  before it fills up; set `context_window` if your server uses another size.
+
 ## Run
 
 ```sh

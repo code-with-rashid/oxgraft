@@ -51,6 +51,8 @@ pub struct Config {
     pub max_session_tokens: Option<u64>,
     pub verify_command: Option<String>,
     pub context_window: Option<u64>,
+    /// No layer set `context_window` (so a provider-specific default may apply).
+    pub context_window_default: bool,
     pub stream: bool,
     pub approval_mode: String,
     pub checkpoints: bool,
@@ -109,6 +111,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         max_session_tokens: None,
         verify_command: None,
         context_window: Some(200_000),
+        context_window_default: true,
         stream: true,
         approval_mode: "suggest".into(),
         checkpoints: true,
@@ -295,6 +298,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.context_window {
             cfg.context_window = if v == 0 { None } else { Some(v) };
+            cfg.context_window_default = false;
             used = true;
         }
         if let Some(v) = layer.checkpoints {

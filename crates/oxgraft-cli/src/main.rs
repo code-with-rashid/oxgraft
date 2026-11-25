@@ -130,6 +130,11 @@ exact commands to install, build, test, lint and run (verify each one you can by
 see in the code; and anything surprising a newcomer would get wrong. If AGENTS.md already exists, read it first and \
 improve it rather than replacing good content. Keep it under 150 lines; no generic advice.";
 
+/// Providers that run on the user's machine, with small default context windows.
+const LOCAL_PROVIDERS: &[&str] = &["ollama", "lmstudio"];
+/// Compaction window assumed for local providers unless `context_window` is set.
+const LOCAL_CONTEXT_WINDOW: u64 = 32_768;
+
 /// Exit codes (SPEC-0004 AC2).
 const EXIT_ERROR: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -336,6 +341,11 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.max_tokens = cfg.max_tokens;
     config.max_session_tokens = cfg.max_session_tokens;
     config.context_window = cfg.context_window;
+    // Local servers usually run far smaller windows than hosted models; compact
+    // early rather than overflow (GRAFT-0064). An explicit setting always wins.
+    if cfg.context_window_default && LOCAL_PROVIDERS.contains(&model_ref.provider.as_str()) {
+        config.context_window = Some(LOCAL_CONTEXT_WINDOW);
+    }
     config.verify_command = cfg.verify_command.clone();
     config.stream = cfg.stream;
     config.checkpoints = cfg.checkpoints;
@@ -824,6 +834,14 @@ fn doctor(common: &Common, live: bool) -> CliResult {
             {
                 Ok(m) => {
                     line(true, "model", format!("{spec} (credentials found for `{}`)", m.provider));
+                    if m.provider == "ollama" {
+                        println!(
+                            "warn {:<14} Ollama's default context is small and it silently drops the start of long \
+                             prompts. Start the server with OLLAMA_CONTEXT_LENGTH=32768 (or more) and pick a model \
+                             that supports tool calling; `oxgraft doctor --live` checks tools.",
+                            "ollama"
+                        );
+                    }
                     if live {
                         let options = oxgraft_providers::Options { effort: cfg.effort.clone() };
                         match oxgraft_providers::build(&m, &options) {

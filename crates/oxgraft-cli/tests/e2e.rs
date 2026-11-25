@@ -600,3 +600,12 @@ fn json_runs_report_changed_files() {
     let out = ws.oxgraft(&["run", "--json", "--model", &model, "look"]);
     assert!(!self::events(&out).iter().any(|e| matches!(e, Event::FilesChanged { .. })));
 }
+
+// GRAFT-0064: doctor warns about Ollama's small default context.
+#[test]
+fn doctor_warns_about_ollama_context() {
+    let ws = Ws::new("ollamawarn");
+    let out = ws.oxgraft(&["doctor", "--model", "ollama/qwen3"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("OLLAMA_CONTEXT_LENGTH"), "{text}");
+}
