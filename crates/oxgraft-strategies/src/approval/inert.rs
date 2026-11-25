@@ -3,6 +3,10 @@
 //! no source consulted): a command runs without asking only when the whole line is
 //! one simple, known read-only command with no redirection, substitution,
 //! pipeline, chaining, assignment or mutating argument.
+//!
+//! `git` is deliberately not included: even `git status` runs whatever the
+//! repository's own `.git/config` says (fsmonitor, external diff, textconv), so a
+//! repository that ships its `.git` could run code without a prompt.
 
 use oxgraft_seams::{Action, ApprovalPolicy, Decision, Origin, Provenance, Seam, Strategy, StrategyInfo};
 
@@ -14,12 +18,8 @@ const META: &[char] = &['>', '<', '|', ';', '&', '$', '`', '(', ')', '{', '}', '
 /// Read-only commands whose arguments can't make them write, run code or reach the network.
 const READERS: &[&str] = &[
     "ls", "pwd", "cat", "head", "tail", "wc", "grep", "rg", "tree", "file", "stat", "which", "du", "basename",
-    "dirname", "realpath", "date", "whoami", "uname", "echo", "diff", "cut", "sort", "uniq", "nl",
+    "dirname", "realpath", "whoami", "uname", "echo", "diff", "cut", "sort", "nl",
 ];
-
-/// `git` subcommands that only read.
-const GIT_READERS: &[&str] =
-    &["status", "diff", "log", "show", "blame", "ls-files", "rev-parse", "shortlog", "describe"];
 
 /// Whether `command` is a single inert read-only command (see the module docs).
 pub fn is_inert(command: &str) -> bool {
@@ -33,7 +33,11 @@ pub fn is_inert(command: &str) -> bool {
     let outside = |a: &&str| {
         let a = a.trim_matches(['"', '\'']);
         let path = a.split_once('=').map_or(a, |(_, v)| v);
-        path.starts_with('/') || path.starts_with('~') || path.contains("..") || path.get(1..2) == Some(":")
+        // Attached option values too: `grep -f/etc/passwd`.
+        let attached = if a.starts_with('-') && !a.starts_with("--") { a.get(2..).unwrap_or("") } else { "" };
+        [path, attached]
+            .iter()
+            .any(|p| p.starts_with('/') || p.starts_with('~') || p.contains("..") || p.get(1..2) == Some(":"))
     };
     if args.iter().any(outside) {
         return false;
@@ -46,14 +50,10 @@ pub fn is_inert(command: &str) -> bool {
         a.starts_with("--output")
             || a.starts_with("--exec")
             || a.starts_with("--pre")
-            || matches!(*a, "-o" | "--in-place" | "-i" | "--delete" | "-delete" | "--ext-diff" | "--textconv")
+            || (a.starts_with("-o") && !a.starts_with("--"))
+            || matches!(*a, "--in-place" | "-i" | "--delete" | "-delete")
     };
     match name {
-        "git" => {
-            // `git -c key=value …` and `git --git-dir …` change what runs.
-            let Some(sub) = args.first() else { return false };
-            GIT_READERS.contains(sub) && !args.iter().any(mutating)
-        }
         "find" => !args.iter().any(|a| {
             matches!(
                 *a,
@@ -87,7 +87,7 @@ impl Default for InertReads {
 static INERT_READS: StrategyInfo = StrategyInfo {
     id: "inert_reads",
     seam: Seam::Approval,
-    summary: "ordered_rules, plus auto-allow for single read-only shell commands (ls, cat, git status, grep…) with nothing that could write or run code.",
+    summary: "ordered_rules, plus auto-allow for single read-only shell commands (ls, cat, grep…; never git) with nothing that could write or run code.",
     provenance: Provenance {
         origin: Origin::CleanRoom,
         harness: Some("crush"),
@@ -142,9 +142,6 @@ mod tests {
     fn recognises_inert_commands() {
         for c in [
             "ls -la src",
-            "git status",
-            "git diff HEAD~1",
-            "git log --oneline -5",
             "grep -rn TODO src",
             "cat README.md",
             "find . -name Cargo.toml",
@@ -158,6 +155,11 @@ mod tests {
             "cat a | sh",
             "ls; rm x",
             "git status && git push",
+            "git status",
+            "git diff HEAD~1",
+            "uniq in.txt out.txt",
+            "grep -f/etc/passwd x",
+            "sort -oout.txt in.txt",
             "echo $(id)",
             "echo `id`",
             "FOO=1 ls",
@@ -186,10 +188,10 @@ mod tests {
     #[test]
     fn inert_commands_are_allowed_but_rules_still_win() {
         // SPEC-0002 AC8
-        let p = InertReads::new(OrderedRules::with_extra(vec![Rule::new("bash", "git log*", Decision::Deny)]));
-        assert_eq!(p.decide(&bash("git status")), Decision::Allow);
+        let p = InertReads::new(OrderedRules::with_extra(vec![Rule::new("bash", "cat secret*", Decision::Deny)]));
+        assert_eq!(p.decide(&bash("ls -la src")), Decision::Allow);
         assert_eq!(p.decide(&bash("cargo test")), Decision::Ask);
-        assert_eq!(p.decide(&bash("git log")), Decision::Deny, "a deny rule beats inert auto-allow");
+        assert_eq!(p.decide(&bash("cat secret.txt")), Decision::Deny, "a deny rule beats inert auto-allow");
         assert_ne!(p.decide(&bash("cat .env")), Decision::Allow, "paths the rules deny reading are not auto-allowed");
         assert_eq!(p.decide(&bash("cat .env README.md")), Decision::Ask);
         assert_eq!(p.decide(&Action { tool: "edit".into(), resource: "a.rs".into() }), Decision::Ask);

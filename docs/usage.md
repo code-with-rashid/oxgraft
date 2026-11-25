@@ -134,6 +134,6 @@ strategy and the harness it was learned from.
 | `tolerant` | search_replace_tolerant | none | models that mangle whitespace |
 | `codex-like` | apply_patch | none | Codex-family models |
 | `sandboxed` | search_replace | workspace_write | unattended runs on Linux/macOS |
-| `fewer-prompts` | search_replace | none | read-only shell commands (`ls`, `git status`, `grep`…) run without asking |
+| `fewer-prompts` | search_replace | none | read-only shell commands (`ls`, `cat`, `grep`…) run without asking |
 | `ci` | search_replace | none (approve all) | inside an outer container |
 | `baseline` | whole_file | none | the floor every graft is measured against |

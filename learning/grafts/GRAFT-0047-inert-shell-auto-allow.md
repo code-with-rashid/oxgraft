@@ -37,3 +37,11 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+`git` subcommands were removed from the inert list: `git status`/`diff` run
+commands from the repository's own `.git/config` (fsmonitor, external diff,
+textconv). `uniq` (writes its second argument), `date` (`-s` sets the clock)
+and attached `-o…` options were removed too, and attached option values
+(`grep -f/etc/passwd`) now count as paths.

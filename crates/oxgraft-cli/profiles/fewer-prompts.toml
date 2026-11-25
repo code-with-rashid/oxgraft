@@ -1,4 +1,4 @@
-# Default strategies, but single read-only shell commands (ls, cat, git status,
+# Default strategies, but single read-only shell commands (ls, cat, wc,
 # grep, …) run without asking (GRAFT-0047, after Crush). Trial: not the default
 # until an evaluation shows it costs nothing in safety.
 name = "fewer-prompts"

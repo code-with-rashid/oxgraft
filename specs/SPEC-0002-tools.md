@@ -43,7 +43,7 @@ tools beat many overlapping ones) that is safe by default.
   git-based recovery (GRAFT-0005).
 - **AC8** Under the `inert_reads` approval strategy, a shell command runs
   without asking only if the whole line is one known read-only command (`ls`,
-  `cat`, `grep`, `git status|diff|log|show`, `find` without -exec/-delete, …)
+  `cat`, `grep`, `find` without -exec/-delete, …; never `git`, which runs repo-configured commands)
   with no redirection, substitution, pipeline, chaining, glob, assignment,
   mutating option, or path outside the workspace, and no argument the rules
   deny reading. Deny rules still win; everything else is decided by `ordered_rules`.
