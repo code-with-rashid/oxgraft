@@ -387,6 +387,7 @@ fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>) -
     };
     let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
     let mut renderer = render::Human::default();
+    let before = session.checkpoints.len();
     let outcome = agent.run(&mut session, task.trim(), &mut |e: &Event| {
         if json {
             println!("{}", e.to_jsonl());
@@ -396,9 +397,35 @@ fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>) -
         }
     });
     if !json {
+        change_summary(&s.ws, &session, before);
         eprintln!("session {} · resume with: oxgraft run --resume {} \"...\"", session.id, session.id);
     }
     Ok(status_code(&outcome.status))
+}
+
+/// After a run, list what changed in the workspace and how to roll it back
+/// (GRAFT-0048, after SWE-agent's review-on-submit). Uses the run's checkpoints.
+fn change_summary(ws: &Path, session: &Session, before: usize) {
+    let all = &session.checkpoints;
+    if all.len() <= before {
+        return; // no new checkpoint: nothing changed (or checkpoints are off)
+    }
+    // The run's starting state: its own "start" checkpoint, or the previous last one.
+    let start = if all[before].label == "start" { before } else { before.saturating_sub(1) };
+    let last = all.len() - 1;
+    if start >= last {
+        return;
+    }
+    let Ok(cp) = oxgraft_core::checkpoint::Checkpoints::open(ws) else { return };
+    let Ok(stat) = cp.diff_stat(&all[start].commit, &all[last].commit) else { return };
+    if stat.trim().is_empty() {
+        return;
+    }
+    eprintln!("\nchanged in this run:");
+    for line in stat.lines() {
+        eprintln!("  {}", line.trim());
+    }
+    eprintln!("undo all of it with: oxgraft restore {start} --session {}", session.id);
 }
 
 fn chat(common: &Common, resume: Option<String>) -> CliResult {
@@ -476,7 +503,9 @@ fn chat(common: &Common, resume: Option<String>) -> CliResult {
         }
         agent.config.cancel.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut renderer = render::Human::default();
+        let before = session.checkpoints.len();
         let outcome = agent.run(&mut session, line, &mut |e: &Event| renderer.event(e));
+        change_summary(&s.ws, &session, before);
         last = status_code(&outcome.status);
     }
     eprintln!("session {} saved", session.id);

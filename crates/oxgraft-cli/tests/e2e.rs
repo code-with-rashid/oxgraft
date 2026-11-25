@@ -319,3 +319,27 @@ fn checkpoints_capture_shell_changes_and_restore() {
     assert!(ws.0.join("made_by_shell.txt").exists());
     assert_eq!(ws.oxgraft(&["restore", "99"]).status.code(), Some(2));
 }
+
+// SPEC-0004 AC8 (GRAFT-0048): a human-mode run ends with what changed and how to undo it.
+#[test]
+fn human_runs_end_with_a_change_summary() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        eprintln!("git not installed; skipping");
+        return;
+    }
+    let ws = Ws::new("summary");
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "notes.txt", "content": "n\n"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--yes", "--model", &model, "write notes"]);
+    assert_eq!(out.status.code(), Some(0));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("changed in this run") && err.contains("notes.txt"), "{err}");
+    assert!(err.contains("oxgraft restore 0"), "{err}");
+
+    // A run that changes nothing prints no summary.
+    let model = ws.script(json!([{"text": "nothing to do"}]));
+    let out = ws.oxgraft(&["run", "--yes", "--model", &model, "look"]);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("changed in this run"));
+}
