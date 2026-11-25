@@ -902,3 +902,40 @@ fn output_schema_yields_valid_json() {
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r#"{"summary":"all good"}"#);
 }
+
+// GRAFT-0102: --worktree leaves the checkout untouched.
+#[test]
+fn worktree_runs_leave_the_checkout_alone() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let ws = Ws::new("worktree");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&ws.0)
+            .output()
+            .unwrap();
+        assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    };
+    git(&["init", "-q"]);
+    std::fs::write(ws.0.join("README.md"), "hi\n").unwrap();
+    git(&["add", "README.md"]);
+    git(&["commit", "-q", "-m", "init"]);
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "new.txt", "content": "made in worktree\n"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--yes", "--worktree", "--model", &model, "add a file"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(!ws.0.join("new.txt").exists(), "the checkout is untouched");
+    let worktrees = ws.0.join(".oxgraft/worktrees");
+    let made = std::fs::read_dir(&worktrees).unwrap().flatten().any(|e| e.path().join("new.txt").exists());
+    assert!(made, "{err}");
+    assert!(err.contains("on branch oxgraft/"), "{err}");
+    let status = Command::new("git").args(["status", "--porcelain"]).current_dir(&ws.0).output().unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(!status.contains(".oxgraft"), "the worktree is ignored in the user's repo: {status}");
+}

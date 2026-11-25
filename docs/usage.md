@@ -52,6 +52,7 @@ oxgraft run -q --output-schema schema.json "…"   # final answer is JSON matchi
 oxgraft run --resume last "now add docs"  # continue the latest session
 oxgraft run --fork last@4 "try it another way"  # new session from the first 4 messages of another
 oxgraft run --until "cargo test" "fix the failing test"  # not done until the check passes
+oxgraft run --worktree "try the refactor"   # on a new branch in .oxgraft/worktrees/, checkout untouched
 oxgraft sessions                          # list saved sessions
 oxgraft export -o run.md                  # the latest session as a Markdown transcript
 oxgraft prune --keep 20                   # delete older sessions and their undo backups

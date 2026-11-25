@@ -91,6 +91,10 @@ enum Command {
         /// Also write the final answer to this file.
         #[arg(long, value_name = "FILE")]
         output_last_message: Option<PathBuf>,
+        /// Run in a new git worktree on branch `oxgraft/<id>`, leaving your checkout
+        /// untouched; merge the branch afterwards if you like the result.
+        #[arg(long, conflicts_with_all = ["resume", "fork"])]
+        worktree: bool,
         /// The final answer must be a JSON object matching this JSON schema file;
         /// it is printed as compact JSON (pair with --quiet for scripts).
         #[arg(long, value_name = "FILE")]
@@ -203,6 +207,35 @@ fn available() -> Available {
     available_with(Vec::new())
 }
 
+/// A new git worktree for a run (GRAFT-0102, after Claude Code's `--worktree`):
+/// `.oxgraft/worktrees/<id>` on branch `oxgraft/<id>` from the current HEAD.
+fn create_worktree(ws: &Path) -> Result<(PathBuf, String), String> {
+    let git = |args: &[&str]| -> Result<String, String> {
+        let out =
+            std::process::Command::new("git").arg("-C").arg(ws).args(args).output().map_err(|e| format!("git: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    };
+    git(&["rev-parse", "--verify", "HEAD"])
+        .map_err(|_| "--worktree needs a git repository with at least one commit".to_string())?;
+    let id = Session::new("", "", ws).id;
+    let branch = format!("oxgraft/{id}");
+    let path = ws.join(".oxgraft").join("worktrees").join(&id);
+    let path_text = path.to_string_lossy().into_owned();
+    // Keep the worktree out of the user's own `git status`.
+    let ignore = ws.join(".oxgraft").join(".gitignore");
+    if !ignore.exists() {
+        std::fs::create_dir_all(ws.join(".oxgraft")).map_err(|e| e.to_string())?;
+        std::fs::write(&ignore, "*\n").map_err(|e| e.to_string())?;
+    }
+    git(&["worktree", "add", "-q", "-b", &branch, &path_text, "HEAD"])
+        .map_err(|e| format!("git worktree add failed: {e}"))?;
+    Ok((path, branch))
+}
+
 /// Rules from `--allow-tool` / `--deny-tool` (GRAFT-0097, after Claude Code's
 /// `--allowedTools` / `--disallowedTools`): `TOOL` or `TOOL:PATTERN`. Added last,
 /// so they beat mode and config allows; any deny still wins over any allow.
@@ -289,7 +322,7 @@ fn dispatch(cli: Cli) -> CliResult {
     match cli.command {
         None => chat(&common, None, None),
         Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
-        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message, output_schema }) => {
+        Some(Command::Run { task, json, resume, fork, until, quiet, output_last_message, output_schema, worktree }) => {
             let schema = match output_schema {
                 Some(path) => {
                     let text = std::fs::read_to_string(&path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
@@ -298,6 +331,26 @@ fn dispatch(cli: Cli) -> CliResult {
                 None => None,
             };
             let output = RunOutput { json, quiet, last_message: output_last_message, schema };
+            if worktree {
+                let ws = workspace(&common)?;
+                let (path, branch) = create_worktree(&ws).map_err(|e| (EXIT_ERROR, e))?;
+                if !json && !quiet {
+                    eprintln!("working in {} on branch {branch}", path.display());
+                }
+                let mut common = common.clone();
+                common.cwd = Some(path.clone());
+                let code = run(&common, task, output, None, None, until)?;
+                if !json && !quiet {
+                    eprintln!(
+                        "worktree {} on branch {branch}: review with `git -C {} diff HEAD`, merge with `git merge {branch}`, \
+                         or remove with `git worktree remove {}`",
+                        path.display(),
+                        path.display(),
+                        path.display()
+                    );
+                }
+                return Ok(code);
+            }
             run(&common, task, output, resume, fork, until)
         }
         Some(Command::Sessions { json }) => {

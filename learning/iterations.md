@@ -140,3 +140,4 @@ honestly: an iteration is only logged when its tests pass.
 | 132 | 2026-11-25 | claude-code | Chat `/resume [ID]` switches to a saved session and shows its last reply | adopt | GRAFT-0100 | SPEC-0004 | `chat_resume_switches_session` |
 | 133 | 2026-11-25 | opencode | Chat `/export [FILE]` writes the conversation as Markdown | adopt | GRAFT-0066 | SPEC-0004 | `chat_resume_switches_session` |
 | 134 | 2026-11-25 | codex | `run --output-schema FILE`: final answer must be a JSON object matching the schema (re-asked up to 3 times); printed as compact JSON | adopt | GRAFT-0101 | SPEC-0004 | `output_schema_yields_valid_json` |
+| 135 | 2026-11-25 | claude-code | `run --worktree`: the task runs in a new git worktree on branch `oxgraft/<id>`; the checkout is untouched | adopt | GRAFT-0102 | SPEC-0004 | `worktree_runs_leave_the_checkout_alone` |

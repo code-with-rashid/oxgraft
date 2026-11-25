@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049, GRAFT-0052, GRAFT-0063, GRAFT-0075, GRAFT-0077, GRAFT-0082, GRAFT-0083, GRAFT-0088, GRAFT-0089, GRAFT-0097, GRAFT-0100, GRAFT-0101, GRAFT-0102]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -110,3 +110,6 @@ otherwise an error explaining how to choose one.
 - **AC25** With `--output-schema FILE`, a final answer that is not a JSON object
   matching the schema (type, required, properties, items, enum) is sent back
   with the problems, up to 3 times; a valid answer is printed as compact JSON.
+- **AC26** `run --worktree` runs the task in a new git worktree on branch
+  `oxgraft/<id>` from HEAD; the original checkout is not modified and the
+  worktree is ignored by the user's git status.
