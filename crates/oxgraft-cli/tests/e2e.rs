@@ -343,3 +343,34 @@ fn human_runs_end_with_a_change_summary() {
     let out = ws.oxgraft(&["run", "--yes", "--model", &model, "look"]);
     assert!(!String::from_utf8_lossy(&out.stderr).contains("changed in this run"));
 }
+
+// SPEC-0004 AC9 (GRAFT-0049): fork a session; the original is unchanged.
+#[test]
+fn sessions_can_be_forked() {
+    let ws = Ws::new("fork");
+    let model = ws.script(json!([{"text": "first answer"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "question one"]);
+    assert_eq!(out.status.code(), Some(0));
+    let original = events(&out)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session_id, .. } => session_id,
+            _ => None,
+        })
+        .unwrap();
+
+    let model = ws.script(json!([{"text": "second answer"}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "--fork", &format!("{original}@2"), "question two"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("forked session"));
+    let sessions = ws.oxgraft(&["sessions"]);
+    let listing = String::from_utf8_lossy(&sessions.stdout).to_string();
+    assert!(listing.contains(&format!("fork of {original}")), "{listing}");
+    let saved: serde_json::Value =
+        serde_json::from_str(&ws.read(&format!(".oxgraft/sessions/{original}.json"))).unwrap();
+    assert_eq!(saved["messages"].as_array().unwrap().len(), 2, "original untouched");
+
+    let bad = ws.oxgraft(&["run", "--model", &model, "--fork", &format!("{original}@1"), "x"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("fork points"));
+}

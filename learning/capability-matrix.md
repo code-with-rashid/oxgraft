@@ -14,7 +14,7 @@ updates a harness profile or adds or promotes a strategy.
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
 | provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
 | tools | read, write, edit, ls, glob, grep, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
-| session | save/resume/repair, undo (GRAFT-0005, 0020), per-turn checkpoints (0046) | budgets (0021) | fork (opencode) |
+| session | save/resume/repair, undo (GRAFT-0005, 0020), per-turn checkpoints (0046) fork (0049) | budgets (0021) | session tree UI (pi) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
 | delegation | read-only `task` subagent (0026) | — | named subagents with policies (opencode) |
 
@@ -30,7 +30,7 @@ Every watched harness except Roo Code (archived) was reviewed at a pinned tag on
 | gemini-cli | v0.71.1 | 0027, 0037 |
 | aider | v0.86.0 | 0001, 0011, 0015, 0035, 0039 |
 | goose | v1.60.2 | 0019, 0022, 0033 |
-| pi | v1.6.0 | 0023 |
+| pi | v1.6.0 | 0023, 0049 |
 | cline | v4.1.27 | 0005, 0020, 0029, 0041, 0046 |
 | openhands | v1.45.0 (sdk v1.64.0) | 0021, 0042 |
 | swe-agent | v1.1.0 | 0004, 0044, 0048 |

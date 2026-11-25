@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048]
+grafts: [GRAFT-0005, GRAFT-0046, GRAFT-0048, GRAFT-0049]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -57,3 +57,8 @@ otherwise an error explaining how to choose one.
   with a `git diff --stat` of the run's changes from its checkpoints and the
   `oxgraft restore` command that undoes all of them; a run that changed nothing
   prints no summary.
+- **AC9** `run` and `chat` accept `--fork ID` or `--fork ID@N`: a new session
+  starts from a copy of the first N messages of session ID (all if N is
+  omitted). N must follow a finished reply (an assistant message without tool
+  calls); otherwise the error lists valid fork points. The original session is
+  never modified; the fork records `forked_from`.

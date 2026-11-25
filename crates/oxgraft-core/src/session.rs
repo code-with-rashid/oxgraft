@@ -35,6 +35,9 @@ pub struct Session {
     /// Workspace checkpoints taken during the session (GRAFT-0046), oldest first.
     #[serde(default)]
     pub checkpoints: Vec<CheckpointRecord>,
+    /// The session this one was forked from (GRAFT-0049).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<String>,
 }
 
 /// One workspace checkpoint: the state after `label`.
@@ -69,6 +72,7 @@ impl Session {
             compactions: 0,
             archived_messages: 0,
             checkpoints: Vec::new(),
+            forked_from: None,
         }
     }
 
@@ -124,6 +128,45 @@ impl Session {
             .collect();
         sessions.sort_by(|a, b| b.id.cmp(&a.id));
         sessions
+    }
+
+    /// Message counts at which the history can be cut for a fork: right after a
+    /// model reply that made no tool calls (a finished answer).
+    pub fn fork_points(&self) -> Vec<usize> {
+        self.messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == oxgraft_seams::Role::Assistant && m.tool_uses().is_empty())
+            .map(|(i, _)| i + 1)
+            .collect()
+    }
+
+    /// A new session continuing from this one's history (GRAFT-0049, after Pi's
+    /// session tree and Goose's forks). `keep` = number of messages to copy (a fork
+    /// point); `None` copies everything. The original session is not changed.
+    pub fn fork(&self, keep: Option<usize>) -> Result<Session, String> {
+        let keep = match keep {
+            None => self.messages.len(),
+            Some(n) if self.fork_points().contains(&n) => n,
+            Some(n) => {
+                let points: Vec<String> = self.fork_points().iter().map(usize::to_string).collect();
+                return Err(format!(
+                    "session {} can't be forked at message {n}; fork points (after a finished reply): {}",
+                    self.id,
+                    if points.is_empty() { "none".into() } else { points.join(", ") }
+                ));
+            }
+        };
+        let mut fork = Session::new(&self.model, &self.profile, &self.workspace);
+        if fork.id == self.id {
+            fork.id.push_str("-f");
+        }
+        fork.title = format!("fork of {}: {}", self.id, self.title);
+        fork.messages = self.messages[..keep].to_vec();
+        fork.compactions = self.compactions;
+        fork.archived_messages = self.archived_messages;
+        fork.forked_from = Some(self.id.clone());
+        Ok(fork)
     }
 
     /// Make the history valid after a crash or interrupt: every tool call in the last
@@ -219,5 +262,44 @@ mod tests {
         assert!(ws.join(".oxgraft/.gitignore").exists());
         assert!(Session::load(&ws, "missing").is_err());
         let _ = std::fs::remove_dir_all(&ws);
+    }
+}
+
+#[cfg(test)]
+mod fork_tests {
+    use super::*;
+    use oxgraft_seams::Block;
+
+    // SPEC-0004 AC9
+    #[test]
+    fn forks_copy_history_up_to_a_finished_reply() {
+        let ws = std::env::temp_dir();
+        let mut s = Session::new("m", "default", &ws);
+        s.title = "original".into();
+        s.messages = vec![
+            Message::user("task 1"),
+            Message::assistant(vec![Block::ToolUse {
+                id: "t".into(),
+                name: "ls".into(),
+                input: serde_json::json!({}),
+            }]),
+            Message {
+                role: oxgraft_seams::Role::User,
+                content: vec![Block::ToolResult { tool_use_id: "t".into(), content: "a".into(), is_error: false }],
+            },
+            Message::assistant(vec![Block::text("answer 1")]),
+            Message::user("task 2"),
+            Message::assistant(vec![Block::text("answer 2")]),
+        ];
+        assert_eq!(s.fork_points(), vec![4, 6]);
+        let f = s.fork(Some(4)).unwrap();
+        assert_eq!(f.messages.len(), 4);
+        assert_eq!(f.forked_from.as_deref(), Some(s.id.as_str()));
+        assert_ne!(f.id, s.id);
+        assert!(f.title.contains("original"));
+        assert_eq!(s.fork(None).unwrap().messages.len(), 6);
+        let err = s.fork(Some(2)).unwrap_err();
+        assert!(err.contains("fork points") && err.contains("4, 6"), "{err}");
+        assert_eq!(s.messages.len(), 6, "the original is unchanged");
     }
 }

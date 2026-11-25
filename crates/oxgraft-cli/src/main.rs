@@ -58,12 +58,20 @@ enum Command {
         /// Continue a saved session (id from `oxgraft sessions`, or `last`).
         #[arg(long)]
         resume: Option<String>,
+        /// Start a new session from a copy of another's history: `ID`, or `ID@N` to
+        /// keep its first N messages (N must follow a finished reply).
+        #[arg(long, conflicts_with = "resume")]
+        fork: Option<String>,
     },
     /// Interactive session (the default when no command is given).
     Chat {
         /// Continue a saved session (id or `last`).
         #[arg(long)]
         resume: Option<String>,
+        /// Start a new session from a copy of another's history: `ID`, or `ID@N` to
+        /// keep its first N messages (N must follow a finished reply).
+        #[arg(long, conflicts_with = "resume")]
+        fork: Option<String>,
     },
     /// List saved sessions in this workspace.
     Sessions,
@@ -162,9 +170,9 @@ fn workspace(common: &Common) -> Result<PathBuf, (u8, String)> {
 fn dispatch(cli: Cli) -> CliResult {
     let common = cli.common.clone();
     match cli.command {
-        None => chat(&common, None),
-        Some(Command::Chat { resume }) => chat(&common, resume),
-        Some(Command::Run { task, json, resume }) => run(&common, task, json, resume),
+        None => chat(&common, None, None),
+        Some(Command::Chat { resume, fork }) => chat(&common, resume, fork),
+        Some(Command::Run { task, json, resume, fork }) => run(&common, task, json, resume, fork),
         Some(Command::Sessions) => {
             let ws = workspace(&common)?;
             let sessions = Session::list(&ws);
@@ -251,7 +259,7 @@ fn dispatch(cli: Cli) -> CliResult {
         }
         Some(Command::Doctor) => doctor(&common),
         // GRAFT-0032: Claude Code's and Codex's /init, as a preset task through the normal loop.
-        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None),
+        Some(Command::Init { json }) => run(&common, vec![INIT_TASK.to_string()], json, None, None),
         Some(Command::Models) => {
             render::models();
             Ok(0)
@@ -359,7 +367,27 @@ fn status_code(status: &Status) -> u8 {
     }
 }
 
-fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>) -> CliResult {
+/// The session to work in: resumed, forked (GRAFT-0049), or new.
+fn open_session(s: &Setup, resume: Option<String>, fork: Option<String>) -> Result<Session, (u8, String)> {
+    if let Some(spec) = fork {
+        let (id, keep) = match spec.rsplit_once('@') {
+            Some((id, n)) => {
+                (id.to_string(), Some(n.parse::<usize>().map_err(|_| usage(format!("bad fork point `{n}`")))?))
+            }
+            None => (spec, None),
+        };
+        let source = load_session(&s.ws, &id)?;
+        let fork = source.fork(keep).map_err(usage)?;
+        eprintln!("forked session {} from {} ({} messages)", fork.id, source.id, fork.messages.len());
+        return Ok(fork);
+    }
+    match resume {
+        Some(id) => load_session(&s.ws, &id),
+        None => Ok(Session::new(&s.model, &s.toolkit.profile.name, &s.ws)),
+    }
+}
+
+fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>, fork: Option<String>) -> CliResult {
     let mut task = task.join(" ");
     if task.trim().is_empty() {
         if std::io::stdin().is_terminal() {
@@ -376,10 +404,7 @@ fn run(common: &Common, task: Vec<String>, json: bool, resume: Option<String>) -
         return Err(usage("the task is empty"));
     }
     let s = setup(common)?;
-    let mut session = match resume {
-        Some(id) => load_session(&s.ws, &id)?,
-        None => Session::new(&s.model, &s.toolkit.profile.name, &s.ws),
-    };
+    let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> = if common.yes || json || !std::io::stdin().is_terminal() {
         Box::new(Fixed(if common.yes { Answer::Yes } else { Answer::No }))
     } else {
@@ -428,12 +453,9 @@ fn change_summary(ws: &Path, session: &Session, before: usize) {
     eprintln!("undo all of it with: oxgraft restore {start} --session {}", session.id);
 }
 
-fn chat(common: &Common, resume: Option<String>) -> CliResult {
+fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliResult {
     let s = setup(common)?;
-    let mut session = match resume {
-        Some(id) => load_session(&s.ws, &id)?,
-        None => Session::new(&s.model, &s.toolkit.profile.name, &s.ws),
-    };
+    let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> =
         if common.yes { Box::new(Fixed(Answer::Yes)) } else { Box::new(TerminalApprover) };
     let agent = Agent::new(&s.toolkit, s.provider.as_ref(), s.tools, approver.as_ref(), s.config);
