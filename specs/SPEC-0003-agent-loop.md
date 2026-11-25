@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044]
 ---
 
 # SPEC-0003: Agent loop
