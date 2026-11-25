@@ -932,6 +932,18 @@ fn usage_by_model(sessions: &[Session]) -> Vec<(String, (usize, u64, u64))> {
     rows
 }
 
+/// How full the context is (GRAFT-0099, after Claude Code's /context).
+fn context_line(used: u64, window: Option<u64>) -> String {
+    match window {
+        _ if used == 0 => "context: no requests yet".into(),
+        Some(w) if w > 0 => format!(
+            "context: {used} of {w} tokens ({}%); compaction at 80%, or /compact now",
+            used.saturating_mul(100) / w
+        ),
+        _ => format!("context: {used} tokens (no window set, so no automatic compaction)"),
+    }
+}
+
 /// Lines describing a session's checkpoints (GRAFT-0046), for the CLI and chat.
 fn checkpoint_lines(ws: &Path, session: &Session) -> Result<Vec<String>, String> {
     if session.checkpoints.is_empty() {
@@ -1088,6 +1100,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                     session.changed_files.len(),
                     session.compactions
                 );
+                eprintln!("{}", context_line(session.context_tokens, agent.config.context_window));
                 continue;
             }
             "/checkpoints" => {
@@ -1527,6 +1540,13 @@ fn doctor(common: &Common, live: bool) -> CliResult {
 #[cfg(test)]
 mod input_tests {
     use super::read_message;
+
+    #[test]
+    fn context_usage_lines() {
+        assert_eq!(super::context_line(0, Some(100)), "context: no requests yet");
+        assert!(super::context_line(50_000, Some(200_000)).starts_with("context: 50000 of 200000 tokens (25%)"));
+        assert!(super::context_line(10, None).contains("no automatic compaction"));
+    }
 
     #[test]
     fn approval_answers_are_read_generously() {

@@ -610,6 +610,9 @@ impl<'a> Agent<'a> {
             };
             usage.add(completion.usage);
             session.add_usage(self.backend(depth).1, completion.usage);
+            if depth == 0 {
+                session.context_tokens = completion.usage.input_tokens + completion.usage.output_tokens;
+            }
 
             // Re-query malformed tool calls (GRAFT-0044, after SWE-agent's format-error
             // requery): the bad attempt and its error stay out of the history, so later

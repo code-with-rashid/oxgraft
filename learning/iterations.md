@@ -136,3 +136,4 @@ honestly: an iteration is only logged when its tests pass.
 | 128 | 2026-11-25 | claude-code | `glob` lists the most recently modified files first | adopt | GRAFT-0096 | SPEC-0002 | `glob_lists_newest_first` |
 | 129 | 2026-11-25 | claude-code | `--allow-tool TOOL[:PATTERN]` / `--deny-tool` add rules for one run (deny still wins) | adopt | GRAFT-0097 | SPEC-0004 | `tool_flags_allow_and_deny_for_a_run` |
 | 130 | 2026-11-25 | claude-code | `session_start` hooks: stdout added as context to a new session's first task (exit 2 stops) | adopt | GRAFT-0098 | SPEC-0005 | `session_start_hooks_run_once_per_session` |
+| 131 | 2026-11-25 | claude-code | `/cost` shows how full the context is (last request size vs window); sessions keep `context_tokens` | adopt | GRAFT-0099 | SPEC-0006 | `context_usage_lines` |

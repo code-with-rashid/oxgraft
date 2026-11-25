@@ -25,6 +25,10 @@ pub struct Session {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub usage: Usage,
+    /// Size of the last top-level request (input + output tokens): how full the
+    /// context is (GRAFT-0099).
+    #[serde(default)]
+    pub context_tokens: u64,
     /// The same tokens split by model (subagents and `/model` switches use others).
     #[serde(default)]
     pub usage_by_model: std::collections::BTreeMap<String, Usage>,
@@ -92,6 +96,7 @@ impl Session {
             messages: Vec::new(),
             usage: Usage::default(),
             usage_by_model: Default::default(),
+            context_tokens: 0,
             changed_files: Vec::new(),
             compactions: 0,
             archived_messages: 0,
