@@ -127,3 +127,4 @@ honestly: an iteration is only logged when its tests pass.
 | 119 | 2026-11-25 | claude-code | `doctor` checks the `subagent_model` credentials too | adopt | GRAFT-0031 | SPEC-0004 | `doctor_checks_the_subagent_model` |
 | 120 | 2026-11-25 | aider | `/diff` in chat and `oxgraft diff [ID]`: the patch of everything since the session's first checkpoint, shell changes included | adopt | GRAFT-0088 | SPEC-0004 | `diff_shows_session_changes` |
 | 121 | 2026-11-25 | codex, claude-code | `oxgraft config`: settings after every layer, sources, trust, warnings, config and data paths | adopt | GRAFT-0089 | SPEC-0004 | `config_command_shows_resolved_settings` |
+| 122 | 2026-11-25 | goose | Replies with no text and no tool calls (e.g. thinking-only) get a continue prompt instead of ending the run silently | adopt | GRAFT-0090 | SPEC-0003 | `empty_replies_are_not_final_answers` |

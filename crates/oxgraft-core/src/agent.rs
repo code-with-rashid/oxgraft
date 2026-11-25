@@ -692,6 +692,22 @@ impl<'a> Agent<'a> {
                     ));
                     continue;
                 }
+                // A reply with no text and no tool calls (only thinking, or nothing) is
+                // not an answer: ask once more instead of ending silently (GRAFT-0090,
+                // after goose 1.61's recovery from thinking-only turns).
+                if session.messages.last().is_some_and(|m| m.text().trim().is_empty())
+                    && completion.stop != StopReason::Refusal
+                    && continuations < MAX_CONTINUATIONS
+                {
+                    continuations += 1;
+                    emit(&Event::Warning {
+                        message: "the model replied without text or tool calls; asking it to continue".into(),
+                    });
+                    session.messages.push(Message::user(
+                        "Your last reply had no visible text and no tool calls. Continue the task: call a tool, or give your final answer.",
+                    ));
+                    continue;
+                }
                 // Unfinished plan (GRAFT-0059, after OpenCode's and Claude Code's todo
                 // reminders): once per run, point out items not marked done.
                 let open: Vec<&str> =

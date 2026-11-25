@@ -911,3 +911,14 @@ fn subagent_uses_its_own_model() {
     let sub_session = Session::list(&ws.0);
     assert!(sub_session.iter().all(|s| s.model == "big"), "subagent sessions are hidden from the list");
 }
+
+// GRAFT-0090: an empty (e.g. thinking-only) reply is not taken as the answer.
+#[test]
+fn empty_replies_are_not_final_answers() {
+    let ws = Ws::new("emptyreply");
+    let (status, events, session) =
+        run(&ws, "allow_all", Answer::Yes, json!({"turns": [{}, {"text": "the answer"}]}), 4);
+    assert_eq!(status, Status::Done);
+    assert!(events.iter().any(|e| matches!(e, Event::Warning { message } if message.contains("without text"))));
+    assert_eq!(session.messages.last().unwrap().text(), "the answer");
+}

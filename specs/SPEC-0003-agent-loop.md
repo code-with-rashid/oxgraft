@@ -2,7 +2,7 @@
 id: SPEC-0003
 title: Agent loop, approvals, stability guards
 status: implemented
-grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078, GRAFT-0080]
+grafts: [GRAFT-0006, GRAFT-0007, GRAFT-0044, GRAFT-0054, GRAFT-0078, GRAFT-0080, GRAFT-0090]
 ---
 
 # SPEC-0003: Agent loop
@@ -72,3 +72,6 @@ trips. Every step is an event on the protocol stream.
   action and is passed to the model as the user's guidance.
 - **AC16** Before each top-level model request the loop emits `turn_started`
   with the turn number.
+- **AC17** A reply with neither visible text nor tool calls is not a final
+  answer: the model is asked to continue (at most 3 times per run, shared with
+  max_tokens continuations).
