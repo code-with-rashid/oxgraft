@@ -42,17 +42,36 @@ impl Tool for WebFetch {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return ToolOutput::error("only http:// and https:// URLs can be fetched");
         }
+        // Redirects are followed by hand so every hop is checked (GRAFT-0073).
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            .redirects(5)
+            .redirects(0)
             .user_agent(concat!("oxgraft/", env!("CARGO_PKG_VERSION")))
             .build();
-        let response = match agent.get(url).call() {
-            Ok(r) => r,
-            Err(ureq::Error::Status(code, _)) => return ToolOutput::error(format!("HTTP {code} fetching {url}")),
-            Err(e) => return ToolOutput::error(format!("could not fetch {url}: {e}")),
+        let mut current = url.to_string();
+        let mut hops = 0;
+        let response = loop {
+            if let Err(e) = check_destination(&current) {
+                return ToolOutput::error(e);
+            }
+            let r = match agent.get(&current).call() {
+                Ok(r) => r,
+                Err(ureq::Error::Status(code, _)) => {
+                    return ToolOutput::error(format!("HTTP {code} fetching {current}"));
+                }
+                Err(e) => return ToolOutput::error(format!("could not fetch {current}: {e}")),
+            };
+            match (r.status(), r.header("location")) {
+                (300..=399, Some(location)) if hops < 5 => {
+                    current = join_url(&current, location);
+                    hops += 1;
+                }
+                (300..=399, _) => return ToolOutput::error(format!("too many redirects fetching {url}")),
+                _ => break r,
+            }
         };
+        let url = current.as_str();
         let content_type = response.content_type().to_ascii_lowercase();
         let mut bytes = Vec::new();
         if let Err(e) = response.into_reader().take(MAX_BYTES).read_to_end(&mut bytes) {
@@ -68,6 +87,76 @@ impl Tool for WebFetch {
         let text = if content_type.contains("html") { html_to_text(&body) } else { body.into_owned() };
         ToolOutput::ok(crate::util::untrusted(url, &truncate(text.trim(), ctx.max_output_chars)))
     }
+}
+
+/// Refuse hosts that resolve to link-local or cloud-metadata addresses (GRAFT-0073):
+/// on cloud machines they hand out credentials, so a fetched page (or a redirect)
+/// must never make the agent read them. Loopback and private networks stay
+/// allowed (local dev servers); `web_fetch` asks for approval by default anyway.
+pub fn check_destination(url: &str) -> Result<(), String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let (host, port) = if let Some(rest) = host_port.strip_prefix('[') {
+        let (h, tail) = rest.split_once(']').unwrap_or((rest, ""));
+        (h.to_string(), tail.strip_prefix(':').and_then(|p| p.parse().ok()))
+    } else {
+        match host_port.rsplit_once(':') {
+            Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h.to_string(), p.parse().ok()),
+            _ => (host_port.to_string(), None),
+        }
+    };
+    let host = host.to_ascii_lowercase();
+    if host.is_empty() {
+        return Err(format!("no host in {url}"));
+    }
+    if matches!(host.as_str(), "metadata.google.internal" | "metadata" | "instance-data") {
+        return Err(format!("refusing to fetch {url}: cloud metadata endpoints are blocked"));
+    }
+    let port = port.unwrap_or(if url.starts_with("https") { 443 } else { 80 });
+    let blocked = |ip: IpAddr| match ip {
+        IpAddr::V4(v4) => v4.is_link_local() || v4.is_unspecified() || v4.octets() == [100, 100, 100, 200],
+        IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            (seg[0] & 0xffc0) == 0xfe80
+                || v6.is_unspecified()
+                || v6 == "fd00:ec2::254".parse::<std::net::Ipv6Addr>().expect("valid")
+                || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_link_local())
+        }
+    };
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if blocked(ip) {
+            Err(format!("refusing to fetch {url}: link-local and metadata addresses are blocked"))
+        } else {
+            Ok(())
+        };
+    }
+    // Unresolvable hosts fail later with a normal network error.
+    if let Ok(addrs) = (host.as_str(), port).to_socket_addrs()
+        && addrs.into_iter().any(|a| blocked(a.ip()))
+    {
+        return Err(format!("refusing to fetch {url}: {host} resolves to a link-local or metadata address"));
+    }
+    Ok(())
+}
+
+/// Resolve a redirect `location` against `base`.
+fn join_url(base: &str, location: &str) -> String {
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return location.to_string();
+    }
+    let (scheme, rest) = base.split_once("://").unwrap_or(("http", base));
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if let Some(path) = location.strip_prefix("//") {
+        return format!("{scheme}://{path}");
+    }
+    if location.starts_with('/') {
+        return format!("{scheme}://{authority}{location}");
+    }
+    let path = &rest[authority.len()..];
+    let dir = path.split(['?', '#']).next().unwrap_or("").rsplit_once('/').map_or("", |(d, _)| d);
+    format!("{scheme}://{authority}{dir}/{location}")
 }
 
 /// Dependency-free HTML to Markdown-ish text: drops script/style/head/nav/footer
@@ -261,6 +350,51 @@ mod tests {
         assert!(text.contains("Hello & welcome"));
         assert!(text.contains("- one\n- two"), "{text}");
         assert!(!text.contains("evil") && !text.contains("p{}"));
+    }
+
+    // SPEC-0002 AC15 (GRAFT-0073)
+    #[test]
+    fn metadata_and_link_local_destinations_are_blocked() {
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/x",
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://user:pw@169.254.170.2:80/",
+            "http://[fd00:ec2::254]/",
+            "http://100.100.100.200/latest",
+            "http://0.0.0.0:8080/",
+        ] {
+            assert!(check_destination(url).is_err(), "{url}");
+        }
+        for url in ["http://127.0.0.1:3000/", "http://localhost:8080/docs", "https://192.168.1.5/", "http://10.0.0.1/"]
+        {
+            assert!(check_destination(url).is_ok(), "{url}");
+        }
+        assert_eq!(join_url("https://a.dev/docs/x?y", "/z"), "https://a.dev/z");
+        assert_eq!(join_url("https://a.dev/docs/x", "y.html"), "https://a.dev/docs/y.html");
+        assert_eq!(join_url("https://a.dev/x", "http://b.dev/"), "http://b.dev/");
+        assert_eq!(join_url("https://a.dev/x", "//c.dev/p"), "https://c.dev/p");
+    }
+
+    #[test]
+    fn redirects_to_metadata_are_refused() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut line = String::new();
+            while r.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            let _ = write!(
+                s,
+                "HTTP/1.1 302 Found\r\nlocation: http://169.254.169.254/latest/meta-data/\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            );
+        });
+        let f = Fixture::new("redirect");
+        let out = f.run(&WebFetch, json!({"url": format!("http://{addr}/")}));
+        assert!(out.is_error && out.content.contains("refusing"), "{}", out.content);
     }
 
     #[test]

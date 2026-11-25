@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053, GRAFT-0055, GRAFT-0060, GRAFT-0061, GRAFT-0073]
 ---
 
 # SPEC-0002: Built-in tools
@@ -72,3 +72,7 @@ tools beat many overlapping ones) that is safe by default.
 - **AC14** `grep` with `context: N` (0-5) shows N lines around each match:
   matches as `path:N: text`, context as `path-N- text`, separate groups split
   by `--`, overlapping groups merged.
+- **AC15** `web_fetch` refuses URLs whose host is a cloud metadata name or
+  resolves to a link-local, unspecified or known metadata address, on the first
+  request and on every redirect (at most 5). Loopback and private addresses are
+  allowed.
