@@ -1838,6 +1838,18 @@ fn doctor(common: &Common, live: bool) -> CliResult {
                 "not trusted: this repo's hooks, MCP servers, rules, model and profile are ignored".into()
             },
         );
+        // Named subagents (GRAFT-0106): which loaded, and whether the repo's were skipped.
+        let loaded = agents::discover(&ws, cfg.trusted);
+        let in_repo = agents::repo_files(&ws);
+        let mut text = if loaded.is_empty() {
+            "none".to_string()
+        } else {
+            loaded.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+        };
+        if !cfg.trusted && in_repo > 0 {
+            text.push_str(&format!(" ({in_repo} in this repo ignored: not trusted)"));
+        }
+        line(true, "agents", text);
         match mode_rules(&cfg.approval_mode) {
             Ok(_) => line(true, "approvals", format!("mode `{}` (risky commands always ask)", cfg.approval_mode)),
             Err(e) => line(false, "approvals", e),

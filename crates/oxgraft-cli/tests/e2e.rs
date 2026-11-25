@@ -242,11 +242,15 @@ fn doctor_reports_problems_and_readiness() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(text.contains("FAIL model"), "{text}");
     let model = ws.script(json!([]));
+    std::fs::create_dir_all(ws.0.join(".claude/agents")).unwrap();
+    std::fs::write(ws.0.join(".claude/agents/helper.md"), "---\ndescription: helps\n---\nHelp.\n").unwrap();
     let out = ws.oxgraft(&["doctor", "--model", &model]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("ready"));
-    for expect in ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming"] {
+    for expect in
+        ["trust", "not trusted", "approvals", "mode `suggest`", "checkpoints", "streaming", "1 in this repo ignored"]
+    {
         assert!(text.contains(expect), "missing {expect}:\n{text}");
     }
     assert!(!ws.data().exists(), "doctor creates nothing");

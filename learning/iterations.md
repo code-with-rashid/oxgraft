@@ -160,3 +160,4 @@ honestly: an iteration is only logged when its tests pass.
 | 152 | 2026-11-25 | claude-code | Chat `/agents` lists named subagents with their descriptions and tools | adopt | GRAFT-0106 | SPEC-0004 | `chat_lists_named_agents` |
 | 153 | 2026-11-25 | claude-code | `bash_output` takes a `filter` regex and returns only matching new lines | adopt | GRAFT-0109 | SPEC-0002 | `output_can_be_filtered` |
 | 154 | 2026-11-25 | opencode | `read` on a directory returns its listing instead of an error | adopt | GRAFT-0110 | SPEC-0002 | `reading_a_directory_lists_it` |
+| 155 | 2026-11-25 | claude-code | `doctor` lists the named subagents that loaded and says when a repo's agent files were skipped because it isn't trusted | adopt | GRAFT-0106 | SPEC-0004 | `doctor_reports_problems_and_readiness` |

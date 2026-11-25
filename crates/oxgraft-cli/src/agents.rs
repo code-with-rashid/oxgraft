@@ -65,6 +65,15 @@ pub fn discover(workspace: &Path, trusted: bool) -> Vec<SubagentType> {
     found
 }
 
+/// Agent files in the workspace itself (loaded or not), for `doctor`.
+pub fn repo_files(workspace: &Path) -> usize {
+    DIRS.iter()
+        .filter_map(|d| std::fs::read_dir(workspace.join(d)).ok())
+        .flat_map(|entries| entries.flatten())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
