@@ -168,7 +168,8 @@ impl Tool for BashOutput {
                 "type": "object",
                 "properties": {
                     "id": {"type": "integer", "description": "Background command id"},
-                    "kill": {"type": "boolean", "description": "Stop the command"}
+                    "kill": {"type": "boolean", "description": "Stop the command"},
+                    "filter": {"type": "string", "description": "Regex: return only new lines that match (the rest are still marked read)"}
                 },
                 "required": []
             }),
@@ -180,6 +181,14 @@ impl Tool for BashOutput {
     }
 
     fn run(&self, input: &Value, ctx: &ToolContext<'_>) -> ToolOutput {
+        // GRAFT-0109 (after Claude Code's BashOutput `filter`): only matching lines.
+        let filter = match input.get("filter").and_then(Value::as_str).filter(|f| !f.is_empty()) {
+            None => None,
+            Some(f) => match regex::RegexBuilder::new(f).size_limit(1 << 20).build() {
+                Ok(re) => Some(re),
+                Err(e) => return ToolOutput::error(format!("invalid filter regex: {e}")),
+            },
+        };
         let Ok(mut reg) = registry().lock() else { return ToolOutput::error("background registry poisoned") };
         let Some(id) = input.get("id").and_then(Value::as_u64) else {
             if reg.is_empty() {
@@ -206,6 +215,18 @@ impl Tool for BashOutput {
             }
             p.shown = out.dropped + out.data.len();
             text
+        };
+        let new = match &filter {
+            Some(re) => {
+                let total = new.lines().count();
+                let kept: Vec<&str> = new.lines().filter(|l| re.is_match(l)).collect();
+                if kept.is_empty() && total > 0 {
+                    format!("(none of {total} new lines matched)")
+                } else {
+                    kept.join("\n")
+                }
+            }
+            None => new,
         };
         let body = if new.trim().is_empty() { "(no new output)".to_string() } else { new };
         ToolOutput::ok(crate::util::truncate(&format!("[{id}: {state}]\n{body}"), ctx.max_output_chars))
@@ -244,6 +265,25 @@ mod tests {
         assert!(stopped.content.contains("exited"), "{}", stopped.content);
         assert!(f.run(&BashOutput, json!({"id": 999_999})).is_error);
         assert!(f.run(&BashOutput, json!({})).content.contains("echo started"));
+    }
+
+    // GRAFT-0109
+    #[test]
+    fn output_can_be_filtered() {
+        if !matches!(crate::shell_kind(), crate::ShellKind::Posix(_)) {
+            return;
+        }
+        let f = Fixture::new("background-filter");
+        let out = f.run(
+            &crate::Bash,
+            json!({"command": "echo ok one; echo ERROR two; echo ok three; sleep 30", "background": true}),
+        );
+        let id: u64 = out.content.split_whitespace().nth(3).unwrap().trim_end_matches(';').parse().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let got = f.run(&BashOutput, json!({"id": id, "filter": "ERROR"}));
+        assert!(got.content.contains("ERROR two") && !got.content.contains("ok one"), "{}", got.content);
+        assert!(f.run(&BashOutput, json!({"id": id, "filter": "("})).is_error);
+        f.run(&BashOutput, json!({"id": id, "kill": true}));
     }
 
     // Review fix: output is capped as it arrives, and dropped bytes are reported.
