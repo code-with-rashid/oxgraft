@@ -193,10 +193,10 @@ struct RunState {
 }
 
 /// Tools that can't change the workspace, so a turn using only these needs no checkpoint.
-const READ_ONLY_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "skill", "todo", "task", "web_fetch"];
+const READ_ONLY_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "map", "skill", "todo", "task", "web_fetch"];
 
 /// Tools a subagent may use: read-only, so its work never needs undo.
-const SUBAGENT_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "skill"];
+const SUBAGENT_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "map", "skill"];
 
 impl<'a> Agent<'a> {
     pub fn new(

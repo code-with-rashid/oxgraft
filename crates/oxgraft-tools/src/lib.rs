@@ -4,6 +4,7 @@ mod bash;
 mod extra;
 mod files;
 pub mod mcp;
+mod repomap;
 mod sandbox;
 mod search;
 pub mod util;
@@ -14,6 +15,7 @@ use oxgraft_seams::Tool;
 pub use bash::{Bash, ShellKind, shell_kind, shell_program};
 pub use extra::{Skill, SkillInfo, Todo, discover_skills, skill_dirs, skills_prompt};
 pub use files::{Edit, Ls, Read, Write};
+pub use repomap::RepoMap;
 pub use search::{Glob, Grep};
 pub use web::WebFetch;
 
@@ -34,6 +36,7 @@ pub fn builtin() -> Vec<Box<dyn Tool>> {
         Box::new(Ls),
         Box::new(Glob),
         Box::new(Grep),
+        Box::new(RepoMap),
         Box::new(Bash),
         Box::new(Todo),
         Box::new(WebFetch),

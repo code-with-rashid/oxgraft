@@ -161,6 +161,7 @@ impl Default for OrderedRules {
                 Rule::new("ls", "*", Decision::Allow),
                 Rule::new("grep", "*", Decision::Allow),
                 Rule::new("glob", "*", Decision::Allow),
+                Rule::new("map", "*", Decision::Allow),
                 Rule::new("todo", "*", Decision::Allow),
                 Rule::new("skill", "*", Decision::Allow),
                 Rule::new("edit", "*", Decision::Ask),

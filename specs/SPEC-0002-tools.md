@@ -2,7 +2,7 @@
 id: SPEC-0002
 title: Built-in tools
 status: implemented
-grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050]
+grafts: [GRAFT-0003, GRAFT-0004, GRAFT-0005, GRAFT-0047, GRAFT-0050, GRAFT-0053]
 ---
 
 # SPEC-0002: Built-in tools
@@ -51,3 +51,8 @@ tools beat many overlapping ones) that is safe by default.
   `old_string` must occur exactly once in the original file and no two may
   overlap; all replacements apply together, or (on any error, naming the edit
   number) none do.
+- **AC10** `map` returns source files (Rust, Python, JS/TS, Go, JVM/.NET/Swift,
+  Ruby, PHP) with their top-level definitions, files whose defined names are
+  used in the most other files first, within a character budget (default 6000,
+  max 40000), honouring `.gitignore`, skipping Rust test modules, and saying
+  how many files were left out. It is read-only and allowed by default.
