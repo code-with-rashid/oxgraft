@@ -873,7 +873,7 @@ fn chat_resume_switches_session() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let input = format!("/resume {id}\n/resume nope\nnext question\n/exit\n");
+    let input = format!("/resume {id}\n/resume nope\nnext question\n/export t.md\n/exit\n");
     child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
@@ -881,4 +881,5 @@ fn chat_resume_switches_session() {
     assert!(err.contains("resume: "), "{err}");
     let saved = ws.read(&format!(".oxgraft/sessions/{id}.json"));
     assert!(saved.contains("next question"), "the resumed session continued");
+    assert!(ws.read("t.md").contains("next question"), "/export wrote the transcript");
 }

@@ -1090,6 +1090,17 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 }
                 continue;
             }
+            e if e == "/export" || e.starts_with("/export ") => {
+                // GRAFT-0066 in chat: the conversation as Markdown.
+                let name = e.trim_start_matches("/export").trim();
+                let path =
+                    if name.is_empty() { s.ws.join(format!("oxgraft-{}.md", session.id)) } else { s.ws.join(name) };
+                match std::fs::write(&path, session.to_markdown()) {
+                    Ok(()) => eprintln!("wrote {}", path.display()),
+                    Err(err) => eprintln!("export: {}: {err}", path.display()),
+                }
+                continue;
+            }
             r if r.starts_with("/resume") => {
                 // GRAFT-0100: switch to a saved session (the current one is already saved).
                 let id = r.trim_start_matches("/resume").trim();
@@ -1242,7 +1253,7 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                 eprintln!(
                     "/undo      restore files changed in this session\n/checkpoints  list workspace checkpoints\n\
                      /restore N  put the workspace back to checkpoint N\n/cost      token usage for this session\n/compact   summarise the conversation to free context\n/diff      everything this session changed, as a patch\n/init      write or improve AGENTS.md for this repository\n/mode X    switch approvals: read-only, suggest, auto-edit, full-auto\n/model M   switch model (provider/model or alias), keeping the conversation\n\
-                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n\
+                     /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n/resume ID switch to a saved session (default: the latest)\n/export F  write this conversation as Markdown (default oxgraft-<id>.md)\n\
                      !cmd       run a shell command yourself; output goes with your next message\n\
                      \"\"\"        start or end a multi-line message (or end a line with \\ to continue)\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
