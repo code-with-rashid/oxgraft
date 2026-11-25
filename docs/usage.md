@@ -45,7 +45,9 @@ oxgraft --mode auto-edit                  # edits without asking; commands still
 oxgraft --mode full-auto run "…"          # edits and commands without asking (risky ones still ask)
 ```
 
-Ctrl-C interrupts the current run (and any running command); press it again to quit.
+In chat: `/checkpoints`, `/restore N`, `/undo`, `/cost`, `/clear`, `/sessions`,
+`/help`, `/exit`. Ctrl-C interrupts the current run (and any running command);
+press it again to quit.
 
 Exit codes: `0` done, `1` provider or internal failure, `2` usage/config error,
 `3` stopped by a guard (max turns, token budget, refusal, interrupt).
