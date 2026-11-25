@@ -10,15 +10,24 @@ evidence for each change.**
 
 - **Any model.** Anthropic (native API, prompt caching, refusal fallbacks), OpenAI,
   OpenRouter, DeepSeek, Groq, Gemini, xAI, Mistral, Ollama, LM Studio, or any
-  OpenAI-compatible server.
-- **Small, sharp tools.** read, write, edit, ls, glob, grep, bash, todo, plus
-  Agent Skills and MCP servers.
+  OpenAI-compatible server. Replies stream as they are written.
+- **Small, sharp tools.** read, write, edit (several formats, batched edits), ls,
+  glob, grep, a ranked repo `map`, bash, todo, web fetch, plus Agent Skills, MCP
+  servers and a read-only helper agent.
 - **Safe by default.** File tools stay inside the workspace; edits and commands
-  ask first; optional OS sandbox (bubblewrap / Seatbelt) that fails closed;
-  repository hooks and MCP servers need your trust; `oxgraft undo` restores every
-  file a session changed.
-- **Stable in long runs.** Retries with backoff, loop guard, max-turn and token
-  budgets, context compaction, Ctrl-C interrupts, crash-safe resumable sessions.
+  ask first, or pick a mode (`--mode read-only | auto-edit | full-auto`);
+  pipe-to-shell, `rm -rf`, raw disk writes and `sudo` always ask; agent config,
+  CI and `.git` edits always ask; optional OS sandbox (bubblewrap / Seatbelt) that
+  fails closed; a cloned repository can't run its hooks or MCP servers, or choose
+  your model, profile or approval mode, until you trust it; web and MCP content
+  is fenced as untrusted.
+- **Easy to undo.** Every changing turn is checkpointed in a private git repo
+  (`oxgraft restore N`), including changes made by shell commands; each run ends
+  with a summary of what changed.
+- **Stable in long runs.** Retries with backoff, loop and mistake guards,
+  malformed tool calls re-asked privately, max-turn and token budgets, context
+  compaction, Ctrl-C interrupts, crash-safe resumable and forkable sessions, and
+  `run --until "<check>"` so "done" means the check passes.
 - **Scriptable.** `oxgraft run --json` streams a versioned JSONL event protocol
   with meaningful exit codes.
 
