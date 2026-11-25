@@ -275,7 +275,8 @@ fn flag_rules(allow: &[String], deny: &[String]) -> Vec<oxgraft_strategies::appr
     use oxgraft_strategies::approval::Rule;
     let parse = |spec: &str, d: Decision| {
         let (tool, pattern) = spec.split_once(':').unwrap_or((spec, "*"));
-        let rule = Rule::new(tool.trim(), pattern.trim(), d);
+        // Tool names are lowercase (`bash`, `web_fetch`); accept `Bash` too.
+        let rule = Rule::new(&tool.trim().to_ascii_lowercase(), pattern.trim(), d);
         if d == Decision::Deny { rule.because("denied for this run with --deny-tool") } else { rule }
     };
     allow.iter().map(|a| parse(a, Decision::Allow)).chain(deny.iter().map(|d| parse(d, Decision::Deny))).collect()

@@ -37,3 +37,7 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+Rules compared the raw path the model sent, so `src/../build.rs` matched `src/*` and `./secrets/x` escaped `secrets/*`; tool names were case-sensitive. File-tool paths are now normalised before rules see them, and flag tool names are lowercased.

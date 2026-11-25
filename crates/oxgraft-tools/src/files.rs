@@ -29,7 +29,27 @@ fn too_large(path: &std::path::Path, limit: u64, shown: &str) -> Option<String> 
 }
 
 fn action(tool: &str, input: &Value, field: &str) -> Action {
-    Action { tool: tool.into(), resource: input.get(field).and_then(Value::as_str).unwrap_or("").into() }
+    Action { tool: tool.into(), resource: normalize_path(input.get(field).and_then(Value::as_str).unwrap_or("")) }
+}
+
+/// The path as approval rules see it (review fix for GRAFT-0097): `/` separators,
+/// no `.` segments, `..` folded where possible, so `src/../build.rs` is matched
+/// as `build.rs` and `./secrets/x` as `secrets/x`.
+pub fn normalize_path(path: &str) -> String {
+    let unified = path.replace('\\', "/");
+    let absolute = unified.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in unified.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute { format!("/{joined}") } else { joined }
 }
 
 macro_rules! try_tool {
@@ -565,6 +585,16 @@ mod tests {
         ] {
             assert!(out.is_error && out.content.contains("not a regular file"), "{}", out.content);
         }
+    }
+
+    #[test]
+    fn paths_are_normalized_for_approval_rules() {
+        assert_eq!(normalize_path("src/../build.rs"), "build.rs");
+        assert_eq!(normalize_path("./secrets/x"), "secrets/x");
+        assert_eq!(normalize_path("a\\b/./c"), "a/b/c");
+        assert_eq!(normalize_path("../outside"), "../outside");
+        assert_eq!(normalize_path("/abs/./p"), "/abs/p");
+        assert_eq!(action("write", &json!({"path": "src//../x.rs"}), "path").resource, "x.rs");
     }
 
     #[test]

@@ -73,8 +73,11 @@ impl Tool for Glob {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .filter_map(|e| {
                 let rel = e.path().strip_prefix(&base).ok()?.to_string_lossy().replace('\\', "/");
+                if !matcher.is_match(&rel) {
+                    return None;
+                }
                 let mtime = e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
-                matcher.is_match(&rel).then(|| (mtime, display(ctx.workspace, e.path())))
+                Some((mtime, display(ctx.workspace, e.path())))
             })
             .collect();
         entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
