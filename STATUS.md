@@ -3,7 +3,11 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–76._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–97._
+
+**Branches:** `main` has iterations 1–77 (being tried against a real model by the
+maintainer). Iterations 78 onward are on `next`, in draft PR #1, until that
+feedback is in. Items below marked (next) are only on that branch.
 
 ## Current milestone
 
@@ -15,9 +19,13 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   fallbacks, thinking blocks preserved), 10 OpenAI-compatible presets, `mock:`.
   **Streaming** (SSE) for both, with `text_delta` events; retries with backoff
   and `retry-after`. `auto` profile picks the edit format by model family.
+  (next) Adaptive thinking on supporting Claude models; aliases `opus`/`sonnet`/
+  `haiku`/`fable`; 32k compaction window by default for Ollama and LM Studio.
 - **Tools**: read, write, edit (4 formats, old/new_string, batched `edits`), ls,
   glob, grep, `map` (ranked repo outline), bash (POSIX sh, Git Bash or PowerShell
   on Windows), todo, web_fetch, skill, MCP (stdio), read-only `task` subagent.
+  (next) MCP over Streamable HTTP; `@file` mentions; grep `context`; long shell
+  output saved in full to `.oxgraft/outputs/`.
 - **Safety**: workspace path confinement (symlinks included); deny-wins rules with
   per-part shell checks, justifications and self-testing `match`/`not_match`
   examples; **risk rails** (pipe-to-shell, `rm -rf`, raw disk, mkfs, sudo always
@@ -26,7 +34,9 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   (`fewer-prompts` profile); OS sandbox profile (fails closed); fail-closed
   pre_tool hooks; trusted-workspace gate for hooks, MCP, rules, model, profile,
   approval mode, verify_command and the repo's own `profiles/`; `@imports`
-  confined to the workspace; web/MCP output fenced as `<untrusted>`.
+  confined to the workspace; web/MCP output fenced as `<untrusted>`. (next)
+  "always" scoped to the command prefix (bash) or host (web_fetch); web_fetch
+  refuses cloud-metadata and link-local destinations on every redirect hop.
 - **Recovery**: per-turn **checkpoints** in a private repo under the user data dir (captures
   shell changes; never touches the user's `.git`), `oxgraft checkpoints`,
   `oxgraft restore N` (undoable), change summary after each run, `oxgraft undo`.
@@ -35,9 +45,13 @@ _Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterat
   handling, compaction, Ctrl-C, crash-safe sessions with repair, fuzz-tested
   strategies, verify_command loop, `run --until <check>`.
 - **CLI**: chat, run (`--json`, `--resume`, `--fork ID@N`, `--until`), init,
-  doctor, sessions, checkpoints, restore, undo, models, strategies, profile.
+  doctor (`--live` sends a real reply and a tool call), sessions, checkpoints,
+  restore, undo, models, strategies, profile. (next) custom commands
+  (`.agents/commands/*.md`), chat `!command`, `--plan`, `--append-system-prompt`
+  and `instructions`, `export` (Markdown), `prune`, `user_prompt`/`stop` hooks,
+  `files_changed` event, todo reminder, failure hints.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 55 graft records; 76 logged iterations; specs SPEC-0001..0006;
+  archived); 73 graft records; 97 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
