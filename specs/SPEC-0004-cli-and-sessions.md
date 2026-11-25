@@ -69,3 +69,8 @@ otherwise an error explaining how to choose one.
   write and bash allowed). Mode rules sit between the defaults and user rules.
   Protected paths and risk rails still ask in every mode; an unknown mode is a
   usage error; an untrusted workspace can't set the mode.
+- **AC11** A Markdown file `<name>.md` in `.agents/commands/` or
+  `.claude/commands/` (workspace, then home; names of letters, digits, `-`,
+  `_`) is a custom command: `/name args` in chat or `oxgraft run /name args`
+  runs its body with `$ARGUMENTS` replaced (or the arguments appended). An
+  unknown `/name` in `run` is a usage error listing the available commands.

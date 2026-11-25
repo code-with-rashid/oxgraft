@@ -516,3 +516,27 @@ fn doctor_live_checks_reply_and_tool_calling() {
     assert_eq!(out.status.code(), Some(2), "{text}");
     assert!(text.contains("FAIL live tools") && text.contains("may not support tool calling"), "{text}");
 }
+
+// SPEC-0004 AC11 (GRAFT-0057): custom commands from .agents/commands.
+#[test]
+fn custom_commands_expand_in_run() {
+    let ws = Ws::new("commands");
+    std::fs::create_dir_all(ws.0.join(".agents/commands")).unwrap();
+    std::fs::write(ws.0.join(".agents/commands/explain.md"), "Explain $ARGUMENTS in two sentences.\n").unwrap();
+    let model = ws.script(json!([{"text": "It greets."}]));
+    let out = ws.oxgraft(&["run", "--json", "--model", &model, "/explain", "main.rs"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let id = events(&out)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::SessionStarted { session_id, .. } => session_id,
+            _ => None,
+        })
+        .unwrap();
+    let saved = ws.read(&format!(".oxgraft/sessions/{id}.json"));
+    assert!(saved.contains("Explain main.rs in two sentences."), "{saved}");
+
+    let out = ws.oxgraft(&["run", "--model", &model, "/nope"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("available: /explain"));
+}

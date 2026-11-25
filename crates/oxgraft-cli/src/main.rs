@@ -1,5 +1,6 @@
 //! The `oxgraft` command (SPEC-0004).
 
+mod commands;
 mod config;
 mod profiles;
 mod render;
@@ -414,6 +415,21 @@ fn run(
     if task.trim().is_empty() {
         return Err(usage("the task is empty"));
     }
+    if task.trim_start().starts_with('/') {
+        let ws = workspace(common)?;
+        match commands::expand(&ws, &task) {
+            Some(expanded) => task = expanded,
+            None if !task.trim().contains(char::is_whitespace) => {
+                let names: Vec<String> = commands::discover(&ws).into_iter().map(|c| format!("/{}", c.name)).collect();
+                return Err(usage(format!(
+                    "unknown command `{}` (available: {})",
+                    task.trim(),
+                    if names.is_empty() { "none; add .agents/commands/<name>.md".into() } else { names.join(", ") }
+                )));
+            }
+            None => {}
+        }
+    }
     let mut s = setup(common)?;
     s.config.finish_check = until;
     let mut session = open_session(&s, resume, fork)?;
@@ -591,9 +607,12 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
                      /clear     start a new session (the old one stays saved)\n/sessions  list saved sessions\n\
                      /exit      quit\nCtrl-C interrupts a running task; press it twice to quit."
                 );
+                for c in commands::discover(&s.ws) {
+                    eprintln!("/{:<10} {}", c.name, c.description);
+                }
                 continue;
             }
-            other if other.starts_with('/') && !other.contains(' ') => {
+            other if other.starts_with('/') && commands::expand(&s.ws, other).is_none() && !other.contains(' ') => {
                 eprintln!("unknown command {other}; try /help");
                 continue;
             }
@@ -602,7 +621,9 @@ fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliRes
         agent.config.cancel.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut renderer = render::Human::default();
         let before = session.checkpoints.len();
-        let outcome = agent.run(&mut session, line, &mut |e: &Event| renderer.event(e));
+        // Custom commands (GRAFT-0057): `/name args` expands to the command's prompt.
+        let task = commands::expand(&s.ws, line).unwrap_or_else(|| line.to_string());
+        let outcome = agent.run(&mut session, &task, &mut |e: &Event| renderer.event(e));
         change_summary(&s.ws, &session, before);
         last = status_code(&outcome.status);
     }

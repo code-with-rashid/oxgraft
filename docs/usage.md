@@ -125,6 +125,19 @@ Oxgraft reads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and
 `.agents/skills/`, `.claude/skills/` and the same folders in your home
 directory. Existing setups for other harnesses work unchanged.
 
+## Custom commands
+
+Put a prompt in `.agents/commands/<name>.md` (or `.claude/commands/`, the Claude
+Code format; `~/` works too) and run it as `/name` in chat or
+`oxgraft run /name <args>`. `$ARGUMENTS` in the file is replaced by `<args>`.
+
+```markdown
+---
+description: Review a file for bugs
+---
+Review $ARGUMENTS for correctness bugs. List each with file:line.
+```
+
 ## Profiles
 
 A profile picks one strategy per seam. `oxgraft strategies` lists every
