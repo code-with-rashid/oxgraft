@@ -11,7 +11,7 @@ mod web;
 
 use oxgraft_seams::Tool;
 
-pub use bash::{Bash, ShellKind, shell_kind};
+pub use bash::{Bash, ShellKind, shell_kind, shell_program};
 pub use extra::{Skill, SkillInfo, Todo, discover_skills, skill_dirs, skills_prompt};
 pub use files::{Edit, Ls, Read, Write};
 pub use search::{Glob, Grep};

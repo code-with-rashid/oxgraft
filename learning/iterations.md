@@ -66,3 +66,4 @@ honestly: an iteration is only logged when its tests pass.
 | 58 | 2026-11-25 | crush (clean-room) | `inert_reads` approval strategy + `fewer-prompts` profile: single read-only shell commands run without asking | adopt | GRAFT-0047 | SPEC-0002 | `inert_commands_are_allowed_but_rules_still_win` |
 | 59 | 2026-11-25 | swe-agent, cline | Change summary after each run/chat turn (diff stat from checkpoints + one-command undo) | adopt | GRAFT-0048 | SPEC-0004 | `human_runs_end_with_a_change_summary` |
 | 60 | 2026-11-25 | pi, goose | `--fork ID@N` for run and chat: new session from a copy of another's history at a finished reply | adopt | GRAFT-0049 | SPEC-0004 | `sessions_can_be_forked` |
+| 61 | 2026-11-25 | — | Hooks and verify_command run in the bash tool's shell (Git Bash or PowerShell on Windows, not cmd) | fix | — | SPEC-0005 | `hooks::tests` |

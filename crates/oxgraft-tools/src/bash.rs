@@ -43,19 +43,22 @@ pub fn shell_kind() -> ShellKind {
     }
 }
 
-fn shell(command: &str) -> Command {
+/// The program and leading arguments that run one command line in this shell.
+/// Hooks and `verify_command` use the same shell.
+pub fn shell_program() -> (std::path::PathBuf, Vec<String>) {
     match shell_kind() {
-        ShellKind::Posix(sh) => {
-            let mut c = Command::new(sh);
-            c.arg("-c").arg(command);
-            c
-        }
+        ShellKind::Posix(sh) => (sh, vec!["-c".into()]),
         ShellKind::PowerShell => {
-            let mut c = Command::new("powershell");
-            c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
-            c
+            ("powershell".into(), vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into()])
         }
     }
+}
+
+fn shell(command: &str) -> Command {
+    let (program, args) = shell_program();
+    let mut c = Command::new(program);
+    c.args(args).arg(command);
+    c
 }
 
 impl Tool for Bash {

@@ -22,6 +22,33 @@ use std::time::Duration;
 use serde::Deserialize;
 use wait_timeout::ChildExt;
 
+/// How to run a command line: `program args… <line>`. The CLI sets this to the
+/// shell the `bash` tool uses (Git Bash `sh` or PowerShell on Windows), so hooks,
+/// `verify_command` and model commands all behave the same.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shell {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        if cfg!(windows) {
+            Self { program: "cmd".into(), args: vec!["/C".into()] }
+        } else {
+            Self { program: "sh".into(), args: vec!["-c".into()] }
+        }
+    }
+}
+
+impl Shell {
+    pub fn command(&self, line: &str) -> Command {
+        let mut c = Command::new(&self.program);
+        c.args(&self.args).arg(line);
+        c
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
@@ -59,16 +86,16 @@ impl Hook {
         self.event == event && (self.tools.is_empty() || self.tools.iter().any(|t| t == tool))
     }
 
-    pub fn run(&self, workspace: &Path, event: HookEvent, tool: &str, input: &str, output: Option<&str>) -> HookResult {
-        let mut cmd = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.arg("/C").arg(&self.command);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg(&self.command);
-            c
-        };
+    pub fn run(
+        &self,
+        shell: &Shell,
+        workspace: &Path,
+        event: HookEvent,
+        tool: &str,
+        input: &str,
+        output: Option<&str>,
+    ) -> HookResult {
+        let mut cmd = shell.command(&self.command);
         let event_name = match event {
             HookEvent::PreTool => "pre_tool",
             HookEvent::PostTool => "post_tool",
@@ -118,16 +145,8 @@ impl Hook {
 
 /// Run a verification command (build, lint, tests) in the workspace. Returns whether it
 /// passed and its combined output (tail-truncated), with a timeout.
-pub fn run_check(command: &str, workspace: &Path, timeout_secs: u64) -> (bool, String) {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
-    } else {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(command);
-        c
-    };
+pub fn run_check(shell: &Shell, command: &str, workspace: &Path, timeout_secs: u64) -> (bool, String) {
+    let mut cmd = shell.command(command);
     cmd.current_dir(workspace).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -174,10 +193,20 @@ mod tests {
         assert!(hook("x").matches(HookEvent::PreTool, "bash"));
         assert!(!hook("x").matches(HookEvent::PreTool, "read"));
         assert!(!hook("x").matches(HookEvent::PostTool, "bash"));
-        assert_eq!(hook("exit 0").run(&ws, HookEvent::PreTool, "bash", "{}", None), HookResult::Ok);
-        let blocked = hook("echo no rm please 1>&2 && exit 2").run(&ws, HookEvent::PreTool, "bash", "{}", None);
+        assert_eq!(hook("exit 0").run(&Shell::default(), &ws, HookEvent::PreTool, "bash", "{}", None), HookResult::Ok);
+        let blocked = hook("echo no rm please 1>&2 && exit 2").run(
+            &Shell::default(),
+            &ws,
+            HookEvent::PreTool,
+            "bash",
+            "{}",
+            None,
+        );
         assert_eq!(blocked, HookResult::Feedback("no rm please".into()));
-        assert!(matches!(hook("exit 1").run(&ws, HookEvent::PreTool, "bash", "{}", None), HookResult::Failed(_)));
+        assert!(matches!(
+            hook("exit 1").run(&Shell::default(), &ws, HookEvent::PreTool, "bash", "{}", None),
+            HookResult::Failed(_)
+        ));
     }
 
     #[test]

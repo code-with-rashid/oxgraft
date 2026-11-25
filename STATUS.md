@@ -51,7 +51,6 @@ _Last updated: 2026-11-25 by the autonomous build session (Claude Code)._
 
 - No streaming output yet; long responses appear when complete.
 - `web_fetch` HTML-to-text is basic.
-- Verify commands and hooks run via `cmd` on Windows, not Git Bash.
 
 ## Dev notes
 

@@ -30,3 +30,6 @@ scripts) without letting a cloned repository run code unasked.
   resources. At load, every `match` example must match the rule's patterns and
   no `not_match` example may; otherwise the config is rejected with an error
   naming the rule and the example.
+- **AC6** Hooks and `verify_command` run in the same shell as the `bash` tool
+  (POSIX `sh`; on Windows Git Bash `sh` if found, else PowerShell), so a command
+  that works for the model works in a hook.

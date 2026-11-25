@@ -336,6 +336,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.verify_command = cfg.verify_command.clone();
     config.stream = cfg.stream;
     config.checkpoints = cfg.checkpoints;
+    let (program, args) = oxgraft_tools::shell_program();
+    config.shell = oxgraft_core::hooks::Shell { program, args };
     config.hooks = cfg.hooks.clone();
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {

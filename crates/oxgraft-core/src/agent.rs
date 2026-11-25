@@ -70,6 +70,8 @@ pub struct AgentConfig {
     /// Snapshot the workspace into a private git repo after turns that may have
     /// changed files (GRAFT-0046). Off in core by default; the CLI turns it on.
     pub checkpoints: bool,
+    /// Shell for hooks and `verify_command`.
+    pub shell: crate::hooks::Shell,
 }
 
 impl AgentConfig {
@@ -90,6 +92,7 @@ impl AgentConfig {
             verify_command: None,
             stream: true,
             checkpoints: false,
+            shell: crate::hooks::Shell::default(),
         }
     }
 
@@ -510,7 +513,7 @@ impl<'a> Agent<'a> {
                 && let Some(command) = &self.config.verify_command
                 && verify_failures < MAX_VERIFY_ROUNDS
             {
-                let (ok, out) = crate::hooks::run_check(command, &self.config.workspace, 300);
+                let (ok, out) = crate::hooks::run_check(&self.config.shell, command, &self.config.workspace, 300);
                 if ok {
                     verify_failures = 0;
                 } else {
@@ -654,7 +657,7 @@ impl<'a> Agent<'a> {
 
         let input_json = input.to_string();
         for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PreTool, name)) {
-            match hook.run(&self.config.workspace, HookEvent::PreTool, name, &input_json, None) {
+            match hook.run(&self.config.shell, &self.config.workspace, HookEvent::PreTool, name, &input_json, None) {
                 HookResult::Ok => {}
                 HookResult::Feedback(reason) => {
                     emit(&Event::ApprovalResolved { id: id.into(), decision: "deny".into() });
@@ -758,7 +761,14 @@ impl<'a> Agent<'a> {
             ToolOutput::error(format!("internal error: the `{name}` tool panicked; the session continues"))
         });
         for hook in self.config.hooks.iter().filter(|h| h.matches(HookEvent::PostTool, name)) {
-            match hook.run(&self.config.workspace, HookEvent::PostTool, name, &input_json, Some(&output.content)) {
+            match hook.run(
+                &self.config.shell,
+                &self.config.workspace,
+                HookEvent::PostTool,
+                name,
+                &input_json,
+                Some(&output.content),
+            ) {
                 HookResult::Ok => {}
                 HookResult::Feedback(feedback) => {
                     output.content.push_str(&format!("\n\nFeedback from a post_tool hook:\n{feedback}"));
@@ -804,7 +814,9 @@ impl<'a> Agent<'a> {
     ) -> Outcome {
         self.save(session, emit);
         for hook in self.config.hooks.iter().filter(|h| h.event == HookEvent::SessionEnd) {
-            if let HookResult::Failed(msg) = hook.run(&self.config.workspace, HookEvent::SessionEnd, "", "{}", None) {
+            if let HookResult::Failed(msg) =
+                hook.run(&self.config.shell, &self.config.workspace, HookEvent::SessionEnd, "", "{}", None)
+            {
                 emit(&Event::Warning { message: msg });
             }
         }
