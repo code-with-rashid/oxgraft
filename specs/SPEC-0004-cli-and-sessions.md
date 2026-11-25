@@ -2,7 +2,7 @@
 id: SPEC-0004
 title: CLI, headless mode, config, sessions
 status: implemented
-grafts: [GRAFT-0005]
+grafts: [GRAFT-0005, GRAFT-0046]
 ---
 
 # SPEC-0004: CLI, headless mode, config, sessions
@@ -44,3 +44,13 @@ otherwise an error explaining how to choose one.
   built-in defaults, or by path.
 - **AC6** End-to-end test: with the mock provider, `oxgraft run` reads a
   file, edits it, runs a command, and exits 0 with the file changed.
+- **AC7** (reserved)
+- **AC8** With `checkpoints = true` (default) and git installed, the workspace is
+  snapshotted into `.oxgraft/checkpoints.git` at session start and after every
+  turn that used a tool other than read-only ones, including changes made by
+  shell commands. `oxgraft checkpoints` lists them; `oxgraft restore N` returns
+  the workspace to checkpoint N after recording a pre-restore checkpoint. The
+  user's own `.git`, index and history are never read or written; `.gitignore`d
+  files and heavy directories (node_modules, target, …) are left alone. A
+  failing checkpoint repo is a warning, never a session error; checkpoints are
+  off when the workspace is the home directory or a filesystem root.

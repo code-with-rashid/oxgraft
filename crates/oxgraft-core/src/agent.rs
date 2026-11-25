@@ -67,6 +67,9 @@ pub struct AgentConfig {
     pub verify_command: Option<String>,
     /// Stream model output as `text_delta` events (ADR 0007).
     pub stream: bool,
+    /// Snapshot the workspace into a private git repo after turns that may have
+    /// changed files (GRAFT-0046). Off in core by default; the CLI turns it on.
+    pub checkpoints: bool,
 }
 
 impl AgentConfig {
@@ -86,6 +89,7 @@ impl AgentConfig {
             subagents: true,
             verify_command: None,
             stream: true,
+            checkpoints: false,
         }
     }
 
@@ -181,7 +185,12 @@ struct RunState {
     seen: HashMap<PathBuf, Option<std::time::SystemTime>>,
     /// Subdirectory instruction files already shown this run.
     instructions: HashSet<PathBuf>,
+    /// Checkpoint repo, when enabled and working.
+    checkpoints: Option<crate::checkpoint::Checkpoints>,
 }
+
+/// Tools that can't change the workspace, so a turn using only these needs no checkpoint.
+const READ_ONLY_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "skill", "todo", "task", "web_fetch"];
 
 /// Tools a subagent may use: read-only, so its work never needs undo.
 const SUBAGENT_TOOLS: &[&str] = &["read", "ls", "glob", "grep", "skill"];
@@ -303,7 +312,17 @@ impl<'a> Agent<'a> {
             depth,
             seen: HashMap::new(),
             instructions: HashSet::new(),
+            checkpoints: None,
         };
+        if self.config.checkpoints && depth == 0 {
+            match crate::checkpoint::Checkpoints::open(&self.config.workspace) {
+                Ok(cp) => {
+                    state.checkpoints = Some(cp);
+                    self.checkpoint(session, &mut state, "start", emit);
+                }
+                Err(e) => emit(&Event::Warning { message: format!("checkpoints off: {e}") }),
+            }
+        }
         let mut usage = Usage::default();
         let mut continuations = 0;
         let mut changed_files = false;
@@ -461,6 +480,7 @@ impl<'a> Agent<'a> {
             }
 
             let truncated = completion.stop == StopReason::MaxTokens;
+            let may_change = calls.iter().any(|(_, name, _)| !READ_ONLY_TOOLS.contains(&name.as_str()));
             let mut results = Vec::with_capacity(calls.len());
             for (index, (id, name, input)) in calls.into_iter().enumerate() {
                 emit(&Event::ToolCall { id: id.clone(), tool: name.clone(), input: input.clone() });
@@ -512,6 +532,9 @@ impl<'a> Agent<'a> {
             }
             let stop = consecutive_errors >= MISTAKE_STOP;
             session.messages.push(Message { role: Role::User, content: results });
+            if may_change {
+                self.checkpoint(session, &mut state, &format!("turn {turn}"), emit);
+            }
             self.save(session, emit);
             if stop {
                 let reason = format!("{MISTAKE_STOP} consecutive tool errors");
@@ -527,6 +550,23 @@ impl<'a> Agent<'a> {
         }
         let turns = self.config.max_turns;
         self.finish(session, emit, Status::Stopped(format!("reached max turns ({turns})")), turns, usage, final_text)
+    }
+
+    /// Take a checkpoint and record it if the workspace changed. A failing checkpoint
+    /// repo is reported once and switched off; it never stops the session.
+    fn checkpoint(&self, session: &mut Session, state: &mut RunState, label: &str, emit: &mut dyn FnMut(&Event)) {
+        let Some(cp) = &state.checkpoints else { return };
+        match cp.snapshot(&format!("{} {label}", session.id)) {
+            Ok(commit) => {
+                if session.checkpoints.last().is_none_or(|c| c.commit != commit) {
+                    session.checkpoints.push(crate::session::CheckpointRecord { label: label.into(), commit });
+                }
+            }
+            Err(e) => {
+                emit(&Event::Warning { message: format!("checkpoints off for this run: {e}") });
+                state.checkpoints = None;
+            }
+        }
     }
 
     /// Context compaction (GRAFT-0023, after Pi, OpenCode and Claude Code): ask the model

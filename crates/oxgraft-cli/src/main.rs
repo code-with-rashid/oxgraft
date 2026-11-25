@@ -69,6 +69,15 @@ enum Command {
     Sessions,
     /// Restore files changed by a session (default: the latest).
     Undo { id: Option<String> },
+    /// List a session's workspace checkpoints (default: the latest session).
+    Checkpoints { id: Option<String> },
+    /// Put the workspace back to checkpoint N of a session (see `oxgraft checkpoints`).
+    Restore {
+        /// Checkpoint number; 0 is the state when the session started.
+        number: usize,
+        #[arg(long, default_value = "last")]
+        session: String,
+    },
     /// Check the setup: model and credentials, shell, sandbox, git, skills, MCP, config.
     Doctor,
     /// Have the agent study this repository and write (or improve) AGENTS.md.
@@ -182,6 +191,57 @@ fn dispatch(cli: Cli) -> CliResult {
             }
             Ok(0)
         }
+        Some(Command::Checkpoints { id }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, id.as_deref().unwrap_or("last"))?;
+            if session.checkpoints.is_empty() {
+                println!("session {} has no checkpoints", session.id);
+                return Ok(0);
+            }
+            let cp = oxgraft_core::checkpoint::Checkpoints::open(&ws).map_err(|e| (EXIT_ERROR, e))?;
+            println!(
+                "checkpoints of session {} (restore with: oxgraft restore N --session {}):",
+                session.id, session.id
+            );
+            let mut previous: Option<&str> = None;
+            for (n, c) in session.checkpoints.iter().enumerate() {
+                let stat = previous
+                    .and_then(|p| cp.diff_stat(p, &c.commit).ok())
+                    .and_then(|s| s.lines().last().map(|l| l.trim().to_string()))
+                    .unwrap_or_default();
+                println!("  {n:>3}  {:<10} {}  {stat}", c.label, &c.commit[..c.commit.len().min(10)]);
+                previous = Some(&c.commit);
+            }
+            Ok(0)
+        }
+        Some(Command::Restore { number, session }) => {
+            let ws = workspace(&common)?;
+            let session = load_session(&ws, &session)?;
+            let Some(target) = session.checkpoints.get(number).cloned() else {
+                return Err(usage(format!(
+                    "session {} has {} checkpoint(s); run `oxgraft checkpoints {}`",
+                    session.id,
+                    session.checkpoints.len(),
+                    session.id
+                )));
+            };
+            let cp = oxgraft_core::checkpoint::Checkpoints::open(&ws).map_err(|e| (EXIT_ERROR, e))?;
+            let safety = cp.restore(&target.commit).map_err(|e| (EXIT_ERROR, e))?;
+            // Record the pre-restore state so the restore can be undone the same way.
+            let mut session = session;
+            session
+                .checkpoints
+                .push(oxgraft_core::session::CheckpointRecord { label: "pre-restore".into(), commit: safety });
+            let _ = session.save();
+            println!(
+                "workspace restored to checkpoint {number} ({}) of session {}; undo with: oxgraft restore {} --session {}",
+                target.label,
+                session.id,
+                session.checkpoints.len() - 1,
+                session.id
+            );
+            Ok(0)
+        }
         Some(Command::McpFixture) => {
             oxgraft_tools::mcp::serve_fixture();
             Ok(0)
@@ -264,6 +324,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     config.context_window = cfg.context_window;
     config.verify_command = cfg.verify_command.clone();
     config.stream = cfg.stream;
+    config.checkpoints = cfg.checkpoints;
     config.hooks = cfg.hooks.clone();
     let (mut tools, skills) = oxgraft_tools::for_workspace(&ws);
     for (name, server) in &cfg.mcp_servers {

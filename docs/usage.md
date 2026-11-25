@@ -35,6 +35,8 @@ oxgraft run --json --yes "…"              # headless: JSONL events on stdout, 
 oxgraft run --resume last "now add docs"  # continue the latest session
 oxgraft sessions                          # list saved sessions
 oxgraft undo                              # restore files changed by the latest session
+oxgraft checkpoints                       # workspace snapshots of the latest session, one per changing turn
+oxgraft restore 2                         # put the workspace back to checkpoint 2 (undoable)
 oxgraft --profile sandboxed run "…"       # shell commands confined to the workspace, offline
 ```
 
@@ -57,6 +59,7 @@ max_tokens = 16000             # per response
 max_session_tokens = 2000000   # stop a run above this many tokens
 context_window = 200000        # compaction at 80%; 0 disables
 stream = true                  # show replies as they are written (OXGRAFT_STREAM=0 to turn off)
+checkpoints = true             # snapshot the workspace after changing turns (private git repo in .oxgraft/)
 
 # User config only: workspaces whose own hooks and MCP servers may run.
 trusted_workspaces = ["/home/me/code/my-repo"]

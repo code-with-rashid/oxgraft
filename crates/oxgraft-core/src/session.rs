@@ -32,6 +32,16 @@ pub struct Session {
     pub compactions: u32,
     #[serde(default)]
     pub archived_messages: usize,
+    /// Workspace checkpoints taken during the session (GRAFT-0046), oldest first.
+    #[serde(default)]
+    pub checkpoints: Vec<CheckpointRecord>,
+}
+
+/// One workspace checkpoint: the state after `label`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointRecord {
+    pub label: String,
+    pub commit: String,
 }
 
 impl Session {
@@ -58,6 +68,7 @@ impl Session {
             changed_files: Vec::new(),
             compactions: 0,
             archived_messages: 0,
+            checkpoints: Vec::new(),
         }
     }
 

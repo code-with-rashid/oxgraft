@@ -24,6 +24,8 @@ pub struct FileConfig {
     pub context_window: Option<u64>,
     /// Stream model output as it is written (default true).
     pub stream: Option<bool>,
+    /// Snapshot the workspace after each changing turn (default true).
+    pub checkpoints: Option<bool>,
     #[serde(default)]
     pub hooks: Vec<Hook>,
     /// MCP servers to start (name -> command). Workspace entries need trust.
@@ -48,6 +50,7 @@ pub struct Config {
     pub verify_command: Option<String>,
     pub context_window: Option<u64>,
     pub stream: bool,
+    pub checkpoints: bool,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
     pub rules: Vec<oxgraft_strategies::approval::Rule>,
@@ -101,6 +104,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         verify_command: None,
         context_window: Some(200_000),
         stream: true,
+        checkpoints: true,
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
         rules: Vec::new(),
@@ -254,6 +258,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.context_window {
             cfg.context_window = if v == 0 { None } else { Some(v) };
+            used = true;
+        }
+        if let Some(v) = layer.checkpoints {
+            cfg.checkpoints = v;
             used = true;
         }
         if let Some(v) = layer.stream {

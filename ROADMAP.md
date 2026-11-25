@@ -36,7 +36,7 @@ Tick items in the same change that completes them. Target for M1–M4: 2026-12-0
 
 ## Backlog from reviews (ranked; each needs a graft record first)
 
-1. Git-ref checkpoints per turn with a private index, outside the user's history (cline, kilocode)
+1. ~~Git-ref checkpoints per turn~~ (done: GRAFT-0046)
 2. Sandbox network egress via a proxy with an allowlist, empty by default (claude-code, codex)
 3. ~~Self-testing approval rules~~ (done: GRAFT-0043)
 4. ~~Deterministic risk rails for shell~~ (done: GRAFT-0042)

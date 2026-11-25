@@ -281,3 +281,41 @@ fn configured_rules_apply_with_reasons() {
     assert!(results[0].0 && results[0].1.contains("hello"), "{:?}", results[0]);
     assert!(!results[1].0 && results[1].1.contains("never delete files"), "{:?}", results[1]);
 }
+
+// SPEC-0004 AC8 (GRAFT-0046): per-turn checkpoints capture shell changes too; restore
+// puts the workspace back and can itself be undone.
+#[test]
+fn checkpoints_capture_shell_changes_and_restore() {
+    let has_git = Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success());
+    if !has_git {
+        eprintln!("git not installed; skipping");
+        return;
+    }
+    let ws = Ws::new("checkpoints");
+    std::fs::write(ws.0.join("keep.txt"), "original\n").unwrap();
+    let model = ws.script(json!([
+        {"tool_calls": [{"name": "write", "input": {"path": "new.txt", "content": "from write\n"}}]},
+        {"tool_calls": [{"name": "bash", "input": {"command": "echo shell > made_by_shell.txt"}}]},
+        {"text": "done"}
+    ]));
+    let out = ws.oxgraft(&["run", "--json", "--yes", "--model", &model, "make files"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(ws.0.join("made_by_shell.txt").exists());
+    assert!(!ws.0.join(".git").exists(), "the user's repository is never created");
+
+    let list = ws.oxgraft(&["checkpoints"]);
+    let listing = String::from_utf8_lossy(&list.stdout).to_string();
+    assert!(listing.contains("start") && listing.contains("turn 1") && listing.contains("turn 2"), "{listing}");
+
+    let restore = ws.oxgraft(&["restore", "0"]);
+    assert_eq!(restore.status.code(), Some(0), "{}", String::from_utf8_lossy(&restore.stderr));
+    assert!(!ws.0.join("new.txt").exists());
+    assert!(!ws.0.join("made_by_shell.txt").exists(), "changes made by shell commands are rolled back too");
+    assert_eq!(ws.read("keep.txt"), "original\n");
+
+    // Undo the restore with the pre-restore checkpoint it recorded (number 3).
+    let undo = ws.oxgraft(&["restore", "3"]);
+    assert_eq!(undo.status.code(), Some(0), "{}", String::from_utf8_lossy(&undo.stderr));
+    assert!(ws.0.join("made_by_shell.txt").exists());
+    assert_eq!(ws.oxgraft(&["restore", "99"]).status.code(), Some(2));
+}
