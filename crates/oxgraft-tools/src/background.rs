@@ -67,26 +67,69 @@ pub fn start(mut child: Child, command: &str) -> Result<u32, String> {
     Ok(id)
 }
 
-/// Stop a background process and, on Unix, its whole process group.
-fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    if matches!(child.try_wait(), Ok(None)) {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", "--", &format!("-{}", child.id())])
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+/// Send `signal` to the process group led by `child` (Unix). The group is
+/// signalled even when the shell itself has exited, since commands like
+/// `server &` leave the real work running in the group.
+#[cfg(unix)]
+fn signal_group(child: &Child, signal: &str) {
+    let _ = std::process::Command::new("kill")
+        .args(["-s", signal, "--", &format!("-{}", child.id())])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
-/// Stop every background process (called when a run or chat ends).
-pub fn kill_all() {
-    if let Ok(mut reg) = registry().lock() {
-        for p in reg.values_mut() {
-            stop(&mut p.child);
+/// Stop background processes and everything they started (review fix): on Unix
+/// the process group gets TERM, then KILL after a short grace period; on Windows
+/// the process tree is ended with `taskkill /T` while the shell still runs (once
+/// it has exited, its pid may belong to something else).
+fn stop_all(children: &mut [&mut Child]) {
+    #[cfg(unix)]
+    {
+        for c in children.iter() {
+            signal_group(c, "TERM");
         }
-        reg.clear();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline && children.iter_mut().any(|c| matches!(c.try_wait(), Ok(None))) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for c in children.iter() {
+            signal_group(c, "KILL");
+        }
+    }
+    #[cfg(windows)]
+    for c in children.iter_mut() {
+        if matches!(c.try_wait(), Ok(None)) {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &c.id().to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    for c in children.iter_mut() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+/// Stop every background process (called when a run or chat ends, and on exit).
+pub fn kill_all() {
+    // A poisoned lock still holds the children; stop them anyway.
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut children: Vec<&mut Child> = reg.values_mut().map(|p| &mut p.child).collect();
+    stop_all(&mut children);
+    reg.clear();
+}
+
+/// Stops every background process when dropped, so early returns and panics
+/// in a run or chat don't leave them running.
+#[derive(Debug)]
+pub struct StopOnDrop;
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        kill_all();
     }
 }
 
@@ -129,7 +172,7 @@ impl Tool for BashOutput {
             return ToolOutput::error(format!("no background command {id}"));
         };
         if input.get("kill").and_then(Value::as_bool).unwrap_or(false) {
-            stop(&mut p.child);
+            stop_all(&mut [&mut p.child]);
         }
         let state = status(&mut p.child);
         let new = {
@@ -180,5 +223,26 @@ mod tests {
         assert!(stopped.content.contains("exited"), "{}", stopped.content);
         assert!(f.run(&BashOutput, json!({"id": 999_999})).is_error);
         assert!(f.run(&BashOutput, json!({})).content.contains("echo started"));
+    }
+
+    // Review fix: a child the shell left running in the group is stopped too.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_ends_the_whole_process_group() {
+        let f = Fixture::new("background-group");
+        let marker = f.dir.join("pid");
+        let cmd = format!("sleep 30 & echo $! > {}; echo spawned", marker.display());
+        let out = f.run(&crate::Bash, json!({"command": cmd, "background": true}));
+        let id: u64 = out.content.split_whitespace().nth(3).unwrap().trim_end_matches(';').parse().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let pid = std::fs::read_to_string(&marker).unwrap().trim().to_string();
+        f.run(&BashOutput, json!({"id": id, "kill": true}));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let alive = std::process::Command::new("kill").args(["-0", &pid]).status().unwrap().success();
+        assert!(!alive, "the backgrounded sleep {pid} was left running");
     }
 }

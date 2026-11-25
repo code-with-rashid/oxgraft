@@ -688,6 +688,8 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
     let _ = ctrlc::set_handler(move || {
         if cancel.swap(true, std::sync::atomic::Ordering::SeqCst) {
             eprintln!("\noxgraft: exiting");
+            // `exit` runs no destructors: stop background commands first (review fix).
+            oxgraft_tools::background::kill_all();
             std::process::exit(130);
         }
         eprintln!("\noxgraft: interrupting… (press Ctrl-C again to quit)");
@@ -773,6 +775,7 @@ fn run(
     fork: Option<String>,
     until: Option<String>,
 ) -> CliResult {
+    let _stop_background = oxgraft_tools::background::StopOnDrop;
     let json = output.json;
     if let Some(path) = &output.last_message {
         // Cleared first, so a run that fails early never leaves an old answer behind.
@@ -867,7 +870,6 @@ fn run(
     if let Some(path) = &output.last_message {
         std::fs::write(path, &answer).map_err(|e| (EXIT_ERROR, format!("{}: {e}", path.display())))?;
     }
-    oxgraft_tools::background::kill_all();
     Ok(status_code(&outcome.status))
 }
 
@@ -1223,6 +1225,7 @@ fn change_summary(ws: &Path, session: &Session, before: usize) {
 }
 
 fn chat(common: &Common, resume: Option<String>, fork: Option<String>) -> CliResult {
+    let _stop_background = oxgraft_tools::background::StopOnDrop;
     let s = setup(common)?;
     let mut session = open_session(&s, resume, fork)?;
     let approver: Box<dyn Approver> =
