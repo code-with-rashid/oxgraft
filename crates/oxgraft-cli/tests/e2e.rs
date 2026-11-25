@@ -282,7 +282,7 @@ fn configured_rules_apply_with_reasons() {
     assert!(!results[1].0 && results[1].1.contains("never delete files"), "{:?}", results[1]);
 }
 
-// SPEC-0004 AC8 (GRAFT-0046): per-turn checkpoints capture shell changes too; restore
+// SPEC-0004 AC7 (GRAFT-0046): per-turn checkpoints capture shell changes too; restore
 // puts the workspace back and can itself be undone.
 #[test]
 fn checkpoints_capture_shell_changes_and_restore() {

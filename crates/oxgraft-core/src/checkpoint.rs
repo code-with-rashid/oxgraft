@@ -117,7 +117,7 @@ mod tests {
         Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success())
     }
 
-    // SPEC-0004 AC8
+    // SPEC-0004 AC7
     #[test]
     fn snapshots_and_restores_without_touching_the_users_repo() {
         if !git_available() {
