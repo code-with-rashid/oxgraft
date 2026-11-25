@@ -116,6 +116,10 @@ command = "cargo fmt --all"    # exit 2 = feedback (post_tool, stop) or block (p
 command = "github-mcp-server"
 args = ["stdio"]
 env = { GITHUB_TOKEN = "…" }
+
+[mcp_servers.remote]               # Streamable HTTP server
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${EXAMPLE_TOKEN}" }   # ${VAR} reads the environment
 ```
 
 A project `.mcp.json` (`{"mcpServers": {...}}`, the Claude Code format) is read

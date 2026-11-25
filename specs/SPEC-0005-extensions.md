@@ -2,7 +2,7 @@
 id: SPEC-0005
 title: Extensions - skills, hooks, MCP
 status: implemented
-grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062]
+grafts: [GRAFT-0017, GRAFT-0018, GRAFT-0019, GRAFT-0022, GRAFT-0043, GRAFT-0051, GRAFT-0062, GRAFT-0072]
 ---
 
 # SPEC-0005: Extensions
@@ -42,3 +42,8 @@ scripts) without letting a cloned repository run code unasked.
   run with the hook's message. `stop` hooks run when the model wants to finish
   (reply in `OXGRAFT_FINAL_MESSAGE`): exit 2 sends stderr back to the model and
   the run continues, at most 3 times per run.
+- **AC9** An MCP server may be given by `url` (Streamable HTTP) instead of
+  `command`: messages are POSTed as JSON, replies may be JSON or SSE, the
+  `Mcp-Session-Id` from the server is sent back on later requests, `headers`
+  are added (with `${VAR}` from the environment). Setting both or neither of
+  `command` and `url` is an error for that server.
