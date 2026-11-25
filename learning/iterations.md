@@ -94,3 +94,4 @@ honestly: an iteration is only logged when its tests pass.
 | 86 | 2026-11-25 | aider | Local providers: 32k compaction window by default; doctor warns about Ollama context truncation and tool support | avoid | GRAFT-0064 | SPEC-0001 | `doctor_warns_about_ollama_context` |
 | 87 | 2026-11-25 | aider, claude-code | Model aliases opus / sonnet / haiku / fable | adopt | GRAFT-0065 | SPEC-0001 | `parses_model_strings` |
 | 88 | 2026-11-25 | opencode | `oxgraft export [ID] [-o file]`: session as a Markdown transcript | adopt | GRAFT-0066 | SPEC-0004 | `sessions_export_as_markdown` |
+| 89 | 2026-11-25 | claude-code, codex | `instructions` config and `--append-system-prompt` add standing instructions | adopt | GRAFT-0067 | SPEC-0004 | `instructions_accumulate_across_layers` |

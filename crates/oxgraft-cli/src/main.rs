@@ -45,6 +45,9 @@ struct Common {
     /// Approval mode: read-only, suggest (default), auto-edit, full-auto.
     #[arg(long, global = true)]
     mode: Option<String>,
+    /// Extra instructions added to the system prompt for this run.
+    #[arg(long, global = true, value_name = "TEXT")]
+    append_system_prompt: Option<String>,
     /// Workspace directory (default: current directory).
     #[arg(long, global = true)]
     cwd: Option<PathBuf>,
@@ -335,6 +338,7 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             effort: common.effort.as_deref(),
             max_turns: common.max_turns,
             approval_mode: common.mode.as_deref(),
+            instructions: common.append_system_prompt.as_deref(),
         },
     )
     .map_err(usage)?;
@@ -380,7 +384,13 @@ fn setup(common: &Common) -> Result<Setup, (u8, String)> {
             Err(e) => eprintln!("oxgraft: warning: {e}"),
         }
     }
-    config.append_system = skills;
+    // Standing instructions (GRAFT-0067) go before the skills list.
+    let mut extra: Vec<String> = cfg.instructions.clone();
+    if !extra.is_empty() {
+        extra.insert(0, "Additional instructions from the user's configuration:".into());
+    }
+    extra.extend(skills);
+    config.append_system = if extra.is_empty() { None } else { Some(extra.join("\n\n")) };
     // First Ctrl-C interrupts the current run (tools and model turns stop promptly);
     // a second one exits (GRAFT-0020).
     let cancel = config.cancel.clone();
@@ -829,6 +839,7 @@ fn doctor(common: &Common, live: bool) -> CliResult {
         effort: common.effort.as_deref(),
         max_turns: common.max_turns,
         approval_mode: common.mode.as_deref(),
+        instructions: common.append_system_prompt.as_deref(),
     };
     let cfg = match config::resolve(&ws, &flags) {
         Ok(c) => {

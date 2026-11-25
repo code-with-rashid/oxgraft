@@ -80,3 +80,5 @@ otherwise an error explaining how to choose one.
 - **AC13** `oxgraft export [ID] [-o FILE]` writes the session as Markdown:
   title, model and token counts, each user and assistant message, tool calls,
   and tool results shortened to 1,500 characters; thinking blocks are omitted.
+- **AC14** `instructions` from the user config, the workspace config and
+  `--append-system-prompt` are all appended to the system prompt, in that order.

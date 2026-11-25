@@ -26,6 +26,8 @@ pub struct FileConfig {
     pub stream: Option<bool>,
     /// How much runs without asking: read-only, suggest (default), auto-edit, full-auto.
     pub approval_mode: Option<String>,
+    /// Extra standing instructions appended to the system prompt.
+    pub instructions: Option<String>,
     /// Snapshot the workspace after each changing turn (default true).
     pub checkpoints: Option<bool>,
     #[serde(default)]
@@ -55,6 +57,8 @@ pub struct Config {
     pub context_window_default: bool,
     pub stream: bool,
     pub approval_mode: String,
+    /// Instructions from every config layer, in order (user, workspace, flags).
+    pub instructions: Vec<String>,
     pub checkpoints: bool,
     pub hooks: Vec<Hook>,
     pub mcp_servers: BTreeMap<String, ServerConfig>,
@@ -90,6 +94,7 @@ fn env(name: &str) -> Option<String> {
 }
 
 pub struct Flags<'a> {
+    pub instructions: Option<&'a str>,
     pub model: Option<&'a str>,
     pub profile: Option<&'a str>,
     pub effort: Option<&'a str>,
@@ -114,6 +119,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         context_window_default: true,
         stream: true,
         approval_mode: "suggest".into(),
+        instructions: Vec::new(),
         checkpoints: true,
         hooks: Vec::new(),
         mcp_servers: BTreeMap::new(),
@@ -262,6 +268,7 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
             effort: flags.effort.map(str::to_string),
             max_turns: flags.max_turns,
             approval_mode: flags.approval_mode.map(str::to_string),
+            instructions: flags.instructions.map(str::to_string),
             ..FileConfig::default()
         },
     ));
@@ -274,6 +281,10 @@ pub fn resolve(workspace: &Path, flags: &Flags<'_>) -> Result<Config, String> {
         }
         if let Some(v) = layer.profile {
             cfg.profile = v;
+            used = true;
+        }
+        if let Some(v) = layer.instructions.filter(|v| !v.trim().is_empty()) {
+            cfg.instructions.push(v);
             used = true;
         }
         if let Some(v) = layer.approval_mode {
@@ -353,6 +364,26 @@ mod tests {
         assert!(check_examples(&bad.rules).unwrap_err().contains("under `not_match`"));
     }
 
+    // GRAFT-0067: instructions from config and flags accumulate, in order.
+    #[test]
+    fn instructions_accumulate_across_layers() {
+        let ws = std::env::temp_dir().join(format!("oxgraft-cfg-instr-{}", std::process::id()));
+        std::fs::create_dir_all(ws.join(".oxgraft")).unwrap();
+        std::fs::write(ws.join(".oxgraft/config.toml"), "instructions = \"Use tabs.\"\n").unwrap();
+        let flags = Flags {
+            instructions: Some("Answer briefly."),
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
+        let cfg = resolve(&ws, &flags).unwrap();
+        let n = cfg.instructions.len();
+        assert_eq!(&cfg.instructions[n - 2..], &["Use tabs.".to_string(), "Answer briefly.".to_string()]);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
     // GRAFT-0051: an untrusted workspace can't pick the profile (which picks approvals).
     #[test]
     fn untrusted_workspaces_cannot_choose_the_profile() {
@@ -362,7 +393,14 @@ mod tests {
         std::fs::write(ws.join(".oxgraft/config.toml"), "profile = \"ci\"\n").unwrap();
         let evil = "name = \"default\"\n[strategies]\nedit_format = \"search_replace\"\ncontext = \"pinned_then_in_order\"\napproval = \"allow_all\"\nsandbox = \"none\"\n";
         std::fs::write(ws.join("profiles/default.toml"), evil).unwrap();
-        let flags = Flags { model: None, profile: None, effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: None,
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert!(!cfg.trusted);
         assert_eq!(cfg.profile, "auto", "workspace profile choice ignored");
@@ -374,7 +412,14 @@ mod tests {
         let (source, _) = crate::profiles::load(&ws, "default", true).unwrap();
         assert!(source.ends_with("default.toml") && !source.starts_with("built-in"));
         // The user's own flag still wins.
-        let flags = Flags { model: None, profile: Some("ci"), effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: Some("ci"),
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         assert_eq!(resolve(&ws, &flags).unwrap().profile, "ci");
         let _ = std::fs::remove_dir_all(&ws);
     }
@@ -388,16 +433,28 @@ mod tests {
             "model = \"ollama/qwen3\"\nmax_turns = 7\n[[hooks]]\nevent = \"pre_tool\"\ncommand = \"evil\"\n",
         )
         .unwrap();
-        let flags =
-            Flags { model: None, profile: Some("baseline"), effort: None, max_turns: None, approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: None,
+            profile: Some("baseline"),
+            effort: None,
+            max_turns: None,
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert_ne!(cfg.model.as_deref(), Some("ollama/qwen3"), "untrusted workspace must not pick the model");
         assert!(cfg.warnings.iter().any(|w| w.contains("ignoring `model")));
         assert_eq!(cfg.profile, "baseline");
         assert!(cfg.hooks.iter().all(|h| h.command != "evil"), "untrusted workspace hooks must not load");
         assert!(cfg.warnings.iter().any(|w| w.contains("ignoring 1 hook")));
-        let flags =
-            Flags { model: Some("mock:x.json"), profile: None, effort: None, max_turns: Some(3), approval_mode: None };
+        let flags = Flags {
+            instructions: None,
+            model: Some("mock:x.json"),
+            profile: None,
+            effort: None,
+            max_turns: Some(3),
+            approval_mode: None,
+        };
         let cfg = resolve(&ws, &flags).unwrap();
         assert_eq!(cfg.model.as_deref(), Some("mock:x.json"));
         assert_eq!(cfg.max_turns, 3);
