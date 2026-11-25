@@ -3,7 +3,7 @@
 The handoff file. Every agent session reads this first and updates it last.
 Keep it short: current truth, not history (history is in git and `learning/`).
 
-_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–101._
+_Last updated: 2026-11-25 by the second autonomous session (Claude Code), iterations 53–116._
 
 **Branches:** `main` has iterations 1–77 (being tried against a real model by the
 maintainer). Iterations 78 onward are on `next`, in draft PR #1, until that
@@ -49,9 +49,13 @@ feedback is in. Items below marked (next) are only on that branch.
   restore, undo, models, strategies, profile. (next) custom commands
   (`.agents/commands/*.md`), chat `!command`, `--plan`, `--append-system-prompt`
   and `instructions`, `export` (Markdown), `prune`, `user_prompt`/`stop` hooks,
-  `files_changed` event, todo reminder, failure hints.
+  `files_changed` event, todo reminder, failure hints, `run --quiet` and
+  `--output-last-message`, `sessions --json`, `stats`, bell after long tasks;
+  in chat `/compact`, `/mode`, `/model`, `/init`, multi-line `"""` input,
+  decline-with-guidance at approval prompts, diff-style edit previews;
+  `subagent_model`, `verify_command = "auto"`, whitespace-tolerant `old_string`.
 - **Learning**: 16 of 17 watched harnesses reviewed at pinned tags (Roo Code is
-  archived); 73 graft records; 101 logged iterations; specs SPEC-0001..0006;
+  archived); 86 graft records; 116 logged iterations; specs SPEC-0001..0006;
   ADRs 0001–0007.
 
 ## Not verified
