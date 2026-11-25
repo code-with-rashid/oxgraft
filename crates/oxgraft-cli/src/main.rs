@@ -896,7 +896,7 @@ fn read_message(input: &mut dyn BufRead) -> std::io::Result<Option<String>> {
 /// action, so no approval; same shell as the bash tool; 5-minute limit.
 fn run_user_command(ws: &Path, command: &str) -> (bool, String) {
     let (program, args) = oxgraft_tools::shell_program();
-    oxgraft_core::hooks::run_check(&oxgraft_core::hooks::Shell { program, args }, command, ws, 300)
+    oxgraft_core::hooks::run_check(&oxgraft_core::hooks::Shell { program, args }, command, ws, 300, false)
 }
 
 /// Ring the terminal bell when a task took long enough that the user may have

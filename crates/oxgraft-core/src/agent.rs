@@ -770,7 +770,8 @@ impl<'a> Agent<'a> {
                 if let Some(check) = &self.config.finish_check
                     && depth == 0
                 {
-                    let (ok, out) = crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600);
+                    let (ok, out) =
+                        crate::hooks::run_check(&self.config.shell, check, &self.config.workspace, 600, true);
                     if !ok {
                         if finish_failures >= MAX_FINISH_ROUNDS || last_turn {
                             let reason = if last_turn {
@@ -863,7 +864,7 @@ impl<'a> Agent<'a> {
                 && let Some(command) = &self.config.verify_command
                 && verify_failures < MAX_VERIFY_ROUNDS
             {
-                let (ok, out) = crate::hooks::run_check(&self.config.shell, command, &self.config.workspace, 300);
+                let (ok, out) = crate::hooks::run_check(&self.config.shell, command, &self.config.workspace, 300, true);
                 if ok {
                     verify_failures = 0;
                 } else {

@@ -37,3 +37,7 @@ evaluation against the `baseline` profile on agentic-arena tasks is pending (ROA
 ## Decision
 
 Pending maintainer review.
+
+## Revision (2026-11-25, independent review)
+
+Scrubbing only the child environment could be bypassed by reading `/proc/<parent>/environ`, and `verify_command` / `--until` (which run model-written code) were not scrubbed. Now both are scrubbed, and the bubblewrap sandbox gets `--unshare-pid` so `/proc` shows only sandboxed processes. Outside the sandbox the `/proc` route remains on Linux (documented).

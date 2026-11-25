@@ -194,8 +194,36 @@ fn keep_tail(text: &str, max: usize) -> String {
 
 /// Run a verification command (build, lint, tests) in the workspace. Returns whether it
 /// passed and its combined output (tail-truncated), with a timeout.
-pub fn run_check(shell: &Shell, command: &str, workspace: &Path, timeout_secs: u64) -> (bool, String) {
+/// Environment variables that look like secrets (names containing KEY, TOKEN,
+/// SECRET, PASSWORD, PASSWD or CREDENTIAL), except those in OXGRAFT_SHELL_ENV_KEEP.
+/// Same rule as the bash tool (GRAFT-0094).
+pub fn secret_env_names() -> Vec<String> {
+    let keep: Vec<String> = std::env::var("OXGRAFT_SHELL_ENV_KEEP")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| {
+            let n = k.to_ascii_uppercase();
+            ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"].iter().any(|p| n.contains(p))
+                && !keep.contains(&n)
+        })
+        .collect()
+}
+
+/// Run a check command. `scrub` hides secret-looking environment variables: use
+/// it whenever the command runs code the model may have written (verify_command,
+/// `--until`), not for the user's own commands.
+pub fn run_check(shell: &Shell, command: &str, workspace: &Path, timeout_secs: u64, scrub: bool) -> (bool, String) {
     let mut cmd = shell.command(command);
+    if scrub {
+        for name in secret_env_names() {
+            cmd.env_remove(name);
+        }
+    }
     cmd.current_dir(workspace).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,

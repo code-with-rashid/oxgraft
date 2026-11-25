@@ -170,7 +170,11 @@ Workspace rules apply only to trusted workspaces.
 
 Commands the model runs never see environment variables that look like
 secrets (names containing KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL). To pass
-one on purpose, list it: `OXGRAFT_SHELL_ENV_KEEP=GITHUB_TOKEN`.
+one on purpose, list it: `OXGRAFT_SHELL_ENV_KEEP=GITHUB_TOKEN`. The same applies to
+`verify_command` and `--until`, which run code the model may have written. This
+hides secrets from the command's own environment; on Linux, a command could
+still read Oxgraft's environment through `/proc` unless it runs in the
+`sandboxed` profile (which gets its own process namespace).
 
 ## Project instructions and skills
 

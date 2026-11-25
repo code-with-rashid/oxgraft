@@ -27,7 +27,9 @@ pub fn confined(command: &str, workspace: &Path, writable: &[String], network: b
             ));
         }
         let mut c = Command::new(bwrap);
-        c.args(["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]);
+        // A private PID namespace: /proc shows only sandboxed processes, so a command
+        // can't read the harness's environment through /proc/<pid>/environ.
+        c.args(["--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc", "/proc", "--tmpfs", "/tmp"]);
         let ws_s = ws.to_string_lossy().to_string();
         c.args(["--bind", &ws_s, &ws_s]);
         for w in writable {
