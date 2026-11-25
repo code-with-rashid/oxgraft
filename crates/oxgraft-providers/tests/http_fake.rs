@@ -152,7 +152,7 @@ fn openai_compatible_round_trip_over_http() {
     let _ = json!(null);
 }
 
-// SPEC-0001 AC7: streaming over real HTTP yields deltas and the same completion.
+// SPEC-0001 AC8: streaming over real HTTP yields deltas and the same completion.
 #[test]
 fn anthropic_streams_over_http() {
     let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"content\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n\

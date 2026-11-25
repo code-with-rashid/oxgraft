@@ -1,4 +1,4 @@
-//! Scripted provider for deterministic tests and demos (SPEC-0001 AC7).
+//! Scripted provider for deterministic tests and demos (SPEC-0001 AC8).
 //!
 //! Script format (JSON):
 //! ```json
@@ -126,7 +126,7 @@ mod tests {
         }
     }
 
-    // SPEC-0001 AC7
+    // SPEC-0001 AC8
     #[test]
     fn replays_turns_then_errors() {
         let script: Script = serde_json::from_str(

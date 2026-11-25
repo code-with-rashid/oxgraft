@@ -408,7 +408,7 @@ mod tests {
         assert!(provider().request_body(&req).get("fallbacks").is_some());
     }
 
-    // SPEC-0001 AC7: the stream rebuilds the same completion as the blocking response.
+    // SPEC-0001 AC8: the stream rebuilds the same completion as the blocking response.
     #[test]
     fn stream_events_rebuild_the_response() {
         let events = [

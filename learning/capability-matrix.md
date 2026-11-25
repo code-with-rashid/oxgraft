@@ -12,7 +12,7 @@ updates a harness profile or adds or promotes a strategy.
 | context | **pinned_then_in_order** + compaction (GRAFT-0023) | — | repo map (aider), retrieval |
 | approval | **ordered_rules** (GRAFT-0002) | allow_all | approval modes per session (codex) |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
-| provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009) streaming (GRAFT-0045) | mock | Bedrock/Vertex |
+| provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
 | tools | read, write, edit, ls, glob, grep, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
 | session | save/resume/repair, undo (GRAFT-0005, 0020) | budgets (0021) | git checkpoints per turn (cline), fork (opencode) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |

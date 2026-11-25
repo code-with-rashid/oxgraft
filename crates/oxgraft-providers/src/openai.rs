@@ -462,7 +462,7 @@ mod tests {
         assert!(parse_response("x", &json!({})).is_err());
     }
 
-    // SPEC-0001 AC7
+    // SPEC-0001 AC8
     #[test]
     fn stream_chunks_rebuild_the_response() {
         let chunks = [

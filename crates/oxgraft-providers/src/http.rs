@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(classify(404), ErrorKind::BadRequest);
     }
 
-    // SPEC-0001 AC7
+    // SPEC-0001 AC8
     #[test]
     fn parses_server_sent_events() {
         let text = ": comment\r\nevent: a\r\ndata: {\"x\":1}\r\n\r\ndata: line1\ndata: line2\n\nevent: b\ndata: tail";
