@@ -13,7 +13,7 @@ updates a harness profile or adds or promotes a strategy.
 | approval | **ordered_rules** (GRAFT-0002) + risk rails (0042) | inert_reads (0047), allow_all; modes read-only/auto-edit/full-auto (0052) | per-tool modes in chat |
 | sandbox | **none** | workspace_write (GRAFT-0025) | Landlock without bwrap (codex), containers (openhands) |
 | provider | Anthropic native, 10 OpenAI-compatible presets (GRAFT-0009), streaming (GRAFT-0045) | mock | Bedrock/Vertex |
-| tools | read, write, edit, ls, glob, grep, map, bash, todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
+| tools | read, write, edit, ls, glob, grep, map, bash (+ background, bash_output), todo, web_fetch | skill, MCP, task | LSP diagnostics (crush/opencode) |
 | session | save/resume/repair, undo (GRAFT-0005, 0020), per-turn checkpoints (0046), fork (0049) | budgets (0021) | session tree UI (pi) |
 | extension | skills (0017), hooks (0018), MCP (0022), workspace trust (0019) | — | plugins (deepseek-harness), recipes (goose) |
 | delegation | read-only `task` subagent (0026) | — | named subagents with policies (opencode) |
